@@ -1,16 +1,26 @@
 import SwiftData
 import SwiftUI
 
-enum SortMode: String {
-    case originalAsc = "originalAsc"
-    case originalDesc = "originalDesc"
-    case replacementAsc = "replacementAsc"
-    case replacementDesc = "replacementDesc"
-}
+private extension WordReplacementSortMode {
+    var label: LocalizedStringKey {
+        switch self {
+        case .originalAsc: "Original A–Z"
+        case .originalDesc: "Original Z–A"
+        case .replacementAsc: "Replacement A–Z"
+        case .replacementDesc: "Replacement Z–A"
+        case .newest: "Newest"
+        case .oldest: "Oldest"
+        }
+    }
 
-enum SortColumn {
-    case original
-    case replacement
+    var iconName: String {
+        switch self {
+        case .originalAsc, .replacementAsc: "arrow.up"
+        case .originalDesc, .replacementDesc: "arrow.down"
+        case .newest: "clock.arrow.circlepath"
+        case .oldest: "clock"
+        }
+    }
 }
 
 struct WordReplacementView: View {
@@ -19,48 +29,23 @@ struct WordReplacementView: View {
     @State private var showAlert = false
     @State private var editingReplacement: WordReplacement? = nil
     @State private var alertMessage = ""
-    @State private var sortMode: SortMode = .originalAsc
+    @State private var sortMode: WordReplacementSortMode = .originalAsc
     @State private var originalWord = ""
     @State private var replacementWord = ""
     @State private var showInfoPopover = false
 
     init() {
-        if let savedSort = UserDefaults.standard.string(forKey: "wordReplacementSortMode"),
-            let mode = SortMode(rawValue: savedSort)
-        {
-            _sortMode = State(initialValue: mode)
-        }
+        _sortMode = State(initialValue: DictionarySortService.shared.savedWordReplacementMode())
     }
 
     private var sortedReplacements: [WordReplacement] {
-        switch sortMode {
-        case .originalAsc:
-            return wordReplacements.sorted {
-                $0.originalText.localizedCaseInsensitiveCompare($1.originalText) == .orderedAscending
-            }
-        case .originalDesc:
-            return wordReplacements.sorted {
-                $0.originalText.localizedCaseInsensitiveCompare($1.originalText) == .orderedDescending
-            }
-        case .replacementAsc:
-            return wordReplacements.sorted {
-                $0.replacementText.localizedCaseInsensitiveCompare($1.replacementText) == .orderedAscending
-            }
-        case .replacementDesc:
-            return wordReplacements.sorted {
-                $0.replacementText.localizedCaseInsensitiveCompare($1.replacementText) == .orderedDescending
-            }
-        }
+        DictionarySortService.shared.sortWordReplacements(wordReplacements, by: sortMode)
     }
 
-    private func toggleSort(for column: SortColumn) {
-        switch column {
-        case .original:
-            sortMode = (sortMode == .originalAsc) ? .originalDesc : .originalAsc
-        case .replacement:
-            sortMode = (sortMode == .replacementAsc) ? .replacementDesc : .replacementAsc
-        }
-        UserDefaults.standard.set(sortMode.rawValue, forKey: "wordReplacementSortMode")
+    private func cycleSort() {
+        let service = DictionarySortService.shared
+        sortMode = service.nextWordReplacementMode(after: sortMode)
+        service.saveWordReplacementMode(sortMode)
     }
 
     private var shouldShowAddButton: Bool {
@@ -108,63 +93,62 @@ struct WordReplacementView: View {
             .animation(.easeInOut(duration: 0.2), value: shouldShowAddButton)
 
             if !wordReplacements.isEmpty {
-                VStack(spacing: 0) {
-                    HStack(spacing: 8) {
-                        Button(action: { toggleSort(for: .original) }) {
-                            HStack(spacing: 4) {
-                                Text("Original")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(.secondary)
-
-                                if sortMode == .originalAsc || sortMode == .originalDesc {
-                                    Image(systemName: sortMode == .originalAsc ? "chevron.up" : "chevron.down")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Sort by original")
-
-                        Image(systemName: "arrow.right")
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(String(localized: "Word Replacements (\(wordReplacements.count))"))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.secondary)
-                            .font(.system(size: 10))
-                            .frame(width: 10)
 
-                        Button(action: { toggleSort(for: .replacement) }) {
-                            HStack(spacing: 4) {
-                                Text("Replacement")
+                        Spacer()
+
+                        Button(action: cycleSort) {
+                            HStack(spacing: 5) {
+                                Image(systemName: sortMode.iconName)
+                                    .font(.caption)
+
+                                Text(sortMode.label)
                                     .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(.secondary)
-
-                                if sortMode == .replacementAsc || sortMode == .replacementDesc {
-                                    Image(systemName: sortMode == .replacementAsc ? "chevron.up" : "chevron.down")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("Sort by replacement")
+                        .help("Change word replacement sorting")
                     }
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 8)
 
-                    Divider()
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
+                            Text("Original")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
-                    LazyVStack(spacing: 0) {
-                        ForEach(sortedReplacements, id: \.persistentModelID) { replacement in
-                            ReplacementRow(
-                                original: replacement.originalText,
-                                replacement: replacement.replacementText,
-                                onDelete: { removeReplacement(replacement) },
-                                onEdit: { editingReplacement = replacement }
-                            )
+                            Image(systemName: "arrow.right")
+                                .foregroundColor(.secondary)
+                                .font(.system(size: 10))
+                                .frame(width: 10)
 
-                            if replacement.persistentModelID != sortedReplacements.last?.persistentModelID {
-                                Divider()
+                            Text("Replacement")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 8)
+
+                        Divider()
+
+                        LazyVStack(spacing: 0) {
+                            ForEach(sortedReplacements, id: \.persistentModelID) { replacement in
+                                ReplacementRow(
+                                    original: replacement.originalText,
+                                    replacement: replacement.replacementText,
+                                    onDelete: { removeReplacement(replacement) },
+                                    onEdit: { editingReplacement = replacement }
+                                )
+
+                                if replacement.persistentModelID != sortedReplacements.last?.persistentModelID {
+                                    Divider()
+                                }
                             }
                         }
                     }
@@ -200,15 +184,8 @@ struct WordReplacementView: View {
     }
 
     private func removeReplacement(_ replacement: WordReplacement) {
-        modelContext.delete(replacement)
-
-        do {
-            try modelContext.save()
-        } catch {
-            // Rollback the delete to restore UI consistency
-            modelContext.rollback()
-            alertMessage = String(
-                format: String(localized: "Failed to remove replacement: %@"), error.localizedDescription)
+        if let error = DictionaryService.removeWordReplacement(replacement, context: modelContext) {
+            alertMessage = error
             showAlert = true
         }
     }
