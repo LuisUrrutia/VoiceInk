@@ -86,4 +86,71 @@ struct SystemHotKeyTests {
         #expect(duplicate == nil)
         withExtendedLifetime(monitor) {}
     }
+
+    @Test @MainActor func eventTapInterruptionDoesNotReleaseSystemHotKey() async {
+        let recorder = TransitionRecorder()
+        let monitor = ShortcutMonitor(
+            createEventTap: { _, _ in nil },
+            allowsShortcutHandling: { true }
+        )
+        let started = monitor.start(
+            shortcuts: [.primaryRecording: .key(keyCode: UInt16(kVK_F18), modifierFlags: [.control, .option, .command])],
+            onShortcutDown: { _, _ in recorder.transitions.append("down") },
+            onShortcutUp: { _, _ in recorder.transitions.append("up") }
+        )
+        #expect(started)
+        guard started else { return }
+
+        monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 1)
+        monitor.resetPressedShortcutsAfterTapInterruption()
+        await flushDispatchedEvents()
+        #expect(recorder.transitions == ["down"])
+
+        monitor.handleSystemHotKey(action: .primaryRecording, isDown: false, eventTime: 2)
+        await flushDispatchedEvents()
+        #expect(recorder.transitions == ["down", "up"])
+    }
+
+    @Test @MainActor func systemHotKeyStopsAtLockedSessionBoundary() async {
+        let recorder = TransitionRecorder()
+        let session = TestSession()
+        let monitor = ShortcutMonitor(
+            createEventTap: { _, _ in nil },
+            allowsShortcutHandling: { session.allowsShortcuts }
+        )
+        let started = monitor.start(
+            shortcuts: [.primaryRecording: .key(keyCode: UInt16(kVK_F18), modifierFlags: [.control, .option, .command])],
+            onShortcutDown: { _, _ in recorder.transitions.append("down") },
+            onShortcutUp: { _, _ in recorder.transitions.append("up") }
+        )
+        #expect(started)
+        guard started else { return }
+
+        monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 1)
+        session.allowsShortcuts = false
+        monitor.handleSystemHotKey(action: .primaryRecording, isDown: false, eventTime: 2)
+        monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 3)
+        await flushDispatchedEvents()
+        #expect(recorder.transitions == ["down", "up"])
+
+        session.allowsShortcuts = true
+        monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 4)
+        monitor.handleSystemHotKey(action: .primaryRecording, isDown: false, eventTime: 5)
+        await flushDispatchedEvents()
+        #expect(recorder.transitions == ["down", "up", "down", "up"])
+    }
+
+    @MainActor private func flushDispatchedEvents() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    private final class TransitionRecorder {
+        var transitions: [String] = []
+    }
+
+    private final class TestSession {
+        var allowsShortcuts = true
+    }
 }

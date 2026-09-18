@@ -20,33 +20,41 @@ final class ShortcutMonitor {
         var isDown = false
         var pressedAt: TimeInterval?
         var isInterrupted = false
+        var requiresStandaloneRelease = false
     }
 
     private var shortcuts: [ShortcutAction: ShortcutState] = [:]
     private var systemHotKeys: [ShortcutAction: SystemHotKey] = [:]
+    private var pressedKeyCodes = Set<UInt16>()
     private var suppressedMouseButtons = Set<UInt16>()
     private var interruptibleActions: Set<ShortcutAction> = []
+    private var standaloneModifierActions: Set<ShortcutAction> = []
     private var onShortcutDown: ((ShortcutAction, TimeInterval) -> Void)?
     private var onShortcutUp: ((ShortcutAction, TimeInterval) -> Void)?
     private var onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)?
     private var eventTap: CFMachPort?
     private var eventTapRunLoopSource: CFRunLoopSource?
     private let createEventTap: EventTapFactory
+    private let allowsShortcutHandling: () -> Bool
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "ShortcutMonitor")
 
     private static let shortcutInterruptionWindow: TimeInterval = 1.0
 
-    init(createEventTap: @escaping EventTapFactory = { callback, userInfo in
-        CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: ShortcutMonitor.eventMask,
-            callback: callback,
-            userInfo: userInfo
-        )
-    }) {
+    init(
+        createEventTap: @escaping EventTapFactory = { callback, userInfo in
+            CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: ShortcutMonitor.eventMask,
+                callback: callback,
+                userInfo: userInfo
+            )
+        },
+        allowsShortcutHandling: @escaping () -> Bool = { UserSessionInputPolicy.allowsShortcutHandling }
+    ) {
         self.createEventTap = createEventTap
+        self.allowsShortcutHandling = allowsShortcutHandling
     }
 
     deinit {
@@ -57,6 +65,7 @@ final class ShortcutMonitor {
     func start(
         shortcuts: [ShortcutAction: Shortcut],
         interruptibleActions: Set<ShortcutAction> = [],
+        standaloneModifierActions: Set<ShortcutAction> = [],
         onShortcutDown: @escaping (ShortcutAction, TimeInterval) -> Void,
         onShortcutUp: @escaping (ShortcutAction, TimeInterval) -> Void,
         onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)? = nil
@@ -72,6 +81,7 @@ final class ShortcutMonitor {
         }
 
         self.interruptibleActions = interruptibleActions
+        self.standaloneModifierActions = standaloneModifierActions
         self.onShortcutDown = onShortcutDown
         self.onShortcutUp = onShortcutUp
         self.onShortcutInterrupted = onShortcutInterrupted
@@ -92,6 +102,10 @@ final class ShortcutMonitor {
         return true
     }
 
+    func updateStandaloneModifierActions(_ actions: Set<ShortcutAction>) {
+        standaloneModifierActions = actions
+    }
+
     func stop() {
         systemHotKeys = [:]
         if let eventTapRunLoopSource {
@@ -105,8 +119,10 @@ final class ShortcutMonitor {
         }
 
         shortcuts = [:]
+        pressedKeyCodes = []
         suppressedMouseButtons = []
         interruptibleActions = []
+        standaloneModifierActions = []
         onShortcutDown = nil
         onShortcutUp = nil
         onShortcutInterrupted = nil
@@ -121,7 +137,11 @@ final class ShortcutMonitor {
             let monitor = Unmanaged<ShortcutMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                monitor.resetPressedShortcutsAfterTapInterruption()
+                if monitor.allowsShortcutHandling() {
+                    monitor.resetPressedShortcutsAfterTapInterruption()
+                } else {
+                    monitor.clearPressedShortcutState()
+                }
                 if let eventTap = monitor.eventTap {
                     CGEvent.tapEnable(tap: eventTap, enable: true)
                 }
@@ -153,6 +173,11 @@ final class ShortcutMonitor {
     }
 
     private func handleCGEvent(type: CGEventType, event: CGEvent) -> Bool {
+        guard allowsShortcutHandling() else {
+            clearPressedShortcutState()
+            return false
+        }
+
         guard let eventKind = EventKind(type) else {
             return false
         }
@@ -174,30 +199,47 @@ final class ShortcutMonitor {
         )
     }
 
-    private func resetPressedShortcutsAfterTapInterruption() {
-        let eventTime = ProcessInfo.processInfo.systemUptime
-        let pressedActions = shortcuts.compactMap { action, state in
-            state.isDown && systemHotKeys[action] == nil ? action : nil
-        }
+    func resetPressedShortcutsAfterTapInterruption() {
+        releasePressedShortcuts(eventTime: ProcessInfo.processInfo.systemUptime, includeSystemHotKeys: false)
+    }
 
-        guard !pressedActions.isEmpty else {
+    private func clearPressedShortcutState() {
+        releasePressedShortcuts(eventTime: ProcessInfo.processInfo.systemUptime)
+        suppressedMouseButtons.removeAll()
+    }
+
+    private func releasePressedShortcuts(eventTime: TimeInterval, includeSystemHotKeys: Bool = true) {
+        for action in Array(shortcuts.keys) {
+            guard includeSystemHotKeys || systemHotKeys[action] == nil else { continue }
+            guard var state = shortcuts[action] else { continue }
+            let shouldDispatchUp = state.isDown && !state.requiresStandaloneRelease
+            state.isDown = false
+            state.pressedAt = nil
+            state.isInterrupted = false
+            state.requiresStandaloneRelease = false
+            shortcuts[action] = state
+            if shouldDispatchUp {
+                dispatchShortcutUp(for: action, eventTime: eventTime)
+            }
+        }
+        pressedKeyCodes.removeAll()
+    }
+
+    func handleSystemHotKey(action: ShortcutAction, isDown: Bool, eventTime: TimeInterval) {
+        guard allowsShortcutHandling() else {
+            clearPressedShortcutState()
             return
         }
 
-        for action in pressedActions {
-            if var state = shortcuts[action] {
-                state.isDown = false
-                state.pressedAt = nil
-                state.isInterrupted = false
-                shortcuts[action] = state
-            }
-            dispatchShortcutUp(for: action, eventTime: eventTime)
-        }
-    }
-
-    private func handleSystemHotKey(action: ShortcutAction, isDown: Bool, eventTime: TimeInterval) {
         guard var state = shortcuts[action], state.isDown != isDown else { return }
 
+        let eventKind: EventKind = isDown ? .keyDown : .keyUp
+        updatePressedKeyCodes(kind: eventKind, inputCode: state.shortcut.keyCode)
+        invalidateStandaloneModifierCandidateForKeyboardEvent(
+            kind: eventKind,
+            inputCode: state.shortcut.keyCode,
+            modifierFlags: []
+        )
         if isDown {
             handleShortcutInterruptions(keyCode: state.shortcut.keyCode, eventTime: eventTime)
         }
@@ -228,6 +270,13 @@ final class ShortcutMonitor {
         case .keyDown, .keyUp, .flagsChanged, .mouseDown:
             shouldSuppress = false
         }
+
+        updatePressedKeyCodes(kind: kind, inputCode: inputCode)
+        invalidateStandaloneModifierCandidateForKeyboardEvent(
+            kind: kind,
+            inputCode: inputCode,
+            modifierFlags: modifierFlags
+        )
 
         if kind == .keyDown {
             handleShortcutInterruptions(keyCode: inputCode, eventTime: eventTime)
@@ -391,11 +440,22 @@ final class ShortcutMonitor {
 
         if state.isDown {
             if state.shortcut.shouldReleaseModifierEvent(keyCode: keyCode, modifierFlags: modifierFlags) {
+                let shouldTrigger =
+                    state.requiresStandaloneRelease
+                    && !state.isInterrupted
+                let shouldDispatchUp = !state.requiresStandaloneRelease
+                let pressedAt = state.pressedAt
                 state.isDown = false
                 state.pressedAt = nil
                 state.isInterrupted = false
+                state.requiresStandaloneRelease = false
                 shortcuts[action] = state
-                dispatchShortcutUp(for: action, eventTime: eventTime)
+                if shouldTrigger, let pressedAt {
+                    dispatchShortcutDown(for: action, eventTime: pressedAt)
+                    dispatchShortcutUp(for: action, eventTime: eventTime)
+                } else if shouldDispatchUp {
+                    dispatchShortcutUp(for: action, eventTime: eventTime)
+                }
             }
 
             return
@@ -404,9 +464,53 @@ final class ShortcutMonitor {
         if state.shortcut.matchesModifierEvent(keyCode: keyCode, modifierFlags: modifierFlags) {
             state.isDown = true
             state.pressedAt = eventTime
-            state.isInterrupted = false
+            state.requiresStandaloneRelease = standaloneModifierActions.contains(action)
+            state.isInterrupted = state.requiresStandaloneRelease && !pressedKeyCodes.isEmpty
             shortcuts[action] = state
-            dispatchShortcutDown(for: action, eventTime: eventTime)
+            if !state.requiresStandaloneRelease {
+                dispatchShortcutDown(for: action, eventTime: eventTime)
+            }
+        }
+    }
+
+    private func updatePressedKeyCodes(kind: EventKind, inputCode: UInt16) {
+        switch kind {
+        case .keyDown:
+            pressedKeyCodes.insert(inputCode)
+        case .keyUp:
+            pressedKeyCodes.remove(inputCode)
+        case .flagsChanged, .mouseDown, .mouseDragged, .mouseUp:
+            break
+        }
+    }
+
+    private func invalidateStandaloneModifierCandidateForKeyboardEvent(
+        kind: EventKind,
+        inputCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags
+    ) {
+        guard kind == .keyDown || kind == .keyUp || kind == .flagsChanged else {
+            return
+        }
+
+        for action in Array(shortcuts.keys) {
+            guard var state = shortcuts[action],
+                state.isDown,
+                state.requiresStandaloneRelease,
+                !state.isInterrupted
+            else {
+                continue
+            }
+
+            let isReleaseEvent = kind == .flagsChanged
+                && state.shortcut.shouldReleaseModifierEvent(
+                    keyCode: inputCode,
+                    modifierFlags: modifierFlags
+                )
+            if !isReleaseEvent {
+                state.isInterrupted = true
+                shortcuts[action] = state
+            }
         }
     }
 

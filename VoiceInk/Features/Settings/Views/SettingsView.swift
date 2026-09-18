@@ -13,7 +13,7 @@ struct SettingsView: View {
     @ObservedObject private var launchAtLoginManager = LaunchAtLoginManager.shared
     @ObservedObject private var mediaController = MediaController.shared
     @ObservedObject private var playbackController = PlaybackController.shared
-    @AppStorage("hasCompletedOnboardingV2") private var hasCompletedOnboardingV2 = true
+    @AppStorage(OnboardingSettings.completedV2Key) private var hasCompletedOnboardingV2 = true
     @AppStorage("enableAnnouncements") private var enableAnnouncements = true
     @AppStorage("restoreClipboardAfterPaste") private var restoreClipboardAfterPaste = true
     @AppStorage("clipboardRestoreDelay") private var clipboardRestoreDelay = 2.0
@@ -26,6 +26,7 @@ struct SettingsView: View {
     @State private var showResetOnboardingAlert = false
     @State private var showLanguageRestartAlert = false
     @State private var cancelRecordingShortcutRecorderResetID = 0
+    @State private var isImportingSettings = false
 
     @State private var isRestoreClipboardExpanded = false
 
@@ -272,17 +273,23 @@ struct SettingsView: View {
 
                 LabeledContent("Import Settings") {
                     Button("Import") {
-                        ImportExportService.shared.importSettings(
-                            enhancementService: enhancementService,
-                            recordingShortcutManager: recordingShortcutManager,
-                            menuBarManager: menuBarManager,
-                            mediaController: mediaController,
-                            playbackController: playbackController,
-                            recorderUIManager: recorderUIManager,
-                            modelContext: modelContext,
-                            transcriptionModelManager: transcriptionModelManager
-                        )
+                        guard !isImportingSettings else { return }
+                        isImportingSettings = true
+                        Task { @MainActor in
+                            defer { isImportingSettings = false }
+                            await ImportExportService.shared.importSettings(
+                                enhancementService: enhancementService,
+                                recordingShortcutManager: recordingShortcutManager,
+                                menuBarManager: menuBarManager,
+                                mediaController: mediaController,
+                                playbackController: playbackController,
+                                recorderUIManager: recorderUIManager,
+                                modelContext: modelContext,
+                                transcriptionModelManager: transcriptionModelManager
+                            )
+                        }
                     }
+                    .disabled(isImportingSettings)
                 }
             } header: {
                 Text("Backup")

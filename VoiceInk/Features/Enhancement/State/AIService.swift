@@ -238,6 +238,7 @@ class AIService: ObservableObject {
     private lazy var ollamaService = OllamaService()
     private lazy var localCLIService = LocalCLIService()
     private var apiKeyChangeObserver: NSObjectProtocol?
+    private var settingsChangeObserver: NSObjectProtocol?
     private var voiceInkRefineObserver: AnyCancellable?
 
     @Published private var openRouterModels: [String] = []
@@ -348,22 +349,30 @@ class AIService: ObservableObject {
 
         loadSavedModelSelections()
         loadSavedOpenRouterModels()
+        initializeAutoLearnSelectionIfNeeded()
 
-        voiceInkRefineObserver = voiceInkRefineService.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
+        // Observe installation state without forwarding every progress update to the entire scene.
+        voiceInkRefineObserver = voiceInkRefineService.$isDownloaded
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self else { return }
 
-                if self.selectedProvider == .voiceInkRefine {
-                    let isAvailable = self.voiceInkRefineService.isAvailableInModes
-                    if self.isAPIKeyValid != isAvailable {
-                        self.isAPIKeyValid = isAvailable
-                        return
+                    if self.selectedProvider == .voiceInkRefine {
+                        let isAvailable = self.voiceInkRefineService.isAvailableInModes
+                        if self.isAPIKeyValid != isAvailable {
+                            self.isAPIKeyValid = isAvailable
+                        }
                     }
-                }
 
-                self.objectWillChange.send()
+                    if self.voiceInkRefineService.isAvailableInModes {
+                        self.initializeAutoLearnSelectionIfNeeded()
+                    }
+
+                    self.objectWillChange.send()
+                }
             }
-        }
 
         apiKeyChangeObserver = NotificationCenter.default.addObserver(
             forName: .aiProviderKeyChanged,
@@ -371,14 +380,27 @@ class AIService: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.reloadSelectedProviderConfiguration()
+                guard let self else { return }
+                self.reloadSelectedProviderConfiguration()
+                self.initializeAutoLearnSelectionIfNeeded()
             }
+        }
+
+        settingsChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AppSettingsDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.initializeAutoLearnSelectionIfNeeded()
         }
     }
 
     deinit {
         if let apiKeyChangeObserver {
             NotificationCenter.default.removeObserver(apiKeyChangeObserver)
+        }
+        if let settingsChangeObserver {
+            NotificationCenter.default.removeObserver(settingsChangeObserver)
         }
         voiceInkRefineObserver?.cancel()
     }
@@ -414,6 +436,36 @@ class AIService: ObservableObject {
                 isAPIKeyValid = true
             }
         }
+    }
+
+    private func initializeAutoLearnSelectionIfNeeded() {
+        if let selectedProvider = AutoLearnSettings.selectedProvider,
+            AutoLearnProviderPolicy.isSupported(selectedProvider)
+        {
+            return
+        }
+
+        let availableProviders = connectedProviders.filter {
+            AutoLearnProviderPolicy.isSupported($0)
+                && ($0 != .ollama || !availableModels(for: $0).isEmpty)
+        }
+        let provider = availableProviders.contains(selectedProvider)
+            ? selectedProvider
+            : availableProviders.first
+        guard let provider else { return }
+
+        AutoLearnSettings.initializeSelectionIfNeeded(
+            provider: provider,
+            model: initialAutoLearnModel(for: provider)
+        )
+    }
+
+    private func initialAutoLearnModel(for provider: AIProvider) -> String {
+        let selectedModel = selectedModel(for: provider)
+        let availableModels = availableModels(for: provider)
+        return availableModels.contains(selectedModel)
+            ? selectedModel
+            : availableModels.first ?? selectedModel
     }
 
     private func loadSavedModelSelections() {
@@ -491,6 +543,7 @@ class AIService: ObservableObject {
                     self.isAPIKeyValid = true
                     APIKeyManager.shared.saveAPIKey(key, forProvider: self.selectedProvider.rawValue)
                     NotificationCenter.default.post(name: .aiProviderKeyChanged, object: nil)
+                    NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
                 } else {
                     self.isAPIKeyValid = false
                 }
@@ -581,11 +634,6 @@ class AIService: ObservableObject {
         }
     }
 
-    func fetchOllamaModels() async -> [OllamaModel] {
-        let result = await refreshOllamaAvailability()
-        return result.models
-    }
-
     func refreshOllamaAvailabilityInBackground() {
         Task { [weak self] in
             guard let self else { return }
@@ -674,6 +722,26 @@ class AIService: ObservableObject {
 
     func enhanceWithVoiceInkRefine(transcript: String) async throws -> String {
         try await voiceInkRefineService.enhance(transcript: transcript)
+    }
+
+    func reviewAutoLearnCandidates(
+        payload: String,
+        systemPrompt: String,
+        provider: AIProvider,
+        modelName: String?
+    ) async throws -> String {
+        guard AutoLearnProviderPolicy.isSupported(provider) else {
+            throw EnhancementError.notConfigured
+        }
+
+        return try await performChatCompletion(
+            provider: provider,
+            modelName: modelName,
+            messages: [.user(payload)],
+            systemPrompt: systemPrompt,
+            localUserPrompt: payload,
+            timeout: EnhancementRequestSettings.timeout
+        ).text
     }
 
     func updateOllamaBaseURL(_ newURL: String) {
