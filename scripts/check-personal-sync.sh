@@ -20,11 +20,9 @@ IFS=$'\t' read -r remote_main_oid _ <<< "$remote_main"
 test "$remote_main_oid" = "$(git rev-parse upstream/main)" ||
     fail "upstream/main is stale; fetch upstream before continuing"
 
-if merge_head=$(git rev-parse --verify -q MERGE_HEAD); then
+merge_head=$(git rev-parse --verify -q MERGE_HEAD || true)
+if ! git merge-base --is-ancestor upstream/main HEAD; then
     test "$merge_head" = "$remote_main_oid" ||
-        fail "the pending merge is not the latest upstream/main"
-else
-    git merge-base --is-ancestor upstream/main HEAD ||
         fail "personal does not contain the latest upstream/main"
 fi
 
