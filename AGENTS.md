@@ -17,3 +17,11 @@ For read-only requests, report any drift without changing the checkout. Before i
 Add one row to `scripts/personal-prs.tsv` when a PR is requested, including PRs already merged. Keep rows after a merge as history; the live state check then skips reapplication. Use the full upstream PR URL and a short reason for retaining it. Add a focused regression check for each new overlay, extending `scripts/check-personal-sync.sh` if its test is outside `VoiceInkTests`. For changes that are not PRs, record the request and its regression check in a separate, named section here; they must survive future upstream merges too.
 
 The check is a snapshot, not a background updater. Repeat this sequence whenever work resumes on `personal`, and report any upstream or PR changes that cannot be integrated safely.
+
+## Tracked local overlays
+
+### Dictionary section descriptions
+
+- Source: `feat/dictionary-section-descriptions` at `db469d75128f28aca0ee3ca083a1c4e4b875bacf`.
+- Preserve named vocabulary sections, their optional descriptions, word membership, grouped enhancement prompts, editor UI, and section data in dictionary import/export and backups. Keep version 1 dictionary archives and unsectioned vocabulary compatible.
+- Regression: `./scripts/check-personal-sync.sh` runs `VocabularySectionTests` and `DictionarySmokeTests` as part of `VoiceInkTests`.
