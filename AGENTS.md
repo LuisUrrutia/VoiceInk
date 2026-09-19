@@ -22,6 +22,6 @@ The check is a snapshot, not a background updater. Repeat this sequence whenever
 
 ### Dictionary section descriptions
 
-- Source: `feat/dictionary-section-descriptions` at `db469d75128f28aca0ee3ca083a1c4e4b875bacf`.
-- Preserve named vocabulary sections, their optional descriptions, word membership, grouped enhancement prompts, editor UI, and section data in dictionary import/export and backups. Keep version 1 dictionary archives and unsectioned vocabulary compatible.
+- Source: `feat/dictionary-section-descriptions` at `7f2633335deb9eb25043cc43b7179ddd108ca154`.
+- Preserve named vocabulary sections, their optional descriptions, drag-and-drop membership, section-scoped duplicate terms, grouped enhancement prompts, editor UI, and section data in dictionary import/export and backups. Keep version 1 dictionary archives, unsectioned vocabulary, legacy-store migration, and isolated development persistence compatible.
 - Regression: `./scripts/check-personal-sync.sh` runs `VocabularySectionTests` and `DictionarySmokeTests` as part of `VoiceInkTests`.
