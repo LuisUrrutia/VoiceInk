@@ -24,7 +24,7 @@ struct AppSettingsFormStyle: FormStyle {
                                 }
                             }
                         }
-                        .background(AppSettingsCardBackground())
+                        .background(AppTranslucentCardBackground())
 
                         if !section.footer.isEmpty {
                             section.footer
@@ -58,32 +58,5 @@ private struct AppSettingsLabeledContentStyle: LabeledContentStyle {
                 configuration.content.frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-    }
-}
-
-private struct AppSettingsCardBackground: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: AppTheme.Radius.card)
-            .fill(reduceTransparency ? AnyShapeStyle(opaqueFill) : AnyShapeStyle(.regularMaterial))
-            .overlay {
-                if !reduceTransparency {
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.card)
-                        .fill(.white.opacity(colorScheme == .light ? 0.60 : 0.06))
-                }
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: AppTheme.Radius.card)
-                    .strokeBorder(.primary.opacity(contrast == .increased ? 0.30 : 0.08))
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-
-    private var opaqueFill: Color {
-        colorScheme == .light ? .white : AppTheme.Surface.card
     }
 }

@@ -305,7 +305,7 @@ struct DashboardContent: View {
                 summaryMetric(Formatters.formattedSavedTime(selectedTimeSavedSummary.timeSaved), title: "Time saved")
             }
             .padding(.vertical, 22)
-            .background(AppTheme.Surface.card, in: RoundedRectangle(cornerRadius: 18))
+            .background(AppTranslucentCardBackground(cornerRadius: 18))
         }
     }
 

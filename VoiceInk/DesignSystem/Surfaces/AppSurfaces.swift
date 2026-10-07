@@ -60,6 +60,35 @@ struct AppMaterialCardBackground: View {
     }
 }
 
+struct AppTranslucentCardBackground: View {
+    var cornerRadius: CGFloat = AppTheme.Radius.card
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(reduceTransparency ? AnyShapeStyle(opaqueFill) : AnyShapeStyle(.regularMaterial))
+            .overlay {
+                if !reduceTransparency {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(.white.opacity(colorScheme == .light ? 0.60 : 0.06))
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(.primary.opacity(contrast == .increased ? 0.30 : 0.08))
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private var opaqueFill: Color {
+        colorScheme == .light ? .white : AppTheme.Surface.card
+    }
+}
+
 struct MetricTintBackground: View {
     let color: Color
     var cornerRadius: CGFloat = AppTheme.Radius.card
