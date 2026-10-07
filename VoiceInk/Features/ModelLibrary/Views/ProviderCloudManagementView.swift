@@ -265,7 +265,7 @@ private struct ProviderListRow: View {
 
                 ProviderStatusBadge(title: statusText, color: statusColor)
 
-                Image(systemName: "chevron.right")
+                Image(appSymbol: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }

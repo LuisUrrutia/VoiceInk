@@ -79,7 +79,7 @@ struct AIProviderVerificationCard: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text("Switch AI provider")
-                        Image(systemName: isSwitchingProvider ? "chevron.up" : "chevron.down")
+                        Image(appSymbol: isSwitchingProvider ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .bold))
                     }
                     .font(.system(size: 11, weight: .semibold))
@@ -116,7 +116,7 @@ struct AIProviderVerificationCard: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text("Get API key")
-                            Image(systemName: "arrow.up.right")
+                            Image(appSymbol: "arrow.up.right")
                                 .font(.system(size: 9, weight: .semibold))
                         }
                         .font(.system(size: 11, weight: .semibold))
@@ -175,7 +175,7 @@ struct AIProviderVerificationCard: View {
     private var verifiedProviderSummary: some View {
         HStack(alignment: .center, spacing: 12) {
             HStack(spacing: 9) {
-                Image(systemName: "checkmark.circle.fill")
+                Image(appSymbol: "checkmark.circle.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(AppTheme.Status.positive)
 
@@ -195,7 +195,7 @@ struct AIProviderVerificationCard: View {
     private var statusLine: some View {
         if let verificationMessage {
             HStack(alignment: .top, spacing: 7) {
-                Image(systemName: verificationSucceeded ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                Image(appSymbol: verificationSucceeded ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(verificationSucceeded ? AppTheme.Status.positive : AppTheme.Status.error)
                     .padding(.top, 1)
@@ -370,7 +370,7 @@ private struct ProviderChoiceButton: View {
                 Spacer(minLength: 0)
 
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(appSymbol: "checkmark.circle.fill")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(AppTheme.Text.secondary)
                 }

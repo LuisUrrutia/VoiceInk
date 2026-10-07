@@ -9,7 +9,7 @@ struct ModeIconView: View {
         Group {
             switch icon.kind {
             case .symbol:
-                Image(systemName: icon.value)
+                Image(appSymbol: icon.value)
                     .font(.system(size: size, weight: .medium))
                     .foregroundStyle(color)
             case .emoji:
@@ -226,7 +226,7 @@ private struct ModeIconButton: View {
 
             if isRemovable {
                 Button(action: removeAction) {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(appSymbol: "xmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(Color.white, AppTheme.Status.error)
                         .font(.caption2)
@@ -244,7 +244,7 @@ private struct AddEmojiButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "plus.circle.fill")
+            Image(appSymbol: "plus.circle.fill")
                 .font(.title2)
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)

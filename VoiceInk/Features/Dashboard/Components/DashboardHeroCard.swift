@@ -159,7 +159,7 @@ private struct DashboardMomentumActionLabel: View {
             Text(title)
                 .lineLimit(2)
 
-            Image(systemName: icon)
+            Image(appSymbol: icon)
                 .font(.system(size: 13, weight: .semibold))
         }
         .font(.system(size: 13, weight: .semibold))

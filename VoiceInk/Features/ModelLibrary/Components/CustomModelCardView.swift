@@ -43,13 +43,13 @@ struct CustomModelCardView: View {
                 .lineLimit(1)
 
             // Language
-            Label(model.language, systemImage: "globe")
+            Label(model.language, appSymbol: "globe")
                 .font(.system(size: 11))
                 .foregroundColor(Color(.secondaryLabelColor))
                 .lineLimit(1)
 
             // OpenAI Compatible
-            Label("OpenAI Compatible", systemImage: "checkmark.seal")
+            Label("OpenAI Compatible", appSymbol: "checkmark.seal")
                 .font(.system(size: 11))
                 .foregroundColor(Color(.secondaryLabelColor))
                 .lineLimit(1)
@@ -74,16 +74,16 @@ struct CustomModelCardView: View {
                 Button {
                     editAction(model)
                 } label: {
-                    Label("Edit Model", systemImage: "pencil")
+                    Label("Edit Model", appSymbol: "pencil")
                 }
 
                 Button(role: .destructive) {
                     deleteAction()
                 } label: {
-                    Label("Delete Model", systemImage: "trash")
+                    Label("Delete Model", appSymbol: "trash")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(appSymbol: "ellipsis.circle")
                     .font(.system(size: 14))
             }
             .menuStyle(.borderlessButton)

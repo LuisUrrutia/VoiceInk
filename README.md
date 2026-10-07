@@ -95,6 +95,7 @@ If you encounter any issues or have questions, please:
 - [SenseVoice Small](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) by FunAudioLLM / Alibaba - Multilingual model available under the [FunASR Model Open Source License Agreement](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE)
 
 ### Essential Dependencies
+- [Phosphor Icons](https://phosphoricons.com) - Custom symbols for navigation and common actions (MIT; bundled license in `VoiceInk/Resources/Licenses/`)
 - [Sparkle](https://github.com/sparkle-project/Sparkle) - Keeping VoiceInk up to date
 - [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) - User-customizable keyboard shortcuts
 - [LaunchAtLogin](https://github.com/sindresorhus/LaunchAtLogin) - Launch at login functionality

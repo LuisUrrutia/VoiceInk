@@ -196,7 +196,7 @@ struct AudioTranscribeView: View {
                     startProcessing()
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "play.fill")
+                        Image(appSymbol: "play.fill")
                             .font(.system(size: 10, weight: .medium))
                         Text("Start")
                             .font(.system(size: 12, weight: .semibold))
@@ -268,7 +268,7 @@ struct AudioTranscribeView: View {
                             .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                        Image(systemName: "chevron.up.chevron.down")
+                        Image(appSymbol: "chevron.up.chevron.down")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundColor(.secondary)
                     }

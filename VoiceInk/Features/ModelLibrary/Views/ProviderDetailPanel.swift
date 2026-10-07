@@ -137,7 +137,7 @@ struct ProviderDetailPanel: View {
             Button {
                 isShowingRemoveAPIKeyConfirmation = true
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(appSymbol: "xmark.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
@@ -192,7 +192,7 @@ struct ProviderDetailPanel: View {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            Image(systemName: "checkmark.seal")
+                            Image(appSymbol: "checkmark.seal")
                         }
                         Text(isVerifying ? LocalizedStringKey("Verifying") : LocalizedStringKey("Verify"))
                     }
@@ -207,13 +207,13 @@ struct ProviderDetailPanel: View {
             if let consoleURL = descriptor.apiConsoleURL {
                 Link(destination: consoleURL) {
                     HStack(spacing: 7) {
-                        Image(systemName: "link")
+                        Image(appSymbol: "link")
                             .font(.system(size: 11, weight: .semibold))
 
                         Text(String(format: String(localized: "Get %@ API Key"), descriptor.displayName))
                             .font(.system(size: 12, weight: .medium))
 
-                        Image(systemName: "arrow.up.right.square")
+                        Image(appSymbol: "arrow.up.right.square")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
@@ -232,7 +232,7 @@ struct ProviderDetailPanel: View {
     }
 
     private func providerDetailIcon(_ systemName: String) -> some View {
-        Image(systemName: systemName)
+        Image(appSymbol: systemName)
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(.primary)
             .frame(width: 30, height: 30)
@@ -353,7 +353,7 @@ struct ProviderDetailPanel: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Image(systemName: "arrow.clockwise")
+                        Image(appSymbol: "arrow.clockwise")
                     }
                     Text(isRefreshingOpenRouterModels ? LocalizedStringKey("Refreshing") : LocalizedStringKey("Refresh"))
                 }
@@ -395,7 +395,7 @@ struct ProviderDetailPanel: View {
     }
 
     private func modelTypeIcon(_ systemName: String) -> some View {
-        Image(systemName: systemName)
+        Image(appSymbol: systemName)
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.primary)
             .frame(width: 24, height: 24)

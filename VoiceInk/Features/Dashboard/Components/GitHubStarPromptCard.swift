@@ -52,7 +52,7 @@ struct GitHubStarPromptCard: View {
                                 .controlSize(.small)
                                 .tint(.secondary)
                         } else {
-                            Image(systemName: openFailed ? "exclamationmark.triangle.fill" : "star")
+                            Image(appSymbol: openFailed ? "exclamationmark.triangle.fill" : "star")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(openFailed ? .orange : .primary)
                         }
@@ -87,7 +87,7 @@ struct GitHubStarPromptCard: View {
 
     private var completionContent: some View {
         HStack(spacing: 8) {
-            Image(systemName: completionState == .starred ? "checkmark.circle.fill" : "arrow.up.right.circle.fill")
+            Image(appSymbol: completionState == .starred ? "checkmark.circle.fill" : "arrow.up.right.circle.fill")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(completionState == .starred ? AppTheme.Status.positive : .secondary)
 

@@ -114,7 +114,7 @@ struct VocabularyView: View {
                 Button {
                     sectionEditor = SectionEditor(section: nil)
                 } label: {
-                    Label("New section", systemImage: "plus")
+                    Label("New section", appSymbol: "plus")
                 }
                 .appGlassButtonStyle()
 
@@ -202,7 +202,7 @@ struct VocabularyView: View {
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(.secondary)
 
-                                Image(systemName: sortIconName)
+                                Image(appSymbol: sortIconName)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }

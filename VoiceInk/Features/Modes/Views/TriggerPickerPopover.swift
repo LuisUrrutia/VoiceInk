@@ -129,7 +129,7 @@ struct TriggerPickerPopover: View {
 
     private var searchField: some View {
         HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
+            Image(appSymbol: "magnifyingglass")
                 .foregroundColor(.secondary)
                 .font(.system(size: 12))
 
@@ -141,7 +141,7 @@ struct TriggerPickerPopover: View {
 
             if !searchText.isEmpty {
                 Button(action: { searchText = "" }) {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(appSymbol: "xmark.circle.fill")
                         .foregroundColor(.secondary)
                         .font(.system(size: 12))
                 }
@@ -267,7 +267,7 @@ struct TriggerPickerPopover: View {
                 Spacer()
 
                 if !isSelected && !isUnavailable {
-                    Image(systemName: "plus.circle.fill")
+                    Image(appSymbol: "plus.circle.fill")
                         .font(.system(size: 14, weight: .medium))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
@@ -315,7 +315,7 @@ struct TriggerPickerPopover: View {
                 Spacer()
 
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(appSymbol: "checkmark.circle.fill")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
                 }

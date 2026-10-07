@@ -67,12 +67,12 @@ struct NativeAppleLanguageAssetControl: View {
                 .controlSize(.small)
                 .frame(width: 28, height: 24)
         case .notSupported:
-            Image(systemName: "exclamationmark.triangle")
+            Image(appSymbol: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .frame(width: 28, height: 24)
         case .assetManagementUnavailable:
-            Image(systemName: "exclamationmark.triangle")
+            Image(appSymbol: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .frame(width: 28, height: 24)

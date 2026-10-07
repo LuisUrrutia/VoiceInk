@@ -10,7 +10,7 @@ struct ModelDetailActionLabel: View {
             Text(title)
                 .lineLimit(1)
 
-            Image(systemName: icon)
+            Image(appSymbol: icon)
                 .font(.system(size: 10, weight: .bold))
         }
         .font(.system(size: 12, weight: .semibold))
@@ -58,7 +58,7 @@ struct InsightPeriodPicker: View {
                     selection = period
                 } label: {
                     if period == selection {
-                        Label(period.pickerTitle, systemImage: "checkmark")
+                        Label(period.pickerTitle, appSymbol: "checkmark")
                     } else {
                         Text(period.pickerTitle)
                     }
@@ -66,9 +66,9 @@ struct InsightPeriodPicker: View {
             }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "calendar")
+                Image(appSymbol: "calendar")
                 Text(selection.pickerTitle)
-                Image(systemName: "chevron.down")
+                Image(appSymbol: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
             }
             .font(.system(size: 12, weight: .semibold))
@@ -98,7 +98,7 @@ struct ModelActionLabel: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: icon)
+            Image(appSymbol: icon)
                 .font(.system(size: 12, weight: .semibold))
 
             Text(title)
@@ -126,7 +126,7 @@ struct InsightEmptyState: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: icon)
+            Image(appSymbol: icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(AppTheme.Text.secondary)
 

@@ -431,7 +431,7 @@ struct ModelManagementView: View {
 
     private var intelMacWarningBanner: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(appSymbol: "exclamationmark.triangle.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(AppTheme.Status.warningStrong)
 
@@ -449,7 +449,7 @@ struct ModelManagementView: View {
                 HStack(spacing: 4) {
                     Text("Use Cloud")
                         .font(.system(size: 12, weight: .semibold))
-                    Image(systemName: "arrow.right")
+                    Image(appSymbol: "arrow.right")
                         .font(.system(size: 10, weight: .bold))
                 }
                 .foregroundColor(AppTheme.Status.warningStrong)

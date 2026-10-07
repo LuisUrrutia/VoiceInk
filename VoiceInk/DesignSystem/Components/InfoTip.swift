@@ -16,7 +16,7 @@ struct InfoTip: View {
     @State private var isShowingTip: Bool = false
 
     var body: some View {
-        Image(systemName: iconName)
+        Image(appSymbol: iconName)
             .imageScale(iconSize)
             .foregroundColor(iconColor)
             .fontWeight(.semibold)

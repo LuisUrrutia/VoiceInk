@@ -43,7 +43,7 @@ struct AudioFileRow: View {
 
     private var pendingRow: some View {
         HStack {
-            Image(systemName: "clock")
+            Image(appSymbol: "clock")
                 .foregroundColor(.secondary)
 
             Text(item.filename)
@@ -59,7 +59,7 @@ struct AudioFileRow: View {
             Button {
                 onRemove()
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(appSymbol: "xmark.circle.fill")
                     .symbolRenderingMode(.hierarchical)
                     .foregroundColor(.secondary)
             }
@@ -92,7 +92,7 @@ struct AudioFileRow: View {
     @ViewBuilder
     private var completedRows: some View {
         HStack {
-            Image(systemName: "checkmark.circle.fill")
+            Image(appSymbol: "checkmark.circle.fill")
                 .foregroundColor(AppTheme.Status.positive)
 
             Text(item.filename)
@@ -124,7 +124,7 @@ struct AudioFileRow: View {
                 }
             }
 
-            Image(systemName: "chevron.right")
+            Image(appSymbol: "chevron.right")
                 .font(.caption2.weight(.semibold))
                 .foregroundColor(.secondary)
                 .rotationEffect(.degrees(isExpanded ? 90 : 0))
@@ -153,12 +153,12 @@ struct AudioFileRow: View {
 
             HStack(spacing: 12) {
                 if let model = transcription.transcriptionModelName {
-                    Label(model, systemImage: "cpu")
+                    Label(model, appSymbol: "cpu")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 if let prompt = transcription.promptName {
-                    Label(prompt, systemImage: "sparkles")
+                    Label(prompt, appSymbol: "sparkles")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -207,7 +207,7 @@ struct AudioFileRow: View {
             Button {
                 onRetry()
             } label: {
-                Image(systemName: "arrow.counterclockwise")
+                Image(appSymbol: "arrow.counterclockwise")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)

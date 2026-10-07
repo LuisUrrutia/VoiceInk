@@ -102,7 +102,7 @@ private struct CustomProviderEmptyState: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: systemImage)
+            Image(appSymbol: systemImage)
                 .font(.system(size: 32))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
@@ -125,7 +125,7 @@ private struct CustomEnhancementModelRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "sparkles")
+            Image(appSymbol: "sparkles")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 28, height: 28)
@@ -161,7 +161,7 @@ private struct CustomEnhancementModelRow: View {
                 Button("Edit", action: onEdit)
                 Button("Delete", role: .destructive, action: onDelete)
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(appSymbol: "ellipsis.circle")
                     .font(.system(size: 14))
             }
             .menuStyle(.borderlessButton)
@@ -669,7 +669,7 @@ private struct ConnectionTestRow: View {
 
             Button(action: action) {
                 HStack(spacing: 5) {
-                    Image(systemName: "wifi")
+                    Image(appSymbol: "wifi")
                         .font(.system(size: 11))
                     Text("Test")
                         .font(.system(size: 12))
@@ -698,7 +698,7 @@ private struct ConnectionTestRow: View {
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.Text.secondary)
         case .success:
-            Label("Test successful", systemImage: "checkmark.circle")
+            Label("Test successful", appSymbol: "checkmark.circle")
                 .font(.system(size: 12))
                 .foregroundStyle(AppTheme.Status.positive)
                 .lineLimit(1)

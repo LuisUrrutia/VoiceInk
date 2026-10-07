@@ -180,7 +180,7 @@ struct LanguageSelectionView: View {
                                 HStack {
                                     Text(value)
                                     if selectedLanguage == key {
-                                        Image(systemName: "checkmark")
+                                        Image(appSymbol: "checkmark")
                                     }
                                 }
                             }
@@ -188,7 +188,7 @@ struct LanguageSelectionView: View {
                     } label: {
                         HStack {
                             Text(String(format: String(localized: "Language: %@"), currentLanguageDisplayName()))
-                            Image(systemName: "chevron.up.chevron.down")
+                            Image(appSymbol: "chevron.up.chevron.down")
                                 .font(.system(size: 10))
                         }
                     }

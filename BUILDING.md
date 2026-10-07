@@ -69,6 +69,22 @@ open VoiceInk.xcodeproj
 
 Select the `VoiceInk` scheme. Run builds `VoiceInk Dev.app`; Archive uses Release. `LOCAL_BUILD` applies only through `make local`.
 
+## Regenerate Icons
+
+Phosphor 2.1.1 custom symbols are checked into `VoiceInk/Assets.xcassets/Phosphor`. Normal builds use these assets without downloading icons or running a converter.
+
+To change the catalog, edit `SYMBOLS` in `scripts/phosphor-symbols.py`, then regenerate it with Python 3 and SwiftDraw 0.29.0:
+
+```bash
+git clone --depth 1 --branch 0.29.0 git@github.com:swhitty/SwiftDraw.git .tmp/swiftdraw
+swift build --package-path .tmp/swiftdraw -c release --product swiftdrawcli
+python3 scripts/phosphor-symbols.py .tmp/swiftdraw/.build/release/swiftdrawcli
+```
+
+The generator verifies the pinned Phosphor archive's checksum and stages all conversions before replacing the catalog, Swift mapping and bundled MIT license. Download or conversion failures preserve the existing files. Include all three outputs in the same commit.
+
+Use `Image(appSymbol:)` or `Label(_:appSymbol:)` with an SF Symbol name. Mapped names use Phosphor; other names, or missing assets, use the system symbol. Sidebar tint layers use VoiceInk's current accent color. The custom symbols keep one fixed stroke weight while their size follows the font.
+
 ## Troubleshooting
 
 - Run `make check` to verify the required tools.

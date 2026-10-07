@@ -759,7 +759,7 @@ private struct DashboardNoModesReminder: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(AppTheme.Accent.fill)
 
-                Image(systemName: "square.grid.2x2")
+                Image(appSymbol: "square.grid.2x2")
                     .font(.system(size: 15, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AppTheme.Accent.primary)

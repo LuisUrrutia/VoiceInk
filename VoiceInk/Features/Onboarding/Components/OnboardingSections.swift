@@ -20,7 +20,7 @@ struct OnboardingHeroHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: systemImage)
+            Image(appSymbol: systemImage)
                 .font(.system(size: 24, weight: .medium))
                 .foregroundStyle(.tint)
                 .accessibilityHidden(true)
@@ -53,7 +53,7 @@ struct OnboardingSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Label("VoiceInk", systemImage: "waveform").font(.system(size: 20, weight: .semibold)).padding(.top, 16)
+            Label("VoiceInk", appSymbol: "waveform").font(.system(size: 20, weight: .semibold)).padding(.top, 16)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("GET STARTED").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)

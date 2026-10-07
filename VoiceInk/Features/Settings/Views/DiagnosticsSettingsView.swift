@@ -14,7 +14,7 @@ struct DiagnosticsSettingsView: View {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
 
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(appSymbol: "checkmark.circle.fill")
                         .foregroundColor(AppTheme.Status.positive)
                 }
 

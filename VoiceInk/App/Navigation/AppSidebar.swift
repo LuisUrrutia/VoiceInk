@@ -17,7 +17,7 @@ struct AppSidebar: View {
             .scrollIndicators(.hidden)
 
             HStack(spacing: 9) {
-                Image(systemName: "waveform").font(.system(size: 18, weight: .semibold))
+                Image(appSymbol: "waveform").font(.system(size: 18, weight: .semibold))
                 VStack(alignment: .leading, spacing: 3) {
                     Text("VoiceInk").font(.system(size: 13, weight: .semibold))
                     Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "").font(.caption)
@@ -39,12 +39,10 @@ struct AppSidebar: View {
             selectedView = destination
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: destination.icon)
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(.white)
+                Image(appSymbol: destination.icon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(isSelected ? AppTheme.Accent.primary : AppTheme.Text.secondary)
                     .frame(width: 26, height: 26)
-                    .background(
-                        destination.iconColor, in: RoundedRectangle(cornerRadius: 6)
-                    )
                     .accessibilityHidden(true)
 
                 Text(destination.title).font(.system(size: 14, weight: isSelected ? .semibold : .regular))
@@ -53,7 +51,12 @@ struct AppSidebar: View {
             .padding(.horizontal, 10).frame(height: 42).contentShape(RoundedRectangle(cornerRadius: 9))
             .background {
                 if isSelected {
-                    RoundedRectangle(cornerRadius: 9).fill(AppTheme.Selection.fill)
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(AppTheme.Accent.fillSubtle)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 9)
+                                .strokeBorder(AppTheme.Accent.border, lineWidth: 0.5)
+                        }
                 }
             }
         }
@@ -77,13 +80,4 @@ extension ViewType {
         }
     }
 
-    fileprivate var iconColor: Color {
-        switch self {
-        case .dashboard: .orange
-        case .modes, .dictionary: .blue
-        case .settings, .audio, .models: Color(nsColor: .systemGray)
-        case .history: .purple
-        case .transcribeAudio: .teal
-        }
-    }
 }
