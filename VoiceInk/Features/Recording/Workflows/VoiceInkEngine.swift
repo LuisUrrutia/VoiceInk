@@ -102,8 +102,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var canceledPipelineTranscriptionIDs = Set<UUID>()
     private var activeRecordingUseCase: RecordingUseCase = .newSession
     private var activePipelineUseCase: RecordingUseCase = .newSession
-    private var activeRecordingContextStore: RecordingContextSnapshotStore?
-    private var activeRecordingContextTasks: [Task<Void, Never>] = []
+    private let recordingContextCapture = RecordingContextCapture()
+    private var pipelineContextCapture: RecordingContextCapture.Session?
     private var voiceInkRefinePreparationTask: Task<Void, Never>?
 
     let recorder = Recorder()
@@ -182,6 +182,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
 
         if recordingState == .recording {
+            let context = recordingContextCapture.take()
+            pipelineContextCapture = context
+            defer {
+                context?.cancel()
+                if pipelineContextCapture === context {
+                    pipelineContextCapture = nil
+                }
+            }
             activePipelineUseCase = activeRecordingUseCase
             activeRecordingUseCase = .newSession
             activeRecordingStartID = nil
@@ -204,7 +212,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     await runPipeline(
                         on: transcription,
                         audioURL: recordedFile,
-                        contextStore: activeRecordingContextStore,
+                        contextStore: context?.store,
                         sendAfterPaste: sendAfterPaste
                     )
                 } else {
@@ -223,6 +231,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
             activePipelineTranscriptionID = nil
+            clearPipelineRecordingContext()
             shouldCancelRecording = false
             partialTranscript = ""
             activeRecordingUseCase = recordingUseCase
@@ -277,6 +286,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                             }
 
                             self.recordingState = .recording
+                            self.startRecordingContextCapture(recordingID: startID)
 
                             // Only retire the previous paste session once recording
                             // has actually started. Preflight/permission failures
@@ -291,10 +301,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                                 self.activeRecordingStartID == startID,
                                 !self.shouldCancelRecording
                             else {
+                                self.clearActiveRecordingContext(recordingID: startID)
                                 return
                             }
-
-                            self.startRecordingContextCapture()
 
                             let modelResolution = ModeRuntimeResolver.transcriptionModelResolution(
                                 transcriptionModelManager: self.transcriptionModelManager
@@ -316,7 +325,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                                 self.recordedFile = nil
                                 self.recordingState = .idle
                                 self.activeRecordingStartID = nil
-                                self.clearActiveRecordingContext()
+                                self.clearActiveRecordingContext(recordingID: startID)
                                 await self.cleanupResources()
                                 await self.recorderUIManager?.dismissRecorderPanel()
                                 return
@@ -408,7 +417,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                             self.recordingState = .idle
                             self.recordedFile = nil
                             self.activeRecordingStartID = nil
-                            self.clearActiveRecordingContext()
+                            self.clearActiveRecordingContext(recordingID: startID)
                             await self.cleanupResources()
                             if let failure = audioFailure {
                                 NotificationManager.shared.showNotification(
@@ -511,18 +520,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     // MARK: - Recording Context
 
-    private func startRecordingContextCapture() {
-        clearActiveRecordingContext()
-
-        let store = RecordingContextSnapshotStore()
-        activeRecordingContextStore = store
-        activeRecordingContextTasks = RecordingContextCaptureService.startCapture(into: store)
+    private func startRecordingContextCapture(recordingID: UUID) {
+        recordingContextCapture.start(recordingID: recordingID)
     }
 
-    private func clearActiveRecordingContext() {
-        activeRecordingContextTasks.forEach { $0.cancel() }
-        activeRecordingContextTasks.removeAll()
-        activeRecordingContextStore = nil
+    private func clearActiveRecordingContext(recordingID: UUID? = nil) {
+        recordingContextCapture.clear(recordingID: recordingID)
+    }
+
+    private func clearPipelineRecordingContext() {
+        pipelineContextCapture?.cancel()
+        pipelineContextCapture = nil
     }
 
     // MARK: - Pipeline Dispatch
@@ -635,7 +643,6 @@ class VoiceInkEngine: NSObject, ObservableObject {
             recordedFile = nil
             shouldCancelRecording = false
             activePipelineUseCase = .newSession
-            clearActiveRecordingContext()
         }
         canceledPipelineTranscriptionIDs.remove(transcriptionID)
 
@@ -692,6 +699,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         activeRecordingUseCase = .newSession
         activePipelineUseCase = .newSession
         clearActiveRecordingContext()
+        clearPipelineRecordingContext()
         await recorder.stopRecording()
         recordedFile = nil
         recordingState = .idle
@@ -701,10 +709,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private func requestRecordingCancellation() {
         shouldCancelRecording = true
 
-        if (recordingState == .transcribing || recordingState == .enhancing),
-            let activePipelineTranscriptionID
-        {
-            canceledPipelineTranscriptionIDs.insert(activePipelineTranscriptionID)
+        if recordingState == .transcribing || recordingState == .enhancing {
+            if let activePipelineTranscriptionID {
+                canceledPipelineTranscriptionIDs.insert(activePipelineTranscriptionID)
+            }
+            clearPipelineRecordingContext()
         }
 
         cancelCurrentSession()

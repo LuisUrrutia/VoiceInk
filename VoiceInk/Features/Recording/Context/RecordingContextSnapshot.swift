@@ -34,10 +34,8 @@ final class RecordingContextSnapshotStore {
 @MainActor
 enum RecordingContextCaptureService {
     static func startCapture(into store: RecordingContextSnapshotStore) -> [Task<Void, Never>] {
-        [
-            Task { @MainActor in
-                store.updateClipboardText(NSPasteboard.general.string(forType: .string))
-            },
+        store.updateClipboardText(NSPasteboard.general.string(forType: .string))
+        return [
             Task { @MainActor in
                 guard !Task.isCancelled else { return }
                 let selectedText = await SelectedTextService.fetchSelectedText()
@@ -52,5 +50,49 @@ enum RecordingContextCaptureService {
                 store.updateScreenText(screenText)
             },
         ]
+    }
+}
+
+@MainActor
+final class RecordingContextCapture {
+    @MainActor
+    final class Session {
+        let recordingID: UUID
+        let store = RecordingContextSnapshotStore()
+        private let tasks: [Task<Void, Never>]
+
+        init(recordingID: UUID, capture: @MainActor (RecordingContextSnapshotStore) -> [Task<Void, Never>]) {
+            self.recordingID = recordingID
+            tasks = capture(store)
+        }
+
+        func cancel() {
+            tasks.forEach { $0.cancel() }
+        }
+    }
+
+    private var session: Session?
+    private let capture: @MainActor (RecordingContextSnapshotStore) -> [Task<Void, Never>]
+
+    init(
+        capture: @escaping @MainActor (RecordingContextSnapshotStore) -> [Task<Void, Never>] = RecordingContextCaptureService.startCapture
+    ) {
+        self.capture = capture
+    }
+
+    func start(recordingID: UUID) {
+        clear()
+        session = Session(recordingID: recordingID, capture: capture)
+    }
+
+    func clear(recordingID: UUID? = nil) {
+        if let recordingID, session?.recordingID != recordingID { return }
+        session?.cancel()
+        session = nil
+    }
+
+    func take() -> Session? {
+        defer { session = nil }
+        return session
     }
 }
