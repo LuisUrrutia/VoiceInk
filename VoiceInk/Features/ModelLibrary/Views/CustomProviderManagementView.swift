@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CustomProviderManagementView: View {
+    let category: ModelCatalogCategory
     @ObservedObject var customModelManager: CustomCloudModelManager
     @ObservedObject var customAIProviderManager: CustomAIProviderManager
 
@@ -13,8 +14,10 @@ struct CustomProviderManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            customTranscriptionSection
-            customEnhancementSection
+            switch category {
+            case .speech: customTranscriptionSection
+            case .enhancement: customEnhancementSection
+            }
         }
     }
 

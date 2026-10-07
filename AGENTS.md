@@ -81,3 +81,11 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 - Request: Show Vocabulary before Word Replacements in Dictionary.
 - Preserve Vocabulary as the first option in the Dictionary section selector, followed by Word Replacements.
 - Regression: `DictionarySmokeTests.testVocabularyPrecedesWordReplacementsInSectionSelector`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`.
+
+### Model catalog categories, filters, and sorting
+
+- Request: Separate speech models from enhancement models and services, and filter and sort the catalog.
+- Preserve Speech Models and Enhancement Models as the primary categories, with Local, Cloud, and Custom as secondary sources. Keep VoiceInk Refine, Ollama, and CLI services under Enhancement Models, and show only the selected capability in cloud and custom model lists and cloud provider panels.
+- Local model lists support All Models, Installed, and Not Installed. Count supported built-in Apple Speech and imported local models as installed; reflect completed downloads and deletions. Ollama and CLI services remain separately configurable and are outside the installation filter.
+- Local speech models support catalog order, fastest first, highest accuracy first, and name order. Use existing catalog ratings across local backends, keep unrated models last when sorting by ratings, and preserve catalog order for equal ratings.
+- Regression: `ModelCatalogTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, covers local filtering, installation snapshots, sorting, and cloud provider capability selection. Verify category routing, download/deletion refresh, service configuration access, and empty-state recovery in `VoiceInk Dev.app` when changing the catalog UI.

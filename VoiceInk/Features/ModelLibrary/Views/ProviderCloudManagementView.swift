@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct CloudProviderManagementView: View {
+    let category: ModelCatalogCategory
     let selectedProviderID: String?
     let onSelectProvider: (ProviderDescriptor) -> Void
 
@@ -46,7 +47,7 @@ struct CloudProviderManagementView: View {
             "Deepgram", "ElevenLabs", "Soniox", "Speechmatics", "AssemblyAI", "xAI", "Cartesia",
         ]
 
-        return descriptors.sorted { first, second in
+        return descriptors.filter { category.includes($0) }.sorted { first, second in
             let firstIndex = preferredOrder.firstIndex(of: first.displayName) ?? Int.max
             let secondIndex = preferredOrder.firstIndex(of: second.displayName) ?? Int.max
             if firstIndex != secondIndex { return firstIndex < secondIndex }
@@ -70,6 +71,7 @@ struct CloudProviderManagementView: View {
             ForEach(providerDescriptors) { descriptor in
                 ProviderListRow(
                     descriptor: descriptor,
+                    category: category,
                     isSelected: selectedProviderID == descriptor.id,
                     onSelect: {
                         onSelectProvider(descriptor)
@@ -182,6 +184,7 @@ private struct ProviderListRow: View {
     @EnvironmentObject private var transcriptionModelManager: TranscriptionModelManager
 
     let descriptor: ProviderDescriptor
+    let category: ModelCatalogCategory
     let isSelected: Bool
     let onSelect: () -> Void
 
@@ -198,16 +201,14 @@ private struct ProviderListRow: View {
     }
 
     private var iconName: String {
-        if descriptor.hasTranscription && descriptor.hasEnhancement { return "rectangle.2.swap" }
-        if descriptor.hasTranscription { return "captions.bubble.fill" }
-        return "sparkles"
+        category == .speech ? "captions.bubble.fill" : "sparkles"
     }
 
     private var capabilitySummary: String {
         var parts: [String] = []
 
         let transcriptionCount = descriptor.transcriptionModels.count
-        if descriptor.hasTranscription {
+        if category == .speech && descriptor.hasTranscription {
             parts.append(
                 transcriptionCount == 0
                     ? String(localized: "Transcription")
@@ -215,7 +216,7 @@ private struct ProviderListRow: View {
             )
         }
 
-        if let provider = descriptor.aiProvider {
+        if category == .enhancement, let provider = descriptor.aiProvider {
             let enhancementCount = aiService.availableModels(for: provider).count
             parts.append(enhancementModelCountText(enhancementCount))
         }
