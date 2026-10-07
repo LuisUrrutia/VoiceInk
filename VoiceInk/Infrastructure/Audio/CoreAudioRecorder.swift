@@ -34,7 +34,7 @@ struct AudioInputChannelSelection: Equatable {
 }
 
 // MARK: - Core Audio Recorder (AUHAL-based, does not change system default device)
-final class CoreAudioRecorder: @unchecked Sendable {
+final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private final class InputBufferSlot: @unchecked Sendable {
         let samples: UnsafeMutablePointer<Float32>
         let capacitySamples: UInt32

@@ -6,7 +6,7 @@ import os
 
 @MainActor
 class Recorder: NSObject, ObservableObject {
-    var recorder: CoreAudioRecorder?
+    var recorder: (any RecordingHardware)?
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "Recorder")
     let deviceManager = AudioDeviceManager.shared
     private var lifecycleCancellable: AnyCancellable?
@@ -20,6 +20,9 @@ class Recorder: NSObject, ObservableObject {
     private var mediaPauseTask: Task<Void, Never>?
     private var audioRestorationTask: Task<Void, Never>?
     private var playbackSessionID: UUID?
+    private var recordingStartID: UUID?
+    private var hasStoppedRecording = false
+    private let recordingFinalization = RecordingFinalization()
     private let smoothedValuesLock = NSLock()
     private var smoothedAverage: Float = 0
     private var smoothedPeak: Float = 0
@@ -35,7 +38,8 @@ class Recorder: NSObject, ObservableObject {
         case noUsableMicrophone(internalMicrophoneBlockedByClosedLid: Bool)
     }
 
-    override init() {
+    init(hardware: (any RecordingHardware)? = nil) {
+        recorder = hardware
         super.init()
         lifecycleCancellable = LifecycleObserver.shared.publisher(
             for: [.audioDeviceChanged, .systemWillSleep, .systemDidWake]
@@ -49,6 +53,8 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func startRecording(toOutputFile url: URL) async throws {
+        await recordingFinalization.waitUntilFinished()
+        try Task.checkCancellation()
         var resolution = deviceManager.resolveCurrentRecordingDevice()
         guard var deviceID = resolution.deviceID else {
             onAudioChunk = nil
@@ -61,6 +67,8 @@ class Recorder: NSObject, ObservableObject {
 
         let playbackSessionID = playbackController.beginRecordingSession()
         self.playbackSessionID = playbackSessionID
+        recordingStartID = playbackSessionID
+        hasStoppedRecording = false
         mediaController.beginRecordingSession(sessionID: playbackSessionID)
         audioRestorationTask?.cancel()
         audioRestorationTask = nil
@@ -75,6 +83,7 @@ class Recorder: NSObject, ObservableObject {
             do {
                 try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: deviceID)
             } catch {
+                guard recordingStartID == playbackSessionID else { throw CancellationError() }
                 let retryResolution = deviceManager.resolveCurrentRecordingDevice(excluding: deviceID)
                 guard deviceManager.isClamshellClosed,
                     deviceManager.isInternalMicrophone(deviceID),
@@ -89,11 +98,13 @@ class Recorder: NSObject, ObservableObject {
                 try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: fallbackDeviceID)
             }
 
+            guard recordingStartID == playbackSessionID else { throw CancellationError() }
             deviceManager.recordingDidStart(deviceID: deviceID)
             showRecordingDeviceNotification(for: deviceID, resolution: resolution)
             UserDefaults.standard.set(String(deviceID), forKey: "lastUsedMicrophoneDeviceID")
             resetAudioMeter()
         } catch {
+            guard recordingStartID == playbackSessionID else { throw CancellationError() }
             logger.error(
                 "Failed to start recording deviceID=\(deviceID, privacy: .public) file=\(url.lastPathComponent, privacy: .public) error=\(error, privacy: .public)"
             )
@@ -103,6 +114,15 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func stopRecording() async {
+        guard let finalizationID = recordingFinalization.begin() else {
+            await recordingFinalization.waitUntilFinished()
+            return
+        }
+        defer { recordingFinalization.finish(finalizationID) }
+
+        guard !hasStoppedRecording else { return }
+        hasStoppedRecording = true
+        recordingStartID = nil
         let playbackSessionID = self.playbackSessionID
         audioMuteTask?.cancel()
         audioMuteTask = nil
