@@ -334,7 +334,7 @@ struct ModelManagementView: View {
                             model: model, isInstalled: isInstalled(model), isExpanded: expandedModelID == model.id
                         ) { expandedModelID = expandedModelID == model.id ? nil : model.id }
                         if expandedModelID == model.id {
-                            localModelCard(model).padding(.horizontal, 14).padding(.bottom, 14)
+                            localModelCard(model).padding(.bottom, 14)
                         }
                     }
                 }
