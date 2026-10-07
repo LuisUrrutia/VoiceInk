@@ -42,10 +42,13 @@ struct SettingsView: View {
                             _, newValue in newValue.apply()
                         }
 
-                    Picker("Language", selection: $appLanguagePreference) {
-                        ForEach(AppLanguagePreference.availableOptions) { option in
-                            Text(option.displayName).tag(option.id)
+                    LabeledContent("Language") {
+                        Picker("Language", selection: $appLanguagePreference) {
+                            ForEach(AppLanguagePreference.availableOptions) { option in
+                                Text(option.displayName).tag(option.id)
+                            }
                         }
+                        .labelsHidden()
                     }
                     .pickerStyle(.menu)
                     .onChange(of: appLanguagePreference) { oldValue, newValue in
@@ -169,10 +172,13 @@ struct SettingsView: View {
                 }
 
                 Section("Pasting") {
-                    Picker(selection: $finishAndSendKey) {
-                        ForEach(FinishAndSendKey.allCases, id: \.self) { key in
-                            Text(key.displayName).tag(key.rawValue)
+                    LabeledContent {
+                        Picker("Auto Send", selection: $finishAndSendKey) {
+                            ForEach(FinishAndSendKey.allCases, id: \.self) { key in
+                                Text(key.displayName).tag(key.rawValue)
+                            }
                         }
+                        .labelsHidden()
                     } label: {
                         HStack(spacing: 4) {
                             Text("Auto Send")
@@ -189,21 +195,27 @@ struct SettingsView: View {
                         infoMessage:
                             "VoiceInk temporarily uses the clipboard to paste transcription. When enabled, it restores your previous clipboard content after the selected delay. When disabled, the pasted transcription stays on your clipboard."
                     ) {
-                        Picker("Restore Delay", selection: $clipboardRestoreDelay) {
-                            Text("250ms").tag(0.25)
-                            Text("500ms").tag(0.5)
-                            Text("1s").tag(1.0)
-                            Text("2s").tag(2.0)
-                            Text("3s").tag(3.0)
-                            Text("4s").tag(4.0)
-                            Text("5s").tag(5.0)
+                        LabeledContent("Restore Delay") {
+                            Picker("Restore Delay", selection: $clipboardRestoreDelay) {
+                                Text("250ms").tag(0.25)
+                                Text("500ms").tag(0.5)
+                                Text("1s").tag(1.0)
+                                Text("2s").tag(2.0)
+                                Text("3s").tag(3.0)
+                                Text("4s").tag(4.0)
+                                Text("5s").tag(5.0)
+                            }
+                            .labelsHidden()
                         }
                     }
 
-                    Picker(selection: $pasteMethodRawValue) {
-                        ForEach(PasteMethod.allCases) { method in
-                            Text(method.displayName).tag(method.rawValue)
+                    LabeledContent {
+                        Picker("Paste Method", selection: $pasteMethodRawValue) {
+                            ForEach(PasteMethod.allCases) { method in
+                                Text(method.displayName).tag(method.rawValue)
+                            }
                         }
+                        .labelsHidden()
                     } label: {
                         HStack(spacing: 4) {
                             Text("Paste Method")
@@ -309,8 +321,7 @@ struct SettingsView: View {
                     DiagnosticsSettingsView()
                 }
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
+            .formStyle(SettingsFormStyle())
         }
         .alert("Reset Onboarding", isPresented: $showResetOnboardingAlert) {
             Button("Cancel", role: .cancel) {}
@@ -343,6 +354,94 @@ struct SettingsView: View {
         }
         .labelsHidden()
         .fixedSize()
+    }
+}
+
+private struct SettingsFormStyle: FormStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                ForEach(sections: configuration.content) { section in
+                    VStack(alignment: .leading, spacing: 10) {
+                        if !section.header.isEmpty {
+                            section.header
+                                .font(.headline)
+                                .padding(.horizontal, 12)
+                        }
+
+                        VStack(spacing: 0) {
+                            ForEach(subviews: section.content) { row in
+                                row
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 12)
+
+                                if row.id != section.content.last?.id {
+                                    Divider().padding(.horizontal, 12)
+                                }
+                            }
+                        }
+                        .background(SettingsCardBackground())
+
+                        if !section.footer.isEmpty {
+                            section.footer
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .labeledContentStyle(SettingsLabeledContentStyle())
+        .toggleStyle(.switch)
+        .pickerStyle(.menu)
+        .appGlassButtonStyle()
+    }
+}
+
+private struct SettingsLabeledContentStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                configuration.label
+                Spacer(minLength: 16)
+                configuration.content
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                configuration.label
+                configuration.content.frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+}
+
+private struct SettingsCardBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: AppTheme.Radius.card)
+            .fill(reduceTransparency ? AnyShapeStyle(opaqueFill) : AnyShapeStyle(.regularMaterial))
+            .overlay {
+                if !reduceTransparency {
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.card)
+                        .fill(.white.opacity(colorScheme == .light ? 0.60 : 0.06))
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: AppTheme.Radius.card)
+                    .strokeBorder(.primary.opacity(contrast == .increased ? 0.30 : 0.08))
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private var opaqueFill: Color {
+        colorScheme == .light ? .white : AppTheme.Surface.card
     }
 }
 
