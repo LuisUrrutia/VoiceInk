@@ -5,12 +5,6 @@ import os
 
 struct DashboardContent: View {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "DashboardContent")
-    private static let fallbackDisplayName = String(localized: "there")
-    private static let displayNameFontSize: CGFloat = 28
-    private static let displayNameFontWeight: NSFont.Weight = .bold
-    private static let displayNameMinWidth: CGFloat = 72
-    private static let displayNameMaxWidth: CGFloat = 280
-    private static let displayNameHorizontalPadding: CGFloat = 8
     private static let insightsUnlockDuration: TimeInterval = 30 * 60
     private static let peakHoursUnlockDuration: TimeInterval = 30 * 60
     private static let reviewBacklogActionThreshold = 50
@@ -40,13 +34,9 @@ struct DashboardContent: View {
     @ObservedObject private var modeManager = ModeManager.shared
     @ObservedObject private var starPrompt = GitHubStarPromptCoordinator.shared
     @State private var isSystemInfoCopied = false
-    @State private var isEditingDisplayName = false
-    @State private var displayNameDraft = ""
-    @AppStorage("dashboardDisplayName") private var dashboardDisplayName: String = ""
     @AppStorage(AutoLearnSettings.isEnabledKey) private var isAutoLearnEnabled = true
     @AppStorage(AutoLearnSettings.hasFailureKey) private var hasAutoLearnFailure = false
     @AppStorage(AutoLearnSettings.failureAcknowledgedKey) private var isAutoLearnFailureAcknowledged = false
-    @FocusState private var isNameFieldFocused: Bool
     @Query(Self.recentTranscriptionsDescriptor()) private var recentTranscriptionCandidates: [Transcription]
 
     private static func recentTranscriptionsDescriptor() -> FetchDescriptor<Transcription> {
@@ -226,7 +216,6 @@ struct DashboardContent: View {
 
     private func dashboardMainContent(availableWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 26) {
-            greetingHeader
             summarySection
 
             if !isAccessibilityEnabled {
@@ -411,86 +400,6 @@ struct DashboardContent: View {
 
     private var accessibilityReminder: some View {
         DashboardAccessibilityReminder(onOpenSettings: openAccessibilitySettings)
-    }
-
-    private var greetingHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("\(greetingText),")
-                    .font(displayNameFont)
-                    .foregroundStyle(AppTheme.Text.primary)
-                    .onTapGesture(perform: dismissDisplayNameEditorIfNeeded)
-
-                displayNameView
-
-                dismissingSpacer
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .lineLimit(1)
-            .minimumScaleFactor(0.72)
-
-            HStack(alignment: .top, spacing: 0) {
-                Text(headerSubtitle)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(AppTheme.Text.secondary)
-                    .lineLimit(2)
-
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: dismissDisplayNameEditorIfNeeded)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var displayNameView: some View {
-        if isEditingDisplayName {
-            TextField("your name", text: displayNameBinding)
-                .textFieldStyle(.plain)
-                .font(displayNameFont)
-                .foregroundStyle(AppTheme.Text.primary)
-                .focused($isNameFieldFocused)
-                .frame(width: displayNameFieldWidth, alignment: .leading)
-                .padding(.horizontal, Self.displayNameHorizontalPadding)
-                .padding(.vertical, 3)
-                .background(AppTheme.Accent.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(AppTheme.Accent.border, lineWidth: 1)
-                )
-                .onSubmit(finishEditingDisplayName)
-                .onChange(of: isNameFieldFocused) { _, isFocused in
-                    if !isFocused {
-                        finishEditingDisplayName()
-                    }
-                }
-        } else {
-            Button(action: beginEditingDisplayName) {
-                Text(defaultedDisplayName)
-                    .font(displayNameFont)
-            }
-            .buttonStyle(
-                .plain
-            )
-            .foregroundStyle(AppTheme.Text.primary)
-            .lineLimit(1)
-            .frame(width: displayNameFieldWidth, alignment: .leading)
-            .help("Click to edit dashboard name")
-            .contentShape(Rectangle())
-            .accessibilityLabel("Edit display name")
-        }
-    }
-
-    private var displayNameFont: Font {
-        .system(size: Self.displayNameFontSize, weight: .bold, design: .default)
-    }
-
-    private var dismissingSpacer: some View {
-        Spacer(minLength: 0)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: dismissDisplayNameEditorIfNeeded)
     }
 
     private func refreshAccessibilityStatus() {
@@ -732,151 +641,6 @@ struct DashboardContent: View {
                 isSystemInfoCopied = false
             }
         }
-    }
-
-    private var displayNameBinding: Binding<String> {
-        Binding(
-            get: {
-                isEditingDisplayName ? displayNameDraft : defaultedDisplayName
-            },
-            set: { newValue in
-                displayNameDraft = String(newValue.prefix(32))
-            }
-        )
-    }
-
-    private var displayNameFieldWidth: CGFloat {
-        let name = isEditingDisplayName ? displayNameDraft : defaultedDisplayName
-        let measuredWidth = (name as NSString)
-            .size(
-                withAttributes: [
-                    .font: NSFont.systemFont(ofSize: Self.displayNameFontSize, weight: Self.displayNameFontWeight)
-                ]
-            )
-            .width
-        return min(
-            max(measuredWidth + (Self.displayNameHorizontalPadding * 2) + 6, Self.displayNameMinWidth),
-            Self.displayNameMaxWidth
-        )
-    }
-
-    private var defaultedDisplayName: String {
-        let storedName = sanitizedDisplayName(dashboardDisplayName)
-        return storedName.isEmpty ? systemDisplayName : storedName
-    }
-
-    private var systemDisplayName: String {
-        Self.systemAccountFirstName() ?? Self.fallbackDisplayName
-    }
-
-    private func beginEditingDisplayName() {
-        displayNameDraft = defaultedDisplayName
-        isEditingDisplayName = true
-        DispatchQueue.main.async {
-            isNameFieldFocused = true
-        }
-    }
-
-    private func finishEditingDisplayName() {
-        dashboardDisplayName = String(sanitizedDisplayName(displayNameDraft).prefix(32))
-        isEditingDisplayName = false
-        isNameFieldFocused = false
-
-        if sanitizedDisplayName(dashboardDisplayName).isEmpty {
-            dashboardDisplayName = ""
-        }
-    }
-
-    private func dismissDisplayNameEditorIfNeeded() {
-        if isEditingDisplayName {
-            finishEditingDisplayName()
-        }
-    }
-
-    private func sanitizedDisplayName(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func systemAccountFirstName() -> String? {
-        let fullName = sanitizedSystemName(NSFullUserName())
-
-        if let fullName,
-            let givenName = PersonNameComponentsFormatter().personNameComponents(from: fullName)?.givenName,
-            !givenName.isEmpty
-        {
-            return givenName
-        }
-
-        if let fullName,
-            let firstName = fullName.split(whereSeparator: \.isWhitespace).first
-        {
-            return String(firstName)
-        }
-
-        if let shortName = sanitizedSystemName(NSUserName()) {
-            return
-                shortName
-                .split(separator: ".")
-                .first
-                .map(String.init) ?? shortName
-        }
-
-        return nil
-    }
-
-    private static func sanitizedSystemName(_ name: String) -> String? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private var greetingText: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-
-        switch hour {
-        case 5..<12:
-            return String(localized: "Good morning")
-        case 12..<17:
-            return String(localized: "Good afternoon")
-        case 17..<24:
-            return String(localized: "Good evening")
-        default:
-            return String(localized: "Hi")
-        }
-    }
-
-    private var greetingEmoji: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-
-        switch hour {
-        case 5..<12:
-            return "☀️"
-        case 12..<17:
-            return "👋"
-        case 17..<24:
-            return "🌙"
-        default:
-            return "👋"
-        }
-    }
-
-    private var headerSubtitle: String {
-        guard hasLoadedStatsSnapshot else {
-            return String(localized: "Pulling together your VoiceInk activity.")
-        }
-
-        guard statsSummary.totalCount > 0 else {
-            return String(localized: "Record your first session to start building momentum.")
-        }
-
-        if statsSummary.recentSevenDayCount >= 5 {
-            return String(localized: "You’re on a roll this week. Keep the momentum going.")
-        }
-
-        if statsSummary.recentSevenDayCount > 0 {
-            return String(localized: "You’re building momentum this week. Keep it going.")
-        }
-
-        return String(localized: "Your data is not ready yet. Keep the momentum going.")
     }
 
     private var momentumHeadline: DashboardHeroHeadline {
