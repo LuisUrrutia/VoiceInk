@@ -9,8 +9,8 @@ struct DictionarySettingsView: View {
         "Word Replacements run after transcription. Vocabulary helps supported transcription models and AI enhancement recognize names, technical terms, and unique spellings."
 
     enum DictionarySection: String, CaseIterable, Hashable {
-        case replacements = "Word Replacements"
         case spellings = "Vocabulary"
+        case replacements = "Word Replacements"
 
         var description: String {
             switch self {

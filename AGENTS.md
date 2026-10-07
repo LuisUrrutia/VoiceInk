@@ -75,3 +75,9 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 - Source: `feat/dictionary-section-descriptions` at `7f2633335deb9eb25043cc43b7179ddd108ca154`.
 - Preserve named vocabulary sections, their optional descriptions, drag-and-drop membership, section-scoped duplicate terms, grouped enhancement prompts, editor UI, and section data in dictionary import/export and backups. Keep version 1 dictionary archives, unsectioned vocabulary, legacy-store migration, and isolated development persistence compatible.
 - Regression: `./scripts/check-personal-sync.sh` runs `VocabularySectionTests` and `DictionarySmokeTests` as part of `VoiceInkTests`.
+
+### Dictionary section order
+
+- Request: Show Vocabulary before Word Replacements in Dictionary.
+- Preserve Vocabulary as the first option in the Dictionary section selector, followed by Word Replacements.
+- Regression: `DictionarySmokeTests.testVocabularyPrecedesWordReplacementsInSectionSelector`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`.
