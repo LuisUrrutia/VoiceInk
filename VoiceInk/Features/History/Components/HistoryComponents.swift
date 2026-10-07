@@ -137,12 +137,19 @@ struct HistoryTranscriptionRow: View {
         .padding(.horizontal, isCompact ? HistoryLayout.rowHorizontalPadding : 18)
         .padding(.vertical, isCompact ? HistoryLayout.rowVerticalPadding : 12)
         .background {
-            RoundedRectangle(cornerRadius: isCompact ? 10 : 18)
-                .fill(isCompact ? AppTheme.Surface.window : AppTheme.Surface.card)
-                .overlay {
-                    RoundedRectangle(cornerRadius: isCompact ? 10 : 18)
-                        .fill(isSelected ? AppTheme.Selection.fill : (isHovered ? AppTheme.Surface.subtle : .clear))
+            Group {
+                if isCompact {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(AppTheme.Surface.window)
+                } else {
+                    AppTranslucentCardBackground(cornerRadius: 18)
                 }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: isCompact ? 10 : 18)
+                    .fill(isSelected ? AppTheme.Selection.fill : (isHovered ? AppTheme.Surface.subtle : .clear))
+            }
+            .allowsHitTesting(false)
         }
         .onHover { isHovered = $0 }
     }
