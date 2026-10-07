@@ -108,7 +108,6 @@ struct HistoryTranscriptionRow: View {
     var isCompact = true
 
     @State private var isHovered = false
-    @FocusState private var isCopyFocused: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -132,8 +131,6 @@ struct HistoryTranscriptionRow: View {
                     textToCopy: transcription.preferredHistoryText,
                     accessibilityLabel: "Copy transcription"
                 )
-                .focused($isCopyFocused)
-                .opacity(isCompact || isHovered || isSelected || isCopyFocused ? 1 : 0)
             }
         }
         .frame(minHeight: isCompact ? 28 : 32)
@@ -163,7 +160,7 @@ struct HistoryTranscriptionRow: View {
     private var selectionButton: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
-                if isCompact, let icon = transcription.recordedHistoryModeIcon {
+                if let icon = transcription.recordedHistoryModeIcon {
                     ModeIconView(
                         icon: icon,
                         size: icon.kind == .emoji ? 18 : 16,
@@ -179,13 +176,12 @@ struct HistoryTranscriptionRow: View {
                     .lineLimit(isCompact ? 1 : 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if isCompact {
                 Text(transcription.timestamp, format: .relative(presentation: .named))
-                    .font(.system(size: 10))
+                    .font(.system(size: isCompact ? 10 : 11))
                     .foregroundStyle(AppTheme.Text.secondary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-                }
+                    .help(transcription.timestamp.formatted(date: .abbreviated, time: .shortened))
             }
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())

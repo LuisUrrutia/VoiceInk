@@ -179,13 +179,39 @@ struct HistoryView: View {
         VStack(spacing: 0) {
             AppWindowToolbar {
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     TextField("Search history", text: $searchText)
                         .textFieldStyle(.plain).font(.system(size: 14))
                         .focused($isSearchFocused)
+                        .accessibilityIdentifier("history.search")
                     if isLoading { ProgressView().controlSize(.small) }
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                            isSearchFocused = true
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Clear history search")
+                    }
                 }
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .appGlassControl()
+                .overlay {
+                    Capsule().strokeBorder(
+                        isSearchFocused ? Color.accentColor.opacity(0.6) : AppTheme.Border.control,
+                        lineWidth: 1
+                    )
+                }
+                .contentShape(Capsule())
+                .onTapGesture { isSearchFocused = true }
+                .frame(maxWidth: 420)
+
+                Spacer(minLength: 0)
 
                 HistoryIconButton(systemName: "checklist", help: "Select transcriptions", isSelected: isSelecting) {
                     isSelecting.toggle()
@@ -270,7 +296,7 @@ struct HistoryView: View {
                     transcription: transcription,
                     isSelected: selectedTranscriptions.contains(transcription),
                     onSelect: { openDetail(transcription) },
-                    onToggleCheck: isSelecting ? { toggleSelection(transcription) } : nil,
+                    onToggleCheck: { toggleSelection(transcription) },
                     showsCopyButton: true,
                     isCompact: false
                 )
@@ -353,6 +379,7 @@ struct HistoryView: View {
     // MARK: - Selection & Deletion
 
     private func toggleSelection(_ transcription: Transcription) {
+        isSelecting = true
         if selectedTranscriptions.contains(transcription) {
             selectedTranscriptions.remove(transcription)
         } else {
