@@ -4,13 +4,25 @@ import SwiftData
 enum BackupImporter {
     private static let keyIsTextFormattingEnabled = "IsTextFormattingEnabled"
 
+    static func importedIconVisibility(
+        _ backup: BackupFile, categories: Set<BackupCategory>, current: AppIconVisibility
+    ) -> AppIconVisibility? {
+        guard categories.contains(.general) else { return nil }
+        return backup.generalSettings?.iconVisibility(restoring: current)
+    }
+
     @MainActor
     static func apply(
         _ backup: BackupFile, categories: Set<BackupCategory>, enhancementService: AIEnhancementService,
         recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager,
         mediaController: MediaController, playbackController: PlaybackController, recorderUIManager: RecorderUIManager,
-        modelContext: ModelContext, transcriptionModelManager: TranscriptionModelManager
-    ) async throws {
+        modelContext: ModelContext, transcriptionModelManager: TranscriptionModelManager,
+        confirmIconVisibility: () -> Bool = MenuBarManager.confirmHidingBothIcons
+    ) async throws -> Bool {
+        let iconVisibility = importedIconVisibility(backup, categories: categories, current: menuBarManager.iconVisibility)
+        if iconVisibility?.areBothIconsHidden == true && !confirmIconVisibility() {
+            return false
+        }
         var shouldRepairModePromptSelections = false
 
         if categories.contains(.dictionary) {
@@ -20,6 +32,7 @@ enum BackupImporter {
         if categories.contains(.general) {
             importGeneral(
                 backup.generalSettings,
+                iconVisibility: iconVisibility,
                 recordingShortcutManager: recordingShortcutManager,
                 menuBarManager: menuBarManager,
                 mediaController: mediaController,
@@ -75,11 +88,13 @@ enum BackupImporter {
         if categories.contains(.customModels) {
             importCustomModels(backup.customCloudModels, transcriptionModelManager: transcriptionModelManager)
         }
+        return true
     }
 
     @MainActor
     private static func importGeneral(
-        _ general: GeneralBackup?, recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager,
+        _ general: GeneralBackup?, iconVisibility: AppIconVisibility?,
+        recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager,
         mediaController: MediaController, playbackController: PlaybackController, recorderUIManager: RecorderUIManager
     ) {
         guard let general else {
@@ -137,9 +152,7 @@ enum BackupImporter {
         if let launch = general.launchAtLoginEnabled {
             LaunchAtLoginManager.shared.setEnabled(launch)
         }
-        if let menuOnly = general.isMenuBarOnly {
-            menuBarManager.isMenuBarOnly = menuOnly
-        }
+        if let iconVisibility { menuBarManager.restoreIconVisibility(iconVisibility) }
         if let recType = general.recorderType {
             recorderUIManager.recorderType = recType
         }

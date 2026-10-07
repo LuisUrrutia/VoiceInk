@@ -43,6 +43,7 @@ final class SystemInfoService {
 
             UI SETTINGS:
             Hide Dock Icon: \(UserDefaults.standard.bool(forKey: "IsMenuBarOnly"))
+            Show Menu Bar Icon: \(AppIconVisibility(defaults: .standard).isMenuBarIconVisible)
             Recorder Style: \(UserDefaults.standard.string(forKey: "RecorderType") ?? "mini")
 
             RECORDING FEEDBACK:

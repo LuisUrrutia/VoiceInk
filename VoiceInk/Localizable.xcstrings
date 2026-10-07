@@ -2232,6 +2232,72 @@
         }
       }
     },
+    "Hide Both" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beide ausblenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Masquer les deux"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐藏两个图标"
+          }
+        }
+      }
+    },
+    "Hide Both App Icons?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beide App-Symbole ausblenden?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Masquer les deux icônes de l'app ?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐藏两个应用图标？"
+          }
+        }
+      }
+    },
+    "Hide Menu Bar Icon" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Menüleistensymbol ausblenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Masquer l'icône de la barre des menus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐藏菜单栏图标"
+          }
+        }
+      }
+    },
     "Imported %lld vocabulary sections." : {
       "localizations" : {
         "de" : {
@@ -2438,6 +2504,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cela supprimera %1$@, %2$@ et %3$@. Cette action est irréversible."
+          }
+        }
+      }
+    },
+    "VoiceInk keeps running. Reopen it from Applications or Spotlight to show its window." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk läuft weiter. Öffne es über Programme oder Spotlight erneut, um das Fenster anzuzeigen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk continue de fonctionner. Rouvrez l'app depuis Applications ou Spotlight pour afficher sa fenêtre."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk 会继续运行。从“应用程序”或 Spotlight 重新打开它以显示窗口。"
           }
         }
       }
