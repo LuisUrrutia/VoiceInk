@@ -32,6 +32,7 @@ final class ShortcutMonitor {
     private var onShortcutDown: ((ShortcutAction, TimeInterval) -> Void)?
     private var onShortcutUp: ((ShortcutAction, TimeInterval) -> Void)?
     private var onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)?
+    private var onStandaloneModifierChord: ((ShortcutAction) -> Void)?
     private var eventTap: CFMachPort?
     private var eventTapRunLoopSource: CFRunLoopSource?
     private let createEventTap: EventTapFactory
@@ -68,7 +69,8 @@ final class ShortcutMonitor {
         standaloneModifierActions: Set<ShortcutAction> = [],
         onShortcutDown: @escaping (ShortcutAction, TimeInterval) -> Void,
         onShortcutUp: @escaping (ShortcutAction, TimeInterval) -> Void,
-        onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)? = nil
+        onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)? = nil,
+        onStandaloneModifierChord: ((ShortcutAction) -> Void)? = nil
     ) -> Bool {
         stop()
 
@@ -85,6 +87,7 @@ final class ShortcutMonitor {
         self.onShortcutDown = onShortcutDown
         self.onShortcutUp = onShortcutUp
         self.onShortcutInterrupted = onShortcutInterrupted
+        self.onStandaloneModifierChord = onStandaloneModifierChord
 
         for (action, shortcut) in shortcuts {
             guard let modifiers = shortcut.systemHotKeyModifiers else { continue }
@@ -126,6 +129,7 @@ final class ShortcutMonitor {
         onShortcutDown = nil
         onShortcutUp = nil
         onShortcutInterrupted = nil
+        onStandaloneModifierChord = nil
     }
 
     private func installEventTap() -> Bool {
@@ -517,6 +521,11 @@ final class ShortcutMonitor {
     private func handleShortcutInterruptions(keyCode: UInt16, eventTime: TimeInterval) {
         guard !Shortcut.isModifierKeyCode(keyCode) else {
             return
+        }
+
+        for action in standaloneModifierActions {
+            guard shortcuts[action]?.shortcut.isModifierOnly == true else { continue }
+            onStandaloneModifierChord?(action)
         }
 
         for action in interruptibleActions {

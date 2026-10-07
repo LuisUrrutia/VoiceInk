@@ -255,7 +255,7 @@ final class VocabularySectionTests: XCTestCase {
         context.insert(VocabularyWord(word: "VoiceInk", dateAdded: Date(timeIntervalSince1970: 3), sectionID: people.id))
         try context.save()
 
-        XCTAssertTrue(DictionaryService.removeExactDuplicateContent(context: context, source: "test"))
+        XCTAssertTrue(DictionaryService.cleanUpDictionaryContent(context: context, source: "test"))
 
         let words = try context.fetch(FetchDescriptor<VocabularyWord>())
         XCTAssertEqual(words.count, 2)
