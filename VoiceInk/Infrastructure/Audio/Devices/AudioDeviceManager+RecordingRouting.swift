@@ -50,6 +50,13 @@ extension AudioDeviceManager {
 
     func recordingDidStop() {
         recordingDeviceSession = RecordingDeviceSession()
+        if inputMode != .systemDefault {
+            let deviceID = resolveCurrentRecordingDevice().deviceID
+            if selectedDeviceID != deviceID {
+                selectedDeviceID = deviceID
+                notifyDeviceChange()
+            }
+        }
     }
 
     func resolveCurrentRecordingDevice(
@@ -93,8 +100,8 @@ extension AudioDeviceManager {
         case .systemDefault:
             return getSystemDefaultDevice().map { [$0] } ?? []
         case .custom:
-            let savedUID = UserDefaults.standard.selectedAudioDeviceUID ?? ""
-            let savedModelUID = UserDefaults.standard.selectedAudioDeviceModelUID
+            let savedUID = userDefaults.selectedAudioDeviceUID ?? ""
+            let savedModelUID = userDefaults.selectedAudioDeviceModelUID
             var candidates = findAvailableDevice(uid: savedUID, modelUID: savedModelUID).map { [$0.id] } ?? []
             if let selectedDeviceID, !candidates.contains(selectedDeviceID) {
                 candidates.append(selectedDeviceID)
@@ -117,10 +124,13 @@ extension AudioDeviceManager {
         availableDevices.contains { $0.id == deviceID }
     }
 
-    private func handleClamshellChange(isClosed: Bool) {
+    func handleClamshellChange(isClosed: Bool) {
         logger.notice("Clamshell state changed: \(isClosed ? "closed" : "open", privacy: .public)")
 
         guard isRecordingActive else {
+            if inputMode != .systemDefault {
+                selectedDeviceID = resolveCurrentRecordingDevice().deviceID
+            }
             notifyDeviceChange()
             return
         }
@@ -146,7 +156,7 @@ extension AudioDeviceManager {
             fallbackDeviceID: resolveCurrentRecordingDevice(excluding: activeDeviceID).deviceID,
             reason: reason
         )
-        NotificationCenter.default.post(
+        notificationCenter.post(
             name: .recordingDeviceChangeRequired,
             object: request
         )
