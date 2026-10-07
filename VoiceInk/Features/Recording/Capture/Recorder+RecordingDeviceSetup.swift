@@ -16,7 +16,7 @@ extension Recorder {
     }
 
     func startHardwareRecording(
-        _ recorder: CoreAudioRecorder,
+        _ recorder: any RecordingHardware,
         to url: URL,
         deviceID: AudioDeviceID
     ) async throws {
