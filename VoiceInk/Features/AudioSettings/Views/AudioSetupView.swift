@@ -46,8 +46,7 @@ struct AudioSetupView: View {
                     Text("Recording Behavior")
                 }
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
+            .formStyle(AppSettingsFormStyle())
         }
         .onAppear {
             if !usesPriorityOrder {
@@ -58,19 +57,25 @@ struct AudioSetupView: View {
 
     @ViewBuilder
     private var inputSettingsRows: some View {
-        Picker("Microphone Mode", selection: inputRouteSelection) {
-            Text("Selected Microphone").tag(InputRoute.singleMicrophone)
-            Text("Priority Order").tag(InputRoute.priorityOrder)
+        LabeledContent("Microphone Mode") {
+            Picker("Microphone Mode", selection: inputRouteSelection) {
+                Text("Selected Microphone").tag(InputRoute.singleMicrophone)
+                Text("Priority Order").tag(InputRoute.priorityOrder)
+            }
+            .labelsHidden()
         }
         .pickerStyle(.menu)
 
         if !usesPriorityOrder {
-            Picker("Microphone", selection: microphoneSourceSelection) {
-                Text(systemDefaultSourceTitle).tag(MicrophoneSourceSelection.systemDefault)
+            LabeledContent("Microphone") {
+                Picker("Microphone", selection: microphoneSourceSelection) {
+                    Text(systemDefaultSourceTitle).tag(MicrophoneSourceSelection.systemDefault)
 
-                ForEach(audioDeviceManager.availableDevices, id: \.uid) { device in
-                    Text(device.name).tag(MicrophoneSourceSelection.device(device.uid))
+                    ForEach(audioDeviceManager.availableDevices, id: \.uid) { device in
+                        Text(device.name).tag(MicrophoneSourceSelection.device(device.uid))
+                    }
                 }
+                .labelsHidden()
             }
             .pickerStyle(.menu)
         }
