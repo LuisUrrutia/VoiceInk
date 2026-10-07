@@ -79,8 +79,8 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 ### Dictionary section order
 
 - Request: Show Vocabulary before Word Replacements in Dictionary.
-- Preserve Vocabulary as the first option in the Dictionary section selector, followed by Word Replacements.
-- Regression: `DictionarySmokeTests.testVocabularyPrecedesWordReplacementsInSectionSelector`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`.
+- Preserve Vocabulary as the first option in the Dictionary section selector, followed by Word Replacements. Use a compact, leading-aligned native segmented picker, allowing the system to supply its Liquid Glass appearance on macOS 26+ and native styling on macOS 15. Render both sections directly on the main content background without an enclosing card or custom animation of the section change.
+- Regression: `DictionarySmokeTests.testVocabularyPrecedesWordReplacementsInSectionSelector`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`. In `VoiceInk Dev.app`, check both segments, their selected state, keyboard navigation, labels at narrow widths, light and dark appearance, and Reduce Transparency. Confirm both sections have no enclosing card and their existing add, edit, delete, sort, and vocabulary section controls remain usable.
 
 ### Vocabulary compact composer
 
