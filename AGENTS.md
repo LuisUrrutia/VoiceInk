@@ -70,6 +70,13 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 
 ## Tracked local overlays
 
+### Display-backed recording context capture
+
+- Request: Independently adapt the behavior described in https://github.com/Beingpax/VoiceInk/pull/880. This fork implementation is tracked here rather than retaining the upstream PR head in `scripts/personal-prs.tsv`.
+- Capture the active external window with a display-backed ScreenCaptureKit filter. Choose the display with the largest window intersection, crop to that visible intersection in display-relative points, size the image using the display's pixel scale, and retain the 2800-pixel OCR limit. Skip capture when no display intersects the window; do not fall back to the independent-window filter implicated in the original failure. Preserve focused-window selection and context prompt formatting, and log capture/OCR failures without exposing captured text.
+- Begin clipboard, selection and screen context capture immediately after audio recording starts, before Auto Learn or mode detection can suspend setup. Capture clipboard text synchronously. Keep context tasks owned by their recording, transfer their capture session and live snapshot store to the transcription path when recording stops, and cancel them on cancellation or pipeline completion. Delayed setup cleanup must preserve both a stopped recording's pending context and a newer recording's context.
+- Regression: `ScreenCaptureTests` and `RecordingContextTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, cover display choice, relative coordinates, edge clipping, pixel sizing, immediate capture, cancellation and context handoff. In `VoiceInk Dev.app`, verify OCR with screen capture permission, negative-offset and multiple displays, windows crossing display edges, and short dictations while browser URL mode detection is pending. Verify context appears in `<CURRENT_WINDOW_CONTEXT>` only when enabled, clipboard and selection context remain available, cancel/restart does not mix snapshots, and ordinary dictation remains usable when screen permission is absent.
+
 ### Dictionary section descriptions
 
 - Source: `feat/dictionary-section-descriptions` at `7f2633335deb9eb25043cc43b7179ddd108ca154`.

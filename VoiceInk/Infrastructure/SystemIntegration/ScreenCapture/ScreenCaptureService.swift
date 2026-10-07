@@ -3,9 +3,12 @@ import ApplicationServices
 import Foundation
 import ScreenCaptureKit
 import Vision
+import os
 
 @MainActor
 class ScreenCaptureService: ObservableObject {
+    private nonisolated static let logger = Logger(
+        subsystem: "com.prakashjoshipax.voiceink", category: "ScreenCaptureService")
     @Published var isCapturing = false
     @Published var lastCapturedText: String?
 
@@ -16,7 +19,6 @@ class ScreenCaptureService: ObservableObject {
     }
 
     private static let captureTimeout: TimeInterval = 3.0
-    nonisolated private static let maximumCaptureDimension: CGFloat = 2800
     nonisolated private static let focusedWindowFrameTolerance: CGFloat = 96
 
     static func requestScreenCapturePermissionRegistration() async -> Bool {
@@ -109,18 +111,29 @@ class ScreenCaptureService: ObservableObject {
                     currentPID: currentPID
                 )
             else {
+                logger.debug("No active window available for context capture")
                 return nil
             }
 
             let title = window.title ?? window.owningApplication?.applicationName ?? "Unknown"
             let appName = window.owningApplication?.applicationName ?? "Unknown"
 
-            let filter = SCContentFilter(desktopIndependentWindow: window)
+            guard let region = WindowCaptureRegion(
+                windowFrame: window.frame, displayFrames: content.displays.map(\.frame)
+            ) else {
+                logger.debug("Active window does not intersect an available display")
+                return nil
+            }
+
+            let filter = SCContentFilter(display: content.displays[region.displayIndex], including: [window])
 
             let configuration = SCStreamConfiguration()
-            let captureScale = captureScale(for: window.frame.size)
-            configuration.width = max(1, Int(window.frame.width * captureScale))
-            configuration.height = max(1, Int(window.frame.height * captureScale))
+            let pixelSize = region.pixelSize(pointPixelScale: CGFloat(filter.pointPixelScale))
+            configuration.sourceRect = region.sourceRect
+            configuration.width = Int(pixelSize.width)
+            configuration.height = Int(pixelSize.height)
+            configuration.showsCursor = false
+            configuration.ignoreShadowsDisplay = true
 
             let cgImage = try await SCScreenshotManager.captureImage(
                 contentFilter: filter, configuration: configuration)
@@ -135,12 +148,14 @@ class ScreenCaptureService: ObservableObject {
             if let extractedText, !extractedText.isEmpty {
                 contextText += "Window Content:\n\(extractedText)"
             } else {
+                logger.debug("No text detected in captured window")
                 contextText += "Window Content:\nNo text detected via OCR"
             }
 
             return contextText
 
         } catch {
+            logger.error("Window context capture failed: \(error.localizedDescription, privacy: .private)")
             return nil
         }
     }
@@ -198,15 +213,6 @@ class ScreenCaptureService: ObservableObject {
             + abs(first.size.width - second.size.width) + abs(first.size.height - second.size.height)
     }
 
-    private nonisolated static func captureScale(for size: CGSize) -> CGFloat {
-        let longestSide = max(size.width, size.height)
-        guard longestSide > 0 else {
-            return 1
-        }
-
-        return min(2, maximumCaptureDimension / longestSide)
-    }
-
     private nonisolated static func extractText(from cgImage: CGImage) -> String? {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
@@ -226,6 +232,7 @@ class ScreenCaptureService: ObservableObject {
                 .joined(separator: "\n")
             return text.isEmpty ? nil : text
         } catch {
+            logger.error("Window text recognition failed: \(error.localizedDescription, privacy: .private)")
             return nil
         }
     }
