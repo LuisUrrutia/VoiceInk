@@ -3,7 +3,6 @@
 
 import argparse
 import base64
-import copy
 import hashlib
 import json
 import os
@@ -21,168 +20,140 @@ PHOSPHOR_VERSION = "2.1.1"
 PHOSPHOR_SHA512 = "v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ=="
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 
-# Phosphor name, weight, SF Symbol aliases, optional sidebar tint.
+# Phosphor outline name and legacy SF Symbol aliases.
 SYMBOLS = [
-    ("gauge", "regular", ["gauge.medium"], True),
-    ("house", "regular", ["house"], False),
-    ("stack", "regular", ["square.stack", "sparkles.square.fill.on.square"], True),
-    ("waveform", "regular", ["waveform", "waveform.path", "waveform.badge.magnifyingglass", "waveform.path.ecg"], True),
-    ("clock", "regular", ["clock"], True),
-    ("book-open-text", "regular", ["text.book.closed", "character.book.closed"], True),
-    ("cpu", "regular", ["cpu"], True),
-    ("microphone", "regular", ["mic"], True),
-    ("gear-six", "regular", ["gearshape"], True),
-    ("seal-check", "regular", ["checkmark.seal"], True),
-    ("microphone", "fill", ["mic.fill", "microphone.fill"], False),
-    ("gear-six", "fill", ["gearshape.fill"], False),
-    ("seal-check", "fill", ["checkmark.seal.fill"], False),
-    ("file-text", "fill", ["doc.text.fill"], False),
-    ("book-open-text", "fill", ["text.book.closed.fill", "character.book.closed.fill"], False),
-    ("x", "regular", ["xmark"], False),
-    ("globe", "regular", ["globe"], False),
-    ("sparkle", "regular", ["sparkles"], False),
-    ("check", "regular", ["checkmark"], False),
-    ("check-circle", "regular", ["checkmark.circle"], False),
-    ("check-circle", "fill", ["checkmark.circle.fill"], False),
-    ("x-circle", "regular", ["xmark.circle"], False),
-    ("x-circle", "fill", ["xmark.circle.fill"], False),
-    ("warning", "regular", ["exclamationmark.triangle"], False),
-    ("warning", "fill", ["exclamationmark.triangle.fill"], False),
-    ("info", "regular", ["info.circle"], False),
-    ("arrow-right", "regular", ["arrow.right"], False),
-    ("arrow-up-right", "regular", ["arrow.up.right"], False),
-    ("arrow-clockwise", "regular", ["arrow.clockwise"], False),
-    ("arrow-counter-clockwise", "regular", ["arrow.counterclockwise"], False),
-    ("trash", "regular", ["trash"], False),
-    ("folder", "regular", ["folder"], False),
-    ("dots-three-circle", "regular", ["ellipsis.circle"], False),
-    ("plus-circle", "regular", ["plus.circle"], False),
-    ("plus-circle", "fill", ["plus.circle.fill"], False),
-    ("pencil-simple", "regular", ["pencil"], False),
-    ("pencil-circle", "fill", ["pencil.circle.fill"], False),
-    ("note-pencil", "regular", ["square.and.pencil"], False),
-    ("caret-right", "regular", ["chevron.right"], False),
-    ("caret-left", "regular", ["chevron.left"], False),
-    ("caret-down", "regular", ["chevron.down"], False),
-    ("caret-up", "regular", ["chevron.up"], False),
-    ("caret-up-down", "regular", ["chevron.up.chevron.down"], False),
-    ("magnifying-glass", "regular", ["magnifyingglass"], False),
-    ("hard-drive", "regular", ["internaldrive"], False),
-    ("chart-bar", "regular", ["chart.bar.xaxis", "chart.bar"], False),
-    ("magic-wand", "regular", ["wand.and.stars"], False),
-    ("squares-four", "regular", ["square.grid.2x2"], False),
-    ("play", "fill", ["play.fill"], False),
-    ("copy", "regular", ["doc.on.doc"], False),
-    ("calendar", "regular", ["calendar", "1.calendar"], False),
-    ("terminal-window", "fill", ["apple.terminal.fill"], False),
-    ("terminal-window", "regular", ["terminal"], False),
-    ("archive", "fill", ["archivebox.fill"], False),
-    ("handbag", "fill", ["bag.fill"], False),
-    ("messenger-logo", "fill", ["bolt.horizontal.circle.fill"], False),
-    ("notebook", "fill", ["book.pages.fill"], False),
-    ("briefcase", "fill", ["briefcase.fill"], False),
-    ("chats", "fill", ["bubble.left.and.text.bubble.right.fill", "bubble.left.and.bubble.right.fill"], False),
-    ("chats", "regular", ["bubble.left.and.bubble.right"], False),
-    ("bank", "fill", ["building.columns.circle.fill"], False),
-    ("camera", "fill", ["camera.fill"], False),
-    ("subtitles", "fill", ["captions.bubble.fill"], False),
-    ("subtitles", "regular", ["captions.bubble"], False),
-    ("currency-circle-dollar", "fill", ["dollarsign.bank.building.fill"], False),
-    ("envelope", "fill", ["envelope.fill"], False),
-    ("envelope", "regular", ["envelope"], False),
-    ("flask", "fill", ["flask.fill"], False),
-    ("graduation-cap", "fill", ["graduationcap.fill"], False),
-    ("house", "fill", ["house.fill"], False),
-    ("keyboard", "fill", ["keyboard.fill"], False),
-    ("keyboard", "regular", ["keyboard"], False),
-    ("lightbulb-filament", "fill", ["lightbulb.max.fill"], False),
-    ("note-pencil", "fill", ["long.text.page.and.pencil.fill"], False),
-    ("newspaper", "fill", ["magazine.fill"], False),
-    ("map-trifold", "fill", ["map.fill"], False),
-    ("music-notes", "regular", ["music.pages"], False),
-    ("paint-brush", "fill", ["paintbrush.pointed.fill"], False),
-    ("phone-call", "fill", ["phone.bubble.fill"], False),
-    ("images", "fill", ["photo.fill.on.rectangle.fill"], False),
-    ("monitor-play", "fill", ["play.rectangle.fill"], False),
-    ("quotes", "fill", ["quote.bubble.fill"], False),
-    ("receipt", "fill", ["receipt.fill"], False),
-    ("star-four", "fill", ["star.hexagon.fill"], False),
-    ("tray", "fill", ["tray.full.fill"], False),
-    ("tree", "fill", ["tree.fill"], False),
-    ("wallet", "fill", ["wallet.bifold.fill"], False),
-    ("apple-logo", "fill", ["apple.logo"], False),
-    ("app-window", "fill", ["app.fill"], False),
-    ("arrows-clockwise", "regular", ["arrow.2.squarepath", "rectangle.2.swap"], False),
-    ("arrow-clockwise", "fill", ["arrow.clockwise.circle.fill"], False),
-    ("arrow-circle-down", "regular", ["arrow.down.circle"], False),
-    ("arrow-circle-down", "fill", ["arrow.down.circle.fill"], False),
-    ("file-arrow-down", "regular", ["arrow.down.doc"], False),
-    ("arrows-left-right", "regular", ["arrow.left.arrow.right"], False),
-    ("arrow-circle-up-right", "fill", ["arrow.up.right.circle.fill"], False),
-    ("arrow-square-out", "regular", ["arrow.up.right.square"], False),
-    ("arrow-u-up-left", "regular", ["arrow.uturn.backward"], False),
-    ("lightning", "fill", ["bolt.fill", "bolt.circle.fill"], False),
-    ("book", "fill", ["book.fill"], False),
-    ("chart-bar-horizontal", "regular", ["chart.bar.doc.horizontal"], False),
-    ("chart-line-up", "regular", ["chart.line.uptrend.xyaxis"], False),
-    ("shield-check", "regular", ["checkmark.shield", "lock.shield"], False),
-    ("code", "regular", ["chevron.left.forwardslash.chevron.right"], False),
-    ("circle", "regular", ["circle"], False),
-    ("circle-dashed", "regular", ["circle.dashed"], False),
-    ("clock", "fill", ["clock.fill"], False),
-    ("cloud", "fill", ["cloud.fill"], False),
-    ("command", "regular", ["command.circle"], False),
-    ("cpu", "fill", ["cpu.fill"], False),
-    ("cube", "regular", ["cube"], False),
-    ("clipboard-text", "regular", ["doc.on.clipboard"], False),
-    ("file-text", "regular", ["doc.text"], False),
-    ("file-magnifying-glass", "regular", ["doc.text.magnifyingglass"], False),
-    ("chat-centered-dots", "fill", ["exclamationmark.bubble.fill"], False),
-    ("warning-circle", "regular", ["exclamationmark.circle"], False),
-    ("warning-circle", "fill", ["exclamationmark.circle.fill"], False),
-    ("hand-palm", "regular", ["hand.raised"], False),
-    ("hourglass", "regular", ["hourglass"], False),
-    ("infinity", "regular", ["infinity"], False),
-    ("info", "fill", ["info.circle.fill"], False),
-    ("hard-drive", "fill", ["internaldrive.fill"], False),
-    ("key", "fill", ["key.fill"], False),
-    ("link", "regular", ["link", "link.badge.plus"], False),
-    ("clipboard-text", "fill", ["list.bullet.clipboard.fill"], False),
-    ("list-bullets", "regular", ["list.bullet.rectangle"], False),
-    ("lock-key", "fill", ["lock.fill"], False),
-    ("laptop", "regular", ["macbook"], False),
-    ("microphone-slash", "regular", ["mic.slash"], False),
-    ("minus-circle", "regular", ["minus.circle"], False),
-    ("minus-circle", "fill", ["minus.circle.fill"], False),
-    ("note", "regular", ["note.text"], False),
-    ("hash", "regular", ["number"], False),
-    ("paper-plane-tilt", "fill", ["paperplane.fill"], False),
-    ("pause", "fill", ["pause.fill"], False),
-    ("user-circle-check", "regular", ["person.crop.circle.badge.checkmark"], False),
-    ("plus", "regular", ["plus"], False),
-    ("hard-drives", "regular", ["server.rack"], False),
-    ("shield", "regular", ["shield"], False),
-    ("shield", "fill", ["shield.fill"], False),
-    ("sidebar", "regular", ["sidebar.left"], False),
-    ("sidebar-simple", "regular", ["sidebar.right"], False),
-    ("prohibit", "fill", ["slash.circle.fill"], False),
-    ("sliders-horizontal", "regular", ["slider.horizontal.3"], False),
-    ("download-simple", "regular", ["square.and.arrow.down"], False),
-    ("export", "regular", ["square.and.arrow.up"], False),
-    ("squares-four", "fill", ["square.grid.2x2.fill"], False),
-    ("star", "regular", ["star"], False),
-    ("stop", "fill", ["stop.fill"], False),
-    ("text-align-left", "regular", ["text.alignleft"], False),
-    ("chat-text", "regular", ["text.bubble"], False),
-    ("chat-text", "fill", ["text.bubble.fill"], False),
-    ("cursor-text", "regular", ["text.cursor"], False),
-    ("timer", "regular", ["timer"], False),
-    ("video-camera", "fill", ["video.fill"], False),
-    ("wifi-high", "regular", ["wifi"], False),
-    ("trash-simple", "regular", ["xmark.bin"], False),
-    ("warning-octagon", "fill", ["xmark.octagon.fill"], False),
-    ("shopping-cart", "fill", ["cart.fill"], False),
-    ("question", "regular", ["questionmark"], False),
+    ("gauge", ["gauge.medium"]),
+    ("house", ["house", "house.fill"]),
+    ("stack", ["square.stack", "sparkles.square.fill.on.square"]),
+    ("waveform", ["waveform", "waveform.path", "waveform.badge.magnifyingglass", "waveform.path.ecg"]),
+    ("clock", ["clock", "clock.fill"]),
+    ("book-open-text", ["text.book.closed", "character.book.closed", "text.book.closed.fill", "character.book.closed.fill"]),
+    ("cpu", ["cpu", "cpu.fill"]),
+    ("microphone", ["mic", "mic.fill", "microphone.fill"]),
+    ("gear-six", ["gearshape", "gearshape.fill"]),
+    ("seal-check", ["checkmark.seal", "checkmark.seal.fill"]),
+    ("file-text", ["doc.text.fill", "doc.text"]),
+    ("x", ["xmark"]),
+    ("globe", ["globe"]),
+    ("sparkle", ["sparkles"]),
+    ("check", ["checkmark"]),
+    ("check-circle", ["checkmark.circle", "checkmark.circle.fill"]),
+    ("x-circle", ["xmark.circle", "xmark.circle.fill"]),
+    ("warning", ["exclamationmark.triangle", "exclamationmark.triangle.fill"]),
+    ("info", ["info.circle", "info.circle.fill"]),
+    ("arrow-right", ["arrow.right"]),
+    ("arrow-up-right", ["arrow.up.right"]),
+    ("arrow-clockwise", ["arrow.clockwise", "arrow.clockwise.circle.fill"]),
+    ("arrow-counter-clockwise", ["arrow.counterclockwise"]),
+    ("trash", ["trash"]),
+    ("folder", ["folder"]),
+    ("dots-three-circle", ["ellipsis.circle"]),
+    ("plus-circle", ["plus.circle", "plus.circle.fill"]),
+    ("pencil-simple", ["pencil"]),
+    ("pencil-circle", ["pencil.circle.fill"]),
+    ("note-pencil", ["square.and.pencil", "long.text.page.and.pencil.fill"]),
+    ("caret-right", ["chevron.right"]),
+    ("caret-left", ["chevron.left"]),
+    ("caret-down", ["chevron.down"]),
+    ("caret-up", ["chevron.up"]),
+    ("caret-up-down", ["chevron.up.chevron.down"]),
+    ("magnifying-glass", ["magnifyingglass"]),
+    ("hard-drive", ["internaldrive", "internaldrive.fill"]),
+    ("chart-bar", ["chart.bar.xaxis", "chart.bar"]),
+    ("magic-wand", ["wand.and.stars"]),
+    ("squares-four", ["square.grid.2x2", "square.grid.2x2.fill"]),
+    ("play", ["play.fill"]),
+    ("copy", ["doc.on.doc"]),
+    ("calendar", ["calendar", "1.calendar"]),
+    ("terminal-window", ["apple.terminal.fill", "terminal"]),
+    ("archive", ["archivebox.fill"]),
+    ("handbag", ["bag.fill"]),
+    ("messenger-logo", ["bolt.horizontal.circle.fill"]),
+    ("notebook", ["book.pages.fill"]),
+    ("briefcase", ["briefcase.fill"]),
+    ("chats", ["bubble.left.and.text.bubble.right.fill", "bubble.left.and.bubble.right.fill", "bubble.left.and.bubble.right"]),
+    ("bank", ["building.columns.circle.fill"]),
+    ("camera", ["camera.fill"]),
+    ("subtitles", ["captions.bubble.fill", "captions.bubble"]),
+    ("currency-circle-dollar", ["dollarsign.bank.building.fill"]),
+    ("envelope", ["envelope.fill", "envelope"]),
+    ("flask", ["flask.fill"]),
+    ("graduation-cap", ["graduationcap.fill"]),
+    ("keyboard", ["keyboard.fill", "keyboard"]),
+    ("lightbulb-filament", ["lightbulb.max.fill"]),
+    ("newspaper", ["magazine.fill"]),
+    ("map-trifold", ["map.fill"]),
+    ("music-notes", ["music.pages"]),
+    ("paint-brush", ["paintbrush.pointed.fill"]),
+    ("phone-call", ["phone.bubble.fill"]),
+    ("images", ["photo.fill.on.rectangle.fill"]),
+    ("monitor-play", ["play.rectangle.fill"]),
+    ("quotes", ["quote.bubble.fill"]),
+    ("receipt", ["receipt.fill"]),
+    ("star-four", ["star.hexagon.fill"]),
+    ("tray", ["tray.full.fill"]),
+    ("tree", ["tree.fill"]),
+    ("wallet", ["wallet.bifold.fill"]),
+    ("apple-logo", ["apple.logo"]),
+    ("app-window", ["app.fill"]),
+    ("arrows-clockwise", ["arrow.2.squarepath", "rectangle.2.swap"]),
+    ("arrow-circle-down", ["arrow.down.circle", "arrow.down.circle.fill"]),
+    ("file-arrow-down", ["arrow.down.doc"]),
+    ("arrows-left-right", ["arrow.left.arrow.right"]),
+    ("arrow-circle-up-right", ["arrow.up.right.circle.fill"]),
+    ("arrow-square-out", ["arrow.up.right.square"]),
+    ("arrow-u-up-left", ["arrow.uturn.backward"]),
+    ("lightning", ["bolt.fill", "bolt.circle.fill"]),
+    ("book", ["book.fill"]),
+    ("chart-bar-horizontal", ["chart.bar.doc.horizontal"]),
+    ("chart-line-up", ["chart.line.uptrend.xyaxis"]),
+    ("shield-check", ["checkmark.shield", "lock.shield"]),
+    ("code", ["chevron.left.forwardslash.chevron.right"]),
+    ("circle", ["circle"]),
+    ("circle-dashed", ["circle.dashed"]),
+    ("cloud", ["cloud.fill"]),
+    ("command", ["command.circle"]),
+    ("cube", ["cube"]),
+    ("clipboard-text", ["doc.on.clipboard", "list.bullet.clipboard.fill"]),
+    ("file-magnifying-glass", ["doc.text.magnifyingglass"]),
+    ("chat-centered-dots", ["exclamationmark.bubble.fill"]),
+    ("warning-circle", ["exclamationmark.circle", "exclamationmark.circle.fill"]),
+    ("hand-palm", ["hand.raised"]),
+    ("hourglass", ["hourglass"]),
+    ("infinity", ["infinity"]),
+    ("key", ["key.fill"]),
+    ("link", ["link", "link.badge.plus"]),
+    ("list-bullets", ["list.bullet.rectangle"]),
+    ("lock-key", ["lock.fill"]),
+    ("laptop", ["macbook"]),
+    ("microphone-slash", ["mic.slash"]),
+    ("minus-circle", ["minus.circle", "minus.circle.fill"]),
+    ("note", ["note.text"]),
+    ("hash", ["number"]),
+    ("paper-plane-tilt", ["paperplane.fill"]),
+    ("pause", ["pause.fill"]),
+    ("user-circle-check", ["person.crop.circle.badge.checkmark"]),
+    ("plus", ["plus"]),
+    ("hard-drives", ["server.rack"]),
+    ("shield", ["shield", "shield.fill"]),
+    ("sidebar", ["sidebar.left"]),
+    ("sidebar-simple", ["sidebar.right"]),
+    ("prohibit", ["slash.circle.fill"]),
+    ("sliders-horizontal", ["slider.horizontal.3"]),
+    ("download-simple", ["square.and.arrow.down"]),
+    ("export", ["square.and.arrow.up"]),
+    ("star", ["star"]),
+    ("stop", ["stop.fill"]),
+    ("text-align-left", ["text.alignleft"]),
+    ("chat-text", ["text.bubble", "text.bubble.fill"]),
+    ("cursor-text", ["text.cursor"]),
+    ("timer", ["timer"]),
+    ("video-camera", ["video.fill"]),
+    ("wifi-high", ["wifi"]),
+    ("trash-simple", ["xmark.bin"]),
+    ("warning-octagon", ["xmark.octagon.fill"]),
+    ("shopping-cart", ["cart.fill"]),
+    ("question", ["questionmark"]),
 ]
 
 
@@ -196,11 +167,8 @@ def fetch_sources(work):
     archive = work / "phosphor.tgz"
     archive.write_bytes(data)
     paths = {"LICENSE"}
-    for name, weight, _, has_tint in SYMBOLS:
-        suffix = "" if weight == "regular" else f"-{weight}"
-        paths.add(f"assets/{weight}/{name}{suffix}.svg")
-        if has_tint:
-            paths.add(f"assets/duotone/{name}-duotone.svg")
+    for name, _ in SYMBOLS:
+        paths.add(f"assets/regular/{name}.svg")
     source = work / "source/package"
     with tarfile.open(archive) as package:
         for path in sorted(paths):
@@ -214,17 +182,15 @@ def fetch_sources(work):
     return source
 
 
-def convert(tool, source, insets=None):
+def convert(tool, source):
     command = [str(tool), str(source), "--format", "sfsymbol"]
-    if insets is not None:
-        command += ["--insets", insets]
     result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=30)
     alignment = re.search(r"Alignment: --insets (\S+)", result.stdout)
     if alignment is None:
         raise ValueError(f"SwiftDraw did not report alignment for {source.name}")
     output = source.with_name(source.stem + "-symbol.svg")
     ET.parse(output)
-    return output, alignment.group(1)
+    return output
 
 
 def write_symbol(catalog, name, source):
@@ -238,27 +204,12 @@ def write_symbol(catalog, name, source):
     (folder / "Contents.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
 
-def extract_tint(source, destination):
-    root = ET.parse(source).getroot()
-    tint = ET.Element(root.tag, root.attrib)
-    for shape in root:
-        if shape.get("opacity") == "0.2":
-            layer = copy.deepcopy(shape)
-            del layer.attrib["opacity"]
-            tint.append(layer)
-    if not len(tint):
-        raise ValueError(f"No duotone tint found in {source.name}")
-    ET.register_namespace("", SVG_NAMESPACE)
-    ET.ElementTree(tint).write(destination, encoding="utf-8", xml_declaration=True)
-
-
-def swift_catalog(symbols, tints):
+def swift_catalog(symbols):
     lines = ["// Generated by scripts/phosphor-symbols.py. Do not edit.", "", "enum AppSymbolCatalog {"]
     lines += ['    static let fallback = "ph.question"', ""]
-    for name, entries in [("symbols", symbols), ("tints", tints)]:
-        lines.append(f"    static let {name}: [String: String] = [")
-        lines.extend(f'        "{key}": "{value}",' for key, value in sorted(entries.items()))
-        lines += ["    ]", ""]
+    lines.append("    static let symbols: [String: String] = [")
+    lines.extend(f'        "{key}": "{value}",' for key, value in sorted(symbols.items()))
+    lines.append("    ]")
     return "\n".join(lines).rstrip() + "\n}\n"
 
 
@@ -301,10 +252,9 @@ def main():
         catalog = work / "Phosphor"
         catalog.mkdir()
         (catalog / "Contents.json").write_text(json.dumps({"info": {"author": "xcode", "version": 1}}, indent=2) + "\n")
-        symbols, tints = {}, {}
-        for name, weight, aliases, has_tint in SYMBOLS:
-            suffix = "" if weight == "regular" else f"-{weight}"
-            source = package / f"assets/{weight}/{name}{suffix}.svg"
+        symbols = {}
+        for name, aliases in SYMBOLS:
+            source = package / f"assets/regular/{name}.svg"
             if name == "sidebar-simple":
                 # Phosphor's sidebar faces left; the inspector toggle faces right.
                 root = ET.parse(source).getroot()
@@ -315,22 +265,15 @@ def main():
                 group.extend(shapes)
                 ET.register_namespace("", SVG_NAMESPACE)
                 ET.ElementTree(root).write(source, encoding="utf-8", xml_declaration=True)
-            asset = f"ph.{name}" + (".fill" if weight == "fill" else "")
-            converted, insets = convert(tool, source)
+            asset = f"ph.{name}"
+            converted = convert(tool, source)
             write_symbol(catalog, asset, converted)
             for alias in aliases:
                 if alias in symbols:
                     raise ValueError(f"Duplicate SF Symbol mapping: {alias}")
                 symbols[alias] = asset
-            if has_tint:
-                tint_source = work / f"{name}-tint.svg"
-                extract_tint(package / f"assets/duotone/{name}-duotone.svg", tint_source)
-                converted, _ = convert(tool, tint_source, insets)
-                write_symbol(catalog, asset + ".tint", converted)
-                tints.update({alias: asset + ".tint" for alias in aliases})
-
         swift = work / "AppSymbolCatalog.generated.swift"
-        swift.write_text(swift_catalog(symbols, tints))
+        swift.write_text(swift_catalog(symbols))
         license_file = work / "Phosphor-Icons-LICENSE.txt"
         license_file.write_text((package / "LICENSE").read_text(encoding="utf-8"), encoding="utf-8")
         publish([
@@ -338,7 +281,7 @@ def main():
             (swift, ROOT / "VoiceInk/DesignSystem/Theme/AppSymbolCatalog.generated.swift"),
             (license_file, ROOT / "VoiceInk/Resources/Licenses/Phosphor-Icons-LICENSE.txt"),
         ], work)
-    print(f"Generated {len(SYMBOLS)} symbols, {len(tints)} tint aliases and {len(symbols)} SF Symbol mappings (Phosphor {PHOSPHOR_VERSION})")
+    print(f"Generated {len(SYMBOLS)} outlined symbols and {len(symbols)} SF Symbol mappings (Phosphor {PHOSPHOR_VERSION})")
 
 
 if __name__ == "__main__":
