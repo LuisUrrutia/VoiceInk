@@ -2,35 +2,21 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum ModelFilter: String, CaseIterable, Identifiable {
-    case local = "Local"
-    case cloud = "Cloud"
-    case custom = "Custom"
-
-    var id: String { self.rawValue }
-
-    var title: LocalizedStringKey {
-        switch self {
-        case .local:
-            return "Local"
-        case .cloud:
-            return "Cloud"
-        case .custom:
-            return "Custom"
-        }
-    }
-}
-
 struct ModelManagementView: View {
     @EnvironmentObject private var aiService: AIService
     @EnvironmentObject private var whisperModelManager: WhisperModelManager
+    @EnvironmentObject private var fluidAudioModelManager: FluidAudioModelManager
     @EnvironmentObject private var transcriptionModelManager: TranscriptionModelManager
     @StateObject private var customModelManager = CustomCloudModelManager.shared
     @StateObject private var customAIProviderManager = CustomAIProviderManager.shared
     @ObservedObject private var warmupCoordinator = WhisperModelWarmupCoordinator.shared
-    private let voiceInkRefineService = VoiceInkRefineService.shared
+    @ObservedObject private var voiceInkRefineService = VoiceInkRefineService.shared
+    @ObservedObject private var transcribeCppModelManager = TranscribeCppModelManager.shared
 
-    @State private var selectedFilter: ModelFilter = .local
+    @State private var selectedCategory: ModelCatalogCategory = .speech
+    @State private var selectedSource: ModelCatalogSource = .local
+    @State private var installationFilter: ModelInstallationFilter = .all
+    @State private var sortOrder: ModelCatalogSortOrder = .catalog
     @State private var activePanel: ModelManagementPanel?
 
     @State private var isShowingDeleteAlert = false
@@ -85,9 +71,14 @@ struct ModelManagementView: View {
         VStack(spacing: 0) {
             headerSection
 
+            catalogControls
+                .padding(.horizontal, 24)
+                .padding(.top, 18)
+                .padding(.bottom, 12)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if SystemArchitecture.isIntelMac {
+                    if SystemArchitecture.isIntelMac && selectedSource == .local {
                         intelMacWarningBanner
                     }
 
@@ -101,6 +92,8 @@ struct ModelManagementView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 600, minHeight: 500)
+        .onChange(of: selectedCategory) { _, _ in closePanel() }
+        .onChange(of: selectedSource) { _, _ in closePanel() }
         .sidePanel(
             isPresented: .init(
                 get: { isPanelOpen },
@@ -131,7 +124,7 @@ struct ModelManagementView: View {
         case .settings:
             settingsPanelContent
         case .cloudProvider(let descriptor):
-            ProviderDetailPanel(descriptor: descriptor, onClose: closePanel)
+            ProviderDetailPanel(descriptor: descriptor, category: selectedCategory, onClose: closePanel)
                 .environmentObject(aiService)
                 .environmentObject(transcriptionModelManager)
                 .id(descriptor.id)
@@ -167,13 +160,16 @@ struct ModelManagementView: View {
 
     private var availableModelsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            modelFilterPicker
-
-            switch selectedFilter {
+            switch selectedSource {
             case .local:
-                localModelsSection
+                if selectedCategory == .speech {
+                    localSpeechModelsSection
+                } else {
+                    localEnhancementModelsSection
+                }
             case .cloud:
                 CloudProviderManagementView(
+                    category: selectedCategory,
                     selectedProviderID: selectedCloudProviderID,
                     onSelectProvider: openCloudProviderPanel
                 )
@@ -181,6 +177,7 @@ struct ModelManagementView: View {
                 .environmentObject(transcriptionModelManager)
             case .custom:
                 CustomProviderManagementView(
+                    category: selectedCategory,
                     customModelManager: customModelManager,
                     customAIProviderManager: customAIProviderManager,
                     onAddTranscriptionModel: {
@@ -207,28 +204,61 @@ struct ModelManagementView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var modelFilterPicker: some View {
-        HStack(spacing: 12) {
-            ForEach(ModelFilter.allCases, id: \.self) { filter in
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        selectedFilter = filter
-                    }
-                    activePanel = nil
-                }) {
-                    Text(filter.title)
-                        .font(.system(size: 14, weight: selectedFilter == filter ? .semibold : .medium))
-                        .foregroundColor(selectedFilter == filter ? .primary : .primary.opacity(0.7))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            AppMaterialCardBackground(isSelected: selectedFilter == filter, cornerRadius: 22)
-                        )
+    private var catalogControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Picker("Model Type", selection: $selectedCategory) {
+                ForEach(ModelCatalogCategory.allCases) { category in
+                    Text(category.title).tag(category)
                 }
-                .buttonStyle(PlainButtonStyle())
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 360)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { filterControls }
+                VStack(alignment: .leading, spacing: 10) { filterControls }
+            }
+
+            if selectedSource == .local && selectedCategory == .speech && (sortOrder == .speed || sortOrder == .accuracy) {
+                Text("Models without a rating appear last.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if selectedSource == .local && selectedCategory == .enhancement {
+                Text("Installation filters apply to downloadable models. Services are configured separately.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var filterControls: some View {
+        Picker("Source", selection: $selectedSource) {
+            ForEach(ModelCatalogSource.allCases) { source in
+                Text(source.title).tag(source)
+            }
+        }
+        .fixedSize()
+
+        if selectedSource == .local {
+            Picker("Installation", selection: $installationFilter) {
+                ForEach(ModelInstallationFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+            .fixedSize()
+
+            if selectedCategory == .speech {
+                Picker("Sort by", selection: $sortOrder) {
+                    ForEach(ModelCatalogSortOrder.allCases) { order in
+                        Text(order.title).tag(order)
+                    }
+                }
+                .fixedSize()
+            }
+        }
     }
 
     private var settingsButton: some View {
@@ -240,27 +270,50 @@ struct ModelManagementView: View {
         }
     }
 
-    private var localModelsSection: some View {
-        VStack(spacing: 12) {
-            VoiceInkRefineModelCardView(
-                service: voiceInkRefineService,
-                deleteAction: deleteVoiceInkRefineModel
-            )
+    private var localSpeechModelsSection: some View {
+        let models = filteredLocalSpeechModels
 
-            ForEach(appleSpeechModels, id: \.id) { model in
-                localModelCard(model)
-            }
-
-            ForEach(downloadableLocalModels, id: \.id) { model in
-                localModelCard(model)
+        return VStack(spacing: 12) {
+            if models.isEmpty {
+                emptyModelsState
+            } else {
+                ForEach(models, id: \.id) { model in
+                    localModelCard(model)
+                }
             }
 
             importLocalModelButton
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var localEnhancementModelsSection: some View {
+        VStack(spacing: 12) {
+            if installationFilter.includes(isInstalled: voiceInkRefineService.isDownloaded) {
+                VoiceInkRefineModelCardView(
+                    service: voiceInkRefineService,
+                    deleteAction: deleteVoiceInkRefineModel
+                )
+            } else {
+                emptyModelsState
+            }
 
             LocalEnhancementServiceManagementView()
                 .environmentObject(aiService)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var emptyModelsState: some View {
+        ContentUnavailableView {
+            Label("No Matching Models", systemImage: "line.3.horizontal.decrease.circle")
+        } description: {
+            Text("Try showing all models to find one to download.")
+        } actions: {
+            Button("Show All Models") { installationFilter = .all }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
     }
 
     private func localModelCard(_ model: any TranscriptionModel) -> some View {
@@ -327,7 +380,7 @@ struct ModelManagementView: View {
 
             Button(action: {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    selectedFilter = .cloud
+                    selectedSource = .cloud
                 }
             }) {
                 HStack(spacing: 4) {
@@ -350,20 +403,26 @@ struct ModelManagementView: View {
         .cornerRadius(8)
     }
 
-    private var localModels: [any TranscriptionModel] {
-        transcriptionModelManager.allAvailableModels.filter {
-            ($0.provider == .whisper || $0.provider == .nativeApple || $0.provider == .fluidAudio
-                || $0.provider == .transcribeCpp)
-                && transcriptionModelManager.isAvailableOnCurrentOS($0)
-        }
-    }
-
-    private var appleSpeechModels: [any TranscriptionModel] {
-        localModels.filter { $0.provider == .nativeApple }
-    }
-
-    private var downloadableLocalModels: [any TranscriptionModel] {
-        localModels.filter { $0.provider != .nativeApple }
+    private var filteredLocalSpeechModels: [any TranscriptionModel] {
+        ModelCatalog.localSpeechModels(
+            from: transcriptionModelManager.allAvailableModels.filter {
+                transcriptionModelManager.isAvailableOnCurrentOS($0)
+            },
+            installation: installationFilter,
+            sortOrder: sortOrder,
+            isInstalled: { model in
+                switch model.provider {
+                case .whisper:
+                    whisperModelManager.availableModels.contains { $0.name == model.name }
+                case .fluidAudio:
+                    fluidAudioModelManager.isFluidAudioModelDownloaded(named: model.name)
+                case .transcribeCpp:
+                    transcribeCppModelManager.isModelDownloaded(named: model.name)
+                default:
+                    false
+                }
+            }
+        )
     }
 
     private func deleteLocalModel(_ model: any TranscriptionModel) {

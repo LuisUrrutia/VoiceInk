@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ProviderDetailPanel: View {
     let descriptor: ProviderDescriptor
+    let category: ModelCatalogCategory
     let onClose: () -> Void
 
     @EnvironmentObject private var aiService: AIService
@@ -22,9 +23,7 @@ struct ProviderDetailPanel: View {
     }
 
     private var iconName: String {
-        if descriptor.hasTranscription && descriptor.hasEnhancement { return "rectangle.2.swap" }
-        if descriptor.hasTranscription { return "captions.bubble.fill" }
-        return "sparkles"
+        category == .speech ? "captions.bubble.fill" : "sparkles"
     }
 
     var body: some View {
@@ -33,11 +32,11 @@ struct ProviderDetailPanel: View {
                 VStack(alignment: .leading, spacing: 18) {
                     apiKeySection
 
-                    if descriptor.hasTranscription {
+                    if category == .speech && descriptor.hasTranscription {
                         transcriptionModelsSection
                     }
 
-                    if descriptor.hasEnhancement {
+                    if category == .enhancement && descriptor.hasEnhancement {
                         enhancementModelsSection
                     }
                 }
