@@ -55,14 +55,16 @@ struct ModeConfigurationsGrid: View {
     @EnvironmentObject var enhancementService: AIEnhancementService
 
     var body: some View {
-        LazyVStack(spacing: 12) {
-            ForEach($modeManager.configurations) { $config in
-                ConfigurationRow(
-                    config: $config,
-                    isEditing: false,
-                    modeManager: modeManager,
-                    onEditConfig: onEditConfig
-                )
+        AppGlassContainer {
+            LazyVStack(spacing: 12) {
+                ForEach($modeManager.configurations) { $config in
+                    ConfigurationRow(
+                        config: $config,
+                        isEditing: false,
+                        modeManager: modeManager,
+                        onEditConfig: onEditConfig
+                    )
+                }
             }
         }
     }
@@ -125,6 +127,32 @@ private struct ModeShortcutIndicator: View {
             else { return }
             shortcut = ShortcutStore.shortcut(for: action)
         }
+    }
+}
+
+private struct ModeCardSurface: ViewModifier {
+    let isSelected: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        Group {
+            if reduceTransparency {
+                content.background(AppTheme.Surface.card, in: .rect(cornerRadius: 16))
+            } else if #available(macOS 26.0, *) {
+                content.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+            } else {
+                content.background(.thinMaterial, in: .rect(cornerRadius: 16))
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    AppMaterialCardBackground.border(for: isSelected),
+                    lineWidth: AppMaterialCardBackground.lineWidth(for: isSelected)
+                )
+                .allowsHitTesting(false)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -323,7 +351,6 @@ struct ConfigurationRow: View {
             .padding(.vertical, 12)
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isHovering ? AppTheme.Surface.controlActive : .clear)
 
             HStack(spacing: 8) {
                 let modelMetadata = transcriptionModelMetadata
@@ -446,19 +473,9 @@ struct ConfigurationRow: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 16)
-            .background(isHovering ? AppTheme.Surface.controlActive : .clear)
         }
-        .background(AppTheme.Surface.card)
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(
-                    AppMaterialCardBackground.border(for: isEditing),
-                    lineWidth: AppMaterialCardBackground.lineWidth(for: isEditing)
-                )
-                .allowsHitTesting(false)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .modifier(ModeCardSurface(isSelected: isEditing))
     }
 
     var body: some View {
