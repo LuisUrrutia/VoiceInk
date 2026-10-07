@@ -77,6 +77,13 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 - Begin clipboard, selection and screen context capture immediately after audio recording starts, before Auto Learn or mode detection can suspend setup. Capture clipboard text synchronously. Keep context tasks owned by their recording, transfer their capture session and live snapshot store to the transcription path when recording stops, and cancel them on cancellation or pipeline completion. Delayed setup cleanup must preserve both a stopped recording's pending context and a newer recording's context.
 - Regression: `ScreenCaptureTests` and `RecordingContextTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, cover display choice, relative coordinates, edge clipping, pixel sizing, immediate capture, cancellation and context handoff. In `VoiceInk Dev.app`, verify OCR with screen capture permission, negative-offset and multiple displays, windows crossing display edges, and short dictations while browser URL mode detection is pending. Verify context appears in `<CURRENT_WINDOW_CONTEXT>` only when enabled, clipboard and selection context remain available, cancel/restart does not mix snapshots, and ordinary dictation remains usable when screen permission is absent.
 
+### Closed-lid microphone routing
+
+- Source: Independently implement the behavior discussed in https://github.com/Beingpax/VoiceInk/pull/567 on `personal`; maintain it as a local overlay.
+- Read the actual lid state through IOKit. Keep the internal microphone ineligible while the lid is closed in System Default, Custom, and Prioritized modes, while preserving external and headset inputs. Keep temporary fallback separate from the saved custom preference, restore the effective selection when the lid reopens while idle or after an active recording stops, and report no usable microphone when no alternative exists.
+- Preserve a recording on an external input when the lid changes. When the active internal microphone becomes blocked, request one switch to a usable alternative without replacing the recording file. Reconcile the effective selection after recording stops.
+- Regression: `RecordingDeviceRoutingTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, covers startup, all input modes, priority order, custom preference restoration, no-input fallback, headset eligibility, and recording-change requests. Verify physical close/open cycles and audio continuity in `VoiceInk Dev.app` when changing lid monitoring or recorder switching; fixture tests do not establish hardware transition timing.
+
 ### Dictionary section descriptions
 
 - Source: `feat/dictionary-section-descriptions` at `7f2633335deb9eb25043cc43b7179ddd108ca154`.
