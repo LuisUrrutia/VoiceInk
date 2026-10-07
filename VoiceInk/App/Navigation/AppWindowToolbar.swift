@@ -51,7 +51,7 @@ struct MicrophoneMenu: View {
                 get: { devices.inputMode == .systemDefault },
                 set: { if $0 { devices.selectInputMode(.systemDefault) } }
             )) {
-                Label("Use system default", systemImage: "desktopcomputer")
+                Label("Use system default", appSymbol: "desktopcomputer")
             }
 
             ForEach(devices.availableDevices, id: \.uid) { device in
@@ -59,7 +59,7 @@ struct MicrophoneMenu: View {
                     get: { devices.inputMode == .custom && devices.selectedDeviceID == device.id },
                     set: { if $0 { devices.selectDeviceAndSwitchToCustomMode(id: device.id) } }
                 )) {
-                    Label(device.name, systemImage: "mic")
+                    Label(device.name, appSymbol: "mic")
                 }
             }
 
@@ -75,12 +75,12 @@ struct MicrophoneMenu: View {
             Button("Audio Settings…") { navigation.navigate(to: .audio) }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: "chevron.up.chevron.down")
+                Image(appSymbol: "chevron.up.chevron.down")
                     .font(.system(size: 10, weight: .medium))
                     .accessibilityHidden(true)
                 Text(microphoneName)
                     .lineLimit(1).truncationMode(.middle)
-                Image(systemName: "mic")
+                Image(appSymbol: "mic")
                     .frame(width: 28, height: 28)
                     .background(AppTheme.Surface.subtle, in: Circle())
             }

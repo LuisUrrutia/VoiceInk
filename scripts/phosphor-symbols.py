@@ -25,7 +25,7 @@ SYMBOLS = [
     ("gauge", ["gauge.medium"]),
     ("house", ["house", "house.fill"]),
     ("stack", ["square.stack", "sparkles.square.fill.on.square"]),
-    ("waveform", ["waveform", "waveform.path", "waveform.badge.magnifyingglass", "waveform.path.ecg"]),
+    ("waveform", ["waveform", "waveform.path", "waveform.badge.magnifyingglass", "waveform.path.ecg", "waveform.badge.plus"]),
     ("clock", ["clock", "clock.fill"]),
     ("book-open-text", ["text.book.closed", "character.book.closed", "text.book.closed.fill", "character.book.closed.fill"]),
     ("cpu", ["cpu", "cpu.fill"]),
@@ -111,8 +111,8 @@ SYMBOLS = [
     ("code", ["chevron.left.forwardslash.chevron.right"]),
     ("circle", ["circle"]),
     ("circle-dashed", ["circle.dashed"]),
-    ("cloud", ["cloud.fill"]),
-    ("command", ["command.circle"]),
+    ("cloud", ["cloud.fill", "cloud"]),
+    ("command", ["command.circle", "command"]),
     ("cube", ["cube"]),
     ("clipboard-text", ["doc.on.clipboard", "list.bullet.clipboard.fill"]),
     ("file-magnifying-glass", ["doc.text.magnifyingglass"]),
@@ -154,6 +154,12 @@ SYMBOLS = [
     ("warning-octagon", ["xmark.octagon.fill"]),
     ("shopping-cart", ["cart.fill"]),
     ("question", ["questionmark"]),
+    ("books", ["books.vertical", "books.vertical.fill"]),
+    ("clock-counter-clockwise", ["clock.arrow.circlepath"]),
+    ("monitor", ["desktopcomputer"]),
+    ("speaker-high", ["speaker.wave.2.fill"]),
+    ("list-checks", ["checklist", "text.badge.checkmark"]),
+    ("funnel", ["line.3.horizontal.decrease.circle"]),
 ]
 
 

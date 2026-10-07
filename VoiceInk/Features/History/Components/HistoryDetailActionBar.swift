@@ -68,7 +68,7 @@ struct HistoryDetailActionBar: View {
                     )
                     .frame(width: 16)
                 } else {
-                    Image(systemName: "square.grid.2x2")
+                    Image(appSymbol: "square.grid.2x2")
                 }
             }
         }
@@ -89,7 +89,7 @@ struct HistoryDetailActionBar: View {
             isShowingPrompts.toggle()
         } label: {
             actionLabel(title: selectedPromptTitle) {
-                Image(systemName: "wand.and.stars")
+                Image(appSymbol: "wand.and.stars")
             }
         }
         .buttonStyle(.plain)
@@ -168,7 +168,7 @@ struct HistoryDetailActionBar: View {
             Text(title)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Image(systemName: "chevron.down")
+            Image(appSymbol: "chevron.down")
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(AppTheme.Text.muted)
         }

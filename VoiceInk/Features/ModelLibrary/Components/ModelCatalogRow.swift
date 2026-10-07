@@ -21,7 +21,7 @@ struct ModelCatalogRow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Image(systemName: "waveform").foregroundStyle(.secondary)
+                Image(appSymbol: "waveform").foregroundStyle(.secondary)
                     .frame(width: 26, height: 24)
                     .background(AppTheme.Surface.subtle, in: RoundedRectangle(cornerRadius: 6))
                     .accessibilityLabel("Speech model")
@@ -35,7 +35,7 @@ struct ModelCatalogRow: View {
                 Text(model.provider == .nativeApple ? String(localized: "Built in") : storageSize)
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .frame(width: 80, alignment: .trailing)
-                Image(systemName: isExpanded ? "chevron.up" : (isInstalled ? "checkmark" : "arrow.down.circle"))
+                Image(appSymbol: isExpanded ? "chevron.up" : (isInstalled ? "checkmark" : "arrow.down.circle"))
                     .font(.system(size: 14))
                     .foregroundStyle(isInstalled ? Color.accentColor : Color.secondary).frame(width: 24)
             }

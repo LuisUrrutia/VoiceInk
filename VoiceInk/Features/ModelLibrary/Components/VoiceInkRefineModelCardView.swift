@@ -120,7 +120,7 @@ struct VoiceInkRefineModelCardView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text("Cancel")
-                            Image(systemName: "xmark.circle")
+                            Image(appSymbol: "xmark.circle")
                         }
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white)

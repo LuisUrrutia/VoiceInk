@@ -85,7 +85,7 @@ The generator verifies the pinned Phosphor archive's checksum and stages all con
 
 Use `Image(appSymbol:)` or `Label(_:appSymbol:)` with a mapped SF Symbol name. These identifiers preserve saved mode icons, including names ending in `.fill`; all artwork comes from Phosphor's regular outlines. Unknown imported names use a Phosphor question mark. Add an alias to the catalog before introducing a new interface symbol. Selected sidebar outlines use VoiceInk's current accent color. The custom symbols keep one fixed stroke weight while their size follows the font.
 
-Bundled provider logo assets, installed application icons and user-selected emojis retain their original artwork. App Shortcuts use system symbols because Apple's `AppShortcut` API requires `systemImageName`.
+VoiceInk app and menu-bar branding, bundled provider logo assets, installed application icons and user-selected emojis retain their original artwork. App Shortcuts use system symbols because Apple's `AppShortcut` API requires `systemImageName`.
 
 ## Troubleshooting
 

@@ -125,7 +125,7 @@ struct WordReplacementView: View {
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 } else if let dateSortIconName {
-                                    Image(systemName: dateSortIconName)
+                                    Image(appSymbol: dateSortIconName)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -151,7 +151,7 @@ struct WordReplacementView: View {
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 } else if let dateSortIconName {
-                                    Image(systemName: dateSortIconName)
+                                    Image(appSymbol: dateSortIconName)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
