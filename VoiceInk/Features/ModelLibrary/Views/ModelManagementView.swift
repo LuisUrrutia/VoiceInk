@@ -249,13 +249,7 @@ struct ModelManagementView: View {
                 VStack(alignment: .leading, spacing: 10) { filterControls }
             }
 
-            if selectedSource == .local && selectedCategory == .speech
-                && (sortOrder == .speed || sortOrder == .accuracy)
-            {
-                Text("Models without a rating appear last.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if selectedSource == .local && selectedCategory == .enhancement {
+            if selectedSource == .local && selectedCategory == .enhancement {
                 Text("Installation filters apply to downloadable models. Services are configured separately.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -290,15 +284,24 @@ struct ModelManagementView: View {
             .appHoverHighlight()
 
             if selectedCategory == .speech {
-                Menu {
-                    Picker("Sort by", selection: $sortOrder) {
-                        ForEach(ModelCatalogSortOrder.allCases) { order in Text(order.title).tag(order) }
+                HStack(spacing: 12) {
+                    Menu {
+                        Picker("Sort by", selection: $sortOrder) {
+                            ForEach(ModelCatalogSortOrder.allCases) { order in Text(order.title).tag(order) }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } label: { Text(sortOrder.title) }
+                    .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
+                    .appHoverHighlight().accessibilityLabel("Sort models")
+
+                    if sortOrder == .speed || sortOrder == .accuracy {
+                        Text("Models without a rating appear last.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                } label: { Text(sortOrder.title) }
-                .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
-                .appHoverHighlight().accessibilityLabel("Sort models")
+                }
             }
         }
     }

@@ -284,6 +284,8 @@ struct DashboardContent: View {
                     Picker("Period", selection: $selectedInsightPeriod) {
                         ForEach(DashboardInsightPeriod.allCases) { period in Text(period.pickerTitle).tag(period) }
                     }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
                 } label: {
                     HStack(spacing: 6) {
                         Text(selectedInsightPeriod.pickerTitle)
