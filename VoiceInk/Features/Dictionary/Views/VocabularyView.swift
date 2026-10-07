@@ -41,6 +41,7 @@ struct VocabularyView: View {
     @State private var sectionEditor: SectionEditor?
     @State private var sectionToDelete: VocabularySection?
     @State private var targetedDropTarget: VocabularyDropTarget?
+    @FocusState private var isWordFocused: Bool
 
     private struct SectionEditor: Identifiable {
         let id = UUID()
@@ -94,56 +95,103 @@ struct VocabularyView: View {
         }
     }
 
-    private var shouldShowAddButton: Bool {
+    private var canAddWords: Bool {
         !newWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                TextField("", text: $newWord, prompt: Text("Add word to vocabulary"))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                    .onSubmit { addWords() }
-                    .labelsHidden()
+    private var selectedSectionName: String {
+        sortedSections.first { $0.id == selectedSectionID }?.name ?? String(localized: "No section")
+    }
 
-                if shouldShowAddButton {
-                    AddIconButton(
-                        helpText: "Add word",
-                        isDisabled: !shouldShowAddButton,
-                        action: addWords
-                    )
-                }
+    private var composerHeader: some View {
+        AppGlassContainer {
+            HStack(spacing: 8) {
+                Text("Vocabulary")
+                    .font(.system(size: 16, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
 
                 Button {
-                    showInfoPopover.toggle()
+                    sectionEditor = SectionEditor(section: nil)
                 } label: {
-                    Image(systemName: "info.circle")
+                    Label("New section", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
-                .help("Vocabulary examples")
+                .appGlassButtonStyle()
+
+                AppIconButton(systemName: "info.circle", help: "Vocabulary examples") {
+                    showInfoPopover.toggle()
+                }
                 .popover(isPresented: $showInfoPopover) {
                     VocabularyInfoPopover()
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: shouldShowAddButton)
+        }
+    }
 
-            HStack {
-                if !vocabularySections.isEmpty {
-                    Picker("Add to section", selection: $selectedSectionID) {
-                        Text("No section").tag(Optional<UUID>.none)
-                        ForEach(sortedSections) { section in
-                            Text(section.name).tag(Optional(section.id))
-                        }
-                    }
-                    .fixedSize()
-                }
-                Spacer()
-                Button("New section") {
-                    sectionEditor = SectionEditor(section: nil)
-                }
-                .buttonStyle(.borderless)
+    private var wordField: some View {
+        TextField("Word or phrase", text: $newWord, prompt: Text("Add a word or phrase"))
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .focused($isWordFocused)
+            .onSubmit { addWords() }
+            .padding(.horizontal, 12)
+            .frame(minWidth: 120, minHeight: 36)
+            .appGlassControl()
+            .overlay {
+                Capsule()
+                    .strokeBorder(
+                        isWordFocused ? AppTheme.Accent.primary : AppTheme.Border.control.opacity(0.5),
+                        lineWidth: isWordFocused ? 1.5 : 0.5
+                    )
+                    .allowsHitTesting(false)
             }
+            .contentShape(Capsule())
+            .onTapGesture { isWordFocused = true }
+            .accessibilityLabel("Word or phrase")
+            .help("Separate multiple entries with commas")
+    }
+
+    private var sectionMenu: some View {
+        Menu {
+            Picker("Add to section", selection: $selectedSectionID) {
+                Text("No section").tag(Optional<UUID>.none)
+                ForEach(sortedSections) { section in
+                    Text(section.name).tag(Optional(section.id))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(selectedSectionName)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .menuStyle(.button)
+        .appGlassButtonStyle()
+        .controlSize(.large)
+        .frame(width: 160)
+        .accessibilityLabel("Add to section")
+        .accessibilityValue(selectedSectionName)
+        .help("Add to section: \(selectedSectionName)")
+    }
+
+    private var composer: some View {
+        AppGlassContainer {
+            HStack(spacing: 10) {
+                wordField
+                sectionMenu
+                AppActionButton("Add word", kind: .primary, action: addWords)
+                    .disabled(!canAddWords)
+                    .fixedSize()
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            composerHeader
+            composer
 
             if !vocabularyWords.isEmpty || !vocabularySections.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
@@ -207,6 +255,11 @@ struct VocabularyView: View {
 
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: vocabularySections.map(\.id)) { _, sectionIDs in
+            if let selectedSectionID, !sectionIDs.contains(selectedSectionID) {
+                self.selectedSectionID = nil
+            }
+        }
         .alert("Vocabulary", isPresented: $showAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -345,6 +398,7 @@ struct VocabularyView: View {
             return
         }
         newWord = ""
+        isWordFocused = true
     }
 
     private func removeWord(_ word: VocabularyWord) {

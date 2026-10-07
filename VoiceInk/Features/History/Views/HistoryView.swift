@@ -10,6 +10,7 @@ struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var searchText = ""
+    @State private var isSelecting = false
     @State private var detailTranscription: Transcription?
     @FocusState private var isSearchFocused: Bool
     @State private var selectedTranscriptions: Set<Transcription> = []
@@ -40,7 +41,7 @@ struct HistoryView: View {
         var descriptor = FetchDescriptor<Transcription>(
             sortBy: [
                 SortDescriptor(\Transcription.timestamp, order: .reverse),
-                SortDescriptor(\Transcription.id, order: .reverse),
+                SortDescriptor(\Transcription.id, order: .reverse)
             ]
         )
 
@@ -119,7 +120,6 @@ struct HistoryView: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: detailTranscription?.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .top)
         .sidePanel(
             isPresented: .init(
                 get: { activePanel != nil },
@@ -176,7 +176,52 @@ struct HistoryView: View {
     }
 
     private var historyContent: some View {
-        QuickPanelScaffold {
+        VStack(spacing: 0) {
+            AppWindowToolbar {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField("Search history", text: $searchText)
+                        .textFieldStyle(.plain).font(.system(size: 14))
+                        .focused($isSearchFocused)
+                        .accessibilityIdentifier("history.search")
+                    if isLoading { ProgressView().controlSize(.small) }
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                            isSearchFocused = true
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Clear history search")
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .appGlassControl()
+                .overlay {
+                    Capsule().strokeBorder(
+                        isSearchFocused ? Color.accentColor.opacity(0.6) : AppTheme.Border.control,
+                        lineWidth: 1
+                    )
+                }
+                .contentShape(Capsule())
+                .onTapGesture { isSearchFocused = true }
+                .frame(maxWidth: 420)
+
+                Spacer(minLength: 0)
+
+                HistoryIconButton(systemName: "checklist", help: "Select transcriptions", isSelected: isSelecting) {
+                    isSelecting.toggle()
+                    if !isSelecting { selectedTranscriptions.removeAll() }
+                }
+                HistoryIconButton(systemName: "gearshape", help: "History settings") {
+                    activePanel = .settings
+                }
+            }
+
             if displayedTranscriptions.isEmpty && !isLoading {
                 HistoryEmptyState(
                     hasSearchQuery: !searchText.isEmpty,
@@ -185,24 +230,9 @@ struct HistoryView: View {
             } else {
                 historyList
             }
-        } header: {
-            searchHeader
-        } footer: {
-            selectionBar
-        }
-    }
 
-    // MARK: - Search Header
-
-    private var searchHeader: some View {
-        HistorySearchHeader(
-            searchText: $searchText,
-            searchFocus: $isSearchFocused,
-            isSearching: isLoading
-        ) {
-            Spacer()
-            HistoryIconButton(systemName: "gearshape", help: "History settings") {
-                activePanel = .settings
+            if isSelecting {
+                AppGlassContainer { selectionBar }.padding(.horizontal, 14).padding(.bottom, 10)
             }
         }
     }
@@ -251,14 +281,24 @@ struct HistoryView: View {
     // MARK: - History List
 
     private var historyList: some View {
-        HistoryList {
-            ForEach(displayedTranscriptions) { transcription in
+        HistoryList(topInset: 18, bottomInset: 24, horizontalInset: 24) {
+            ForEach(Array(displayedTranscriptions.enumerated()), id: \.element.id) { index, transcription in
+                if index == 0 || !Calendar.current.isDate(
+                    transcription.timestamp, inSameDayAs: displayedTranscriptions[index - 1].timestamp
+                ) {
+                    Text(transcription.timestamp, format: .dateTime.day().month(.wide).year())
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, index == 0 ? 0 : 12).padding(.bottom, 4)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 HistoryTranscriptionRow(
                     transcription: transcription,
                     isSelected: selectedTranscriptions.contains(transcription),
                     onSelect: { openDetail(transcription) },
                     onToggleCheck: { toggleSelection(transcription) },
-                    showsCopyButton: true
+                    showsCopyButton: true,
+                    isCompact: false
                 )
                 .id(transcription.id)
             }
@@ -339,6 +379,7 @@ struct HistoryView: View {
     // MARK: - Selection & Deletion
 
     private func toggleSelection(_ transcription: Transcription) {
+        isSelecting = true
         if selectedTranscriptions.contains(transcription) {
             selectedTranscriptions.remove(transcription)
         } else {

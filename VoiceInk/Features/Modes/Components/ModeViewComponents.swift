@@ -55,14 +55,16 @@ struct ModeConfigurationsGrid: View {
     @EnvironmentObject var enhancementService: AIEnhancementService
 
     var body: some View {
-        LazyVStack(spacing: 12) {
-            ForEach($modeManager.configurations) { $config in
-                ConfigurationRow(
-                    config: $config,
-                    isEditing: false,
-                    modeManager: modeManager,
-                    onEditConfig: onEditConfig
-                )
+        AppGlassContainer {
+            LazyVStack(spacing: 12) {
+                ForEach($modeManager.configurations) { $config in
+                    ConfigurationRow(
+                        config: $config,
+                        isEditing: false,
+                        modeManager: modeManager,
+                        onEditConfig: onEditConfig
+                    )
+                }
             }
         }
     }
@@ -125,6 +127,32 @@ private struct ModeShortcutIndicator: View {
             else { return }
             shortcut = ShortcutStore.shortcut(for: action)
         }
+    }
+}
+
+private struct ModeCardSurface: ViewModifier {
+    let isSelected: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        Group {
+            if reduceTransparency {
+                content.background(AppTheme.Surface.card, in: .rect(cornerRadius: 16))
+            } else if #available(macOS 26.0, *) {
+                content.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+            } else {
+                content.background(.thinMaterial, in: .rect(cornerRadius: 16))
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    AppMaterialCardBackground.border(for: isSelected),
+                    lineWidth: AppMaterialCardBackground.lineWidth(for: isSelected)
+                )
+                .allowsHitTesting(false)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -236,105 +264,93 @@ struct ConfigurationRow: View {
         .disabled(config.isDefault)
     }
 
-    private var editModeButton: some View {
-        Button {
-            onEditConfig(config)
-        } label: {
-            Text("Edit")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule()
-                        .fill(AppTheme.Surface.control)
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(AppTheme.Border.control, lineWidth: 0.5)
-                )
-        }
-        .buttonStyle(.plain)
-        .help("Edit mode")
-        .accessibilityLabel("Edit mode")
+    private var editModeIndicator: some View {
+        Text("Edit")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(AppTheme.Surface.control)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(AppTheme.Border.control, lineWidth: 0.5)
+            )
     }
 
-    var body: some View {
+    private var enableModeToggle: some View {
+        Toggle(
+            "Enable \(config.name) mode",
+            isOn: Binding(
+                get: { config.isEnabled },
+                set: { newValue in
+                    if newValue {
+                        modeManager.enableConfiguration(with: config.id)
+                    } else {
+                        modeManager.disableConfiguration(with: config.id)
+                    }
+                }
+            )
+        )
+        .toggleStyle(SwitchToggleStyle(tint: AppTheme.Accent.primary))
+        .labelsHidden()
+        .frame(height: 40)
+        .padding(.trailing, 14)
+        .padding(.top, 12)
+    }
+
+    private var cardContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        ModeIconView(icon: config.icon, size: config.icon.kind == .emoji ? 20 : 16)
-                    }
-                    .frame(width: 40, height: 40)
-                    .background(
-                        AppCardBackground(isSelected: false, cornerRadius: AppTheme.Radius.pill)
-                    )
+                ZStack {
+                    ModeIconView(icon: config.icon, size: config.icon.kind == .emoji ? 20 : 16)
+                }
+                .frame(width: 40, height: 40)
+                .background(
+                    AppCardBackground(isSelected: false, cornerRadius: AppTheme.Radius.pill)
+                )
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(config.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(config.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
 
-                        HStack(spacing: 12) {
-                            if appCount > 0 {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "app.fill")
-                                        .font(.system(size: 10))
-                                    Text(appText)
-                                        .font(.caption2)
-                                }
-                            }
-
-                            if websiteCount > 0 {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "globe")
-                                        .font(.system(size: 10))
-                                    Text(websiteText)
-                                        .font(.caption2)
-                                }
+                    HStack(spacing: 12) {
+                        if appCount > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "app.fill")
+                                    .font(.system(size: 10))
+                                Text(appText)
+                                    .font(.caption2)
                             }
                         }
-                        .padding(.top, 2)
-                        .foregroundColor(.secondary)
-                    }
 
-                    Spacer()
-
-                    if config.isDefault {
-                        DefaultModeIndicator()
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onEditConfig(config)
-                }
-
-                if !config.isDefault {
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { config.isEnabled },
-                            set: { newValue in
-                                if newValue {
-                                    modeManager.enableConfiguration(with: config.id)
-                                } else {
-                                    modeManager.disableConfiguration(with: config.id)
-                                }
+                        if websiteCount > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "globe")
+                                    .font(.system(size: 10))
+                                Text(websiteText)
+                                    .font(.caption2)
                             }
-                        )
-                    )
-                    .toggleStyle(SwitchToggleStyle(tint: AppTheme.Accent.primary))
-                    .labelsHidden()
+                        }
+                    }
+                    .padding(.top, 2)
+                    .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                if config.isDefault {
+                    DefaultModeIndicator()
                 }
             }
+            .padding(.trailing, config.isDefault ? 0 : 48)
             .padding(.vertical, 12)
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppMaterialCardBackground.fill)
-
-            Divider()
 
             HStack(spacing: 8) {
                 let modelMetadata = transcriptionModelMetadata
@@ -451,25 +467,31 @@ struct ConfigurationRow: View {
                 Spacer()
 
                 if isHovering {
-                    editModeButton
+                    editModeIndicator
                         .transition(.opacity)
                 }
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                onEditConfig(config)
-            }
             .padding(.vertical, 6)
             .padding(.horizontal, 16)
-            .background(AppTheme.Surface.card)
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(
-                    AppMaterialCardBackground.border(for: isEditing),
-                    lineWidth: AppMaterialCardBackground.lineWidth(for: isEditing)
-                )
+        .modifier(ModeCardSurface(isSelected: isEditing))
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button {
+                onEditConfig(config)
+            } label: {
+                cardContent
+            }
+            .buttonStyle(.plain)
+            .help("Edit mode")
+            .accessibilityLabel("Edit \(config.name) mode")
+
+            if !config.isDefault {
+                enableModeToggle
+            }
         }
         .opacity(config.isEnabled ? 1.0 : 0.70)
         .onHover { hovering in

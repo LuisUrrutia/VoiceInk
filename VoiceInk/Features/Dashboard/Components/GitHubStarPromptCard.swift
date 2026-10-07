@@ -63,7 +63,8 @@ struct GitHubStarPromptCard: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 11)
                     .frame(height: 28)
-                    .background(AppTheme.Surface.controlActive, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(
+                        AppTheme.Surface.controlActive, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .disabled(isLocked)
@@ -88,7 +89,7 @@ struct GitHubStarPromptCard: View {
         HStack(spacing: 8) {
             Image(systemName: completionState == .starred ? "checkmark.circle.fill" : "arrow.up.right.circle.fill")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(completionState == .starred ? AppTheme.Sidebar.license : .secondary)
+                .foregroundStyle(completionState == .starred ? AppTheme.Status.positive : .secondary)
 
             Text(completionState == .starred ? "Starred — thank you!" : "GitHub opened")
                 .font(.system(size: 13, weight: .semibold))

@@ -8,7 +8,6 @@ enum OnboardingStage: String, CaseIterable {
     case experience
     case contextAwareness
     case trust
-    case license
 
     var stepNumber: Int {
         switch self {
@@ -26,8 +25,6 @@ enum OnboardingStage: String, CaseIterable {
             return 6
         case .trust:
             return 7
-        case .license:
-            return 8
         }
     }
 
@@ -47,29 +44,25 @@ enum OnboardingStage: String, CaseIterable {
             return "slider.horizontal.3"
         case .trust:
             return "lock.shield"
-        case .license:
-            return "checkmark.seal.fill"
         }
     }
 
     var title: String {
         switch self {
         case .permissions:
-            return String(localized: "Allow Permissions")
+            return String(localized: "Welcome to VoiceInk")
         case .microphone:
             return String(localized: "Choose Microphone")
         case .model:
-            return String(localized: "Configure Transcription Model")
+            return String(localized: "Choose a transcription model")
         case .api:
-            return String(localized: "Verify API Key")
+            return String(localized: "Set up text enhancement")
         case .experience:
             return String(localized: "Experience VoiceInk")
         case .contextAwareness:
             return String(localized: "VoiceInk is Context-Aware")
         case .trust:
             return String(localized: "VoiceInk is Open Source")
-        case .license:
-            return String(localized: "Buy VoiceInk License")
         }
     }
 
@@ -83,9 +76,7 @@ enum OnboardingStage: String, CaseIterable {
             return String(localized: "Use NVIDIA's Parakeet model locally, or connect a cloud transcription provider.")
         case .api:
             return String(
-                localized:
-                    "VoiceInk uses LLMs to enhance transcripts and perform AI actions. Set up an API key before continuing."
-            )
+                localized: "Connect a provider to polish your transcripts, or skip this step and use plain dictation.")
         case .experience:
             return String(localized: "Try a few short samples and see how VoiceInk works before you start.")
         case .contextAwareness:
@@ -93,8 +84,6 @@ enum OnboardingStage: String, CaseIterable {
                 localized: "VoiceInk can select the right mode from the app you are using and the rules you configure.")
         case .trust:
             return String(localized: "VoiceInk is private by default. No data leaves your device unless you opt in.")
-        case .license:
-            return String(localized: "Activate an existing key, purchase a license, or start a 7-day free trial.")
         }
     }
 

@@ -19,7 +19,6 @@ final class SystemInfoService {
             APP INFORMATION:
             App Version: \(getAppVersion())
             Build Version: \(getBuildVersion())
-            License Status: \(getLicenseStatus())
 
             OPERATING SYSTEM:
             macOS Version: \(ProcessInfo.processInfo.operatingSystemVersionString)
@@ -166,7 +165,8 @@ final class SystemInfoService {
         let model = mode.selectedTranscriptionModelName.flatMap { modelName in
             TranscriptionModelRegistry.model(forSelectionKey: modelName, in: TranscriptionModelRegistry.models)
         }
-        let modelDescription = model?.displayName
+        let modelDescription =
+            model?.displayName
             ?? mode.selectedTranscriptionModelName
             ?? "Not configured"
         let languageDescription = getModeLanguageDescription(for: mode, model: model)
@@ -190,10 +190,11 @@ final class SystemInfoService {
             for: model,
             realtimeEnabled: mode.isRealtimeTranscriptionEnabled
         )
-        let displayName = TranscriptionLanguageSupport.languages(
-            for: model,
-            realtimeEnabled: mode.isRealtimeTranscriptionEnabled
-        )[language]
+        let displayName =
+            TranscriptionLanguageSupport.languages(
+                for: model,
+                realtimeEnabled: mode.isRealtimeTranscriptionEnabled
+            )[language]
 
         guard let displayName, displayName.caseInsensitiveCompare(language) != .orderedSame else {
             return language
@@ -236,10 +237,6 @@ final class SystemInfoService {
         @unknown default:
             return "Unknown"
         }
-    }
-
-    private func getLicenseStatus() -> String {
-        LicenseViewModel.shared.diagnosticLicenseStatus
     }
 
     private static func englishTimestamp() -> String {

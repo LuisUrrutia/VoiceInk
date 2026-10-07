@@ -31,8 +31,7 @@ struct SidePanel<PanelContent: View>: ViewModifier {
             .frame(width: panelWidth)
             .frame(maxHeight: .infinity, alignment: .top)
             .background(SidePanelBackground())
-            .overlay(SidePanelEdgeSeparator(), alignment: .leading)
-            .overlay(SidePanelOuterSeparator(), alignment: .trailing)
+            .shadow(color: .black.opacity(0.12), radius: 16, x: -4)
             .ignoresSafeArea()
     }
 
@@ -61,26 +60,7 @@ struct SidePanel<PanelContent: View>: ViewModifier {
 
 struct SidePanelBackground: View {
     var body: some View {
-        ZStack {
-            VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
-            AppTheme.Surface.sidePanelOverlay
-        }
-    }
-}
-
-private struct SidePanelEdgeSeparator: View {
-    var body: some View {
-        Rectangle()
-            .fill(AppTheme.Border.tint)
-            .frame(width: 1)
-    }
-}
-
-private struct SidePanelOuterSeparator: View {
-    var body: some View {
-        Rectangle()
-            .fill(AppTheme.Border.sidePanelOuter)
-            .frame(width: 1)
+        AppTheme.Surface.window
     }
 }
 

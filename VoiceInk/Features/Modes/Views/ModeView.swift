@@ -57,6 +57,7 @@ struct ModeView: View {
     @EnvironmentObject private var enhancementService: AIEnhancementService
     @EnvironmentObject private var aiService: AIService
     @EnvironmentObject private var transcriptionModelManager: TranscriptionModelManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activePanel: PanelType?
     @State private var panelID = UUID()
 
@@ -65,8 +66,14 @@ struct ModeView: View {
         case settings
     }
 
-    private var isPanelOpen: Bool {
-        activePanel != nil
+    private var isSettingsOpen: Bool {
+        if case .settings? = activePanel { return true }
+        return false
+    }
+
+    private var isEditingMode: Bool {
+        if case .configuration? = activePanel { return true }
+        return false
     }
 
     private var headerControls: some View {
@@ -78,7 +85,7 @@ struct ModeView: View {
 
     private var addModeButton: some View {
         AppIconButton(
-            systemName: "plus.circle.fill",
+            systemName: "plus",
             help: "Add a new mode"
         ) {
             openPanel(mode: .add)
@@ -95,12 +102,39 @@ struct ModeView: View {
     }
 
     var body: some View {
+        ZStack {
+            if case .configuration(let mode)? = activePanel {
+                ModeConfigEditorView(mode: mode, modeManager: modeManager, onDismiss: closePanel)
+                    .environmentObject(modeWarmupStore)
+                    .id(panelID)
+                    .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+            } else {
+                modeList
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        .clipped()
+        .animation(reduceMotion ? .easeOut(duration: 0.12) : .smooth(duration: 0.32), value: isEditingMode)
+        .sidePanel(isPresented: .init(
+            get: { isSettingsOpen },
+            set: { if !$0 { closePanel() } }
+        )) {
+            ModeSettingsPanelView(modeManager: modeManager, onDismiss: closePanel)
+        }
+        .onAppear {
+            modeWarmupStore.configure(
+                aiService: aiService,
+                enhancementService: enhancementService,
+                transcriptionModelManager: transcriptionModelManager
+            )
+        }
+    }
+
+    private var modeList: some View {
         VStack(spacing: 0) {
-            AppScreenHeader(
-                title: "Modes",
-                infoMessage: "Modes help you set up VoiceInk for different writing tasks, workflows, and scenarios.",
-                infoURL: "https://tryvoiceink.com/docs/modes"
-            ) {
+            AppWindowToolbar {
+                Spacer()
+                MicrophoneMenu()
                 headerControls
             }
 
@@ -133,6 +167,8 @@ struct ModeView: View {
                                         }
                                     }
 
+                                    AppActionButton("Create a mode", kind: .primary) { openPanel(mode: .add) }
+
                                     Spacer()
                                 }
                                 .frame(maxWidth: .infinity)
@@ -157,30 +193,6 @@ struct ModeView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .sidePanel(
-            isPresented: .init(
-                get: { isPanelOpen },
-                set: { if !$0 { closePanel() } }
-            ), dismissOnExitCommand: false
-        ) {
-            switch activePanel {
-            case .configuration(let mode)?:
-                ModeConfigEditorView(mode: mode, modeManager: modeManager, onDismiss: closePanel)
-                    .environmentObject(modeWarmupStore)
-                    .id(panelID)
-            case .settings?:
-                ModeSettingsPanelView(modeManager: modeManager, onDismiss: closePanel)
-            case nil:
-                EmptyView()
-            }
-        }
-        .onAppear {
-            modeWarmupStore.configure(
-                aiService: aiService,
-                enhancementService: enhancementService,
-                transcriptionModelManager: transcriptionModelManager
-            )
         }
     }
 

@@ -10,43 +10,44 @@ struct AudioSetupView: View {
     @State private var refreshIconRotation = 0.0
 
     var body: some View {
-        Form {
-            Section {
-                inputSettingsRows
-            } header: {
-                Text("Audio Input")
-            }
-
-            if usesPriorityOrder {
+        VStack(spacing: 0) {
+            Form {
                 Section {
-                    priorityOrderRows
+                    inputSettingsRows
                 } header: {
-                    Text("Priority Order")
+                    Text("Audio Input")
+                }
+
+                if usesPriorityOrder {
+                    Section {
+                        priorityOrderRows
+                    } header: {
+                        Text("Priority Order")
+                    }
+                }
+
+                Section {
+                    CustomSoundSettingsView()
+                } header: {
+                    Text("Recording Sounds")
+                }
+
+                Section {
+                    Toggle("Mute Audio While Recording", isOn: $mediaController.isSystemMuteEnabled)
+
+                    Toggle("Pause Media While Recording", isOn: $playbackController.isPauseMediaEnabled)
+
+                    LabeledContent("Resume Delay") {
+                        resumeDelayMenu
+                            .disabled(!canEditResumeDelay)
+                    }
+                    .foregroundStyle(canEditResumeDelay ? .primary : .secondary)
+                } header: {
+                    Text("Recording Behavior")
                 }
             }
-
-            Section {
-                CustomSoundSettingsView()
-            } header: {
-                Text("Recording Sounds")
-            }
-
-            Section {
-                Toggle("Mute Audio While Recording", isOn: $mediaController.isSystemMuteEnabled)
-
-                Toggle("Pause Media While Recording", isOn: $playbackController.isPauseMediaEnabled)
-
-                LabeledContent("Resume Delay") {
-                    resumeDelayMenu
-                        .disabled(!canEditResumeDelay)
-                }
-                .foregroundStyle(canEditResumeDelay ? .primary : .secondary)
-            } header: {
-                Text("Recording Behavior")
-            }
+            .formStyle(AppSettingsFormStyle())
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
         .onAppear {
             if !usesPriorityOrder {
                 microphoneSourceBeforePriorityOrder = currentMicrophoneSource
@@ -56,19 +57,25 @@ struct AudioSetupView: View {
 
     @ViewBuilder
     private var inputSettingsRows: some View {
-        Picker("Microphone Mode", selection: inputRouteSelection) {
-            Text("Selected Microphone").tag(InputRoute.singleMicrophone)
-            Text("Priority Order").tag(InputRoute.priorityOrder)
+        LabeledContent("Microphone Mode") {
+            Picker("Microphone Mode", selection: inputRouteSelection) {
+                Text("Selected Microphone").tag(InputRoute.singleMicrophone)
+                Text("Priority Order").tag(InputRoute.priorityOrder)
+            }
+            .labelsHidden()
         }
         .pickerStyle(.menu)
 
         if !usesPriorityOrder {
-            Picker("Microphone", selection: microphoneSourceSelection) {
-                Text(systemDefaultSourceTitle).tag(MicrophoneSourceSelection.systemDefault)
+            LabeledContent("Microphone") {
+                Picker("Microphone", selection: microphoneSourceSelection) {
+                    Text(systemDefaultSourceTitle).tag(MicrophoneSourceSelection.systemDefault)
 
-                ForEach(audioDeviceManager.availableDevices, id: \.uid) { device in
-                    Text(device.name).tag(MicrophoneSourceSelection.device(device.uid))
+                    ForEach(audioDeviceManager.availableDevices, id: \.uid) { device in
+                        Text(device.name).tag(MicrophoneSourceSelection.device(device.uid))
+                    }
                 }
+                .labelsHidden()
             }
             .pickerStyle(.menu)
         }
@@ -317,9 +324,10 @@ struct AudioSetupView: View {
     }
 
     private func updatePriorities(_ devices: [PrioritizedDevice]) {
-        let updatedDevices = devices.enumerated().map { index, device in
-            PrioritizedDevice(id: device.id, name: device.name, priority: index, modelUID: device.modelUID)
-        }
+        let updatedDevices = devices.enumerated()
+            .map { index, device in
+                PrioritizedDevice(id: device.id, name: device.name, priority: index, modelUID: device.modelUID)
+            }
         audioDeviceManager.updatePriorities(devices: updatedDevices)
     }
 }

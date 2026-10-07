@@ -6,6 +6,11 @@ import os
 class TranscriptionModelManager: ObservableObject {
     @Published var currentTranscriptionModel: (any TranscriptionModel)?
     @Published var allAvailableModels: [any TranscriptionModel] = TranscriptionModelRegistry.models
+    @Published private(set) var installedLocalModelNames: Set<String> = ["apple-speech"]
+    @Published private(set) var configuredCloudProviderKeys: Set<String>?
+
+    private var installationRefreshTask: Task<Void, Never>?
+    private var providerConfigurationRefreshTask: Task<Void, Never>?
 
     private weak var whisperModelManager: WhisperModelManager?
     private weak var fluidAudioModelManager: FluidAudioModelManager?
@@ -38,7 +43,7 @@ class TranscriptionModelManager: ObservableObject {
         transcribeCppModelManager.onModelsChanged = { [weak self] in
             self?.refreshAllAvailableModels()
         }
-
+        refreshLocalModelInstallation()
     }
 
     // MARK: - Computed: usable models
@@ -140,6 +145,7 @@ class TranscriptionModelManager: ObservableObject {
         }
 
         allAvailableModels = models
+        refreshLocalModelInstallation()
 
         if let currentSelection,
             let updatedModel = TranscriptionModelRegistry.model(forSelectionKey: currentSelection, in: allAvailableModels)
@@ -152,6 +158,67 @@ class TranscriptionModelManager: ObservableObject {
             }
         } else {
             currentTranscriptionModel = nil
+        }
+    }
+
+    func refreshLocalModelInstallation() {
+        installationRefreshTask?.cancel()
+        let whisperNames = Set(whisperModelManager?.availableModels.map(\.name) ?? [])
+        let fluidAudioNames = allAvailableModels.filter { $0.provider == .fluidAudio }.map(\.name)
+        let transcribeCppNames = allAvailableModels.filter { $0.provider == .transcribeCpp }.map(\.name)
+
+        installationRefreshTask = Task { [weak self] in
+            let scan = Task.detached(priority: .utility) {
+                var installedNames = whisperNames.union(["apple-speech"])
+                for name in fluidAudioNames {
+                    guard !Task.isCancelled else { return installedNames }
+                    if FluidAudioModelManager.isModelDownloaded(named: name) {
+                        installedNames.insert(name)
+                    }
+                }
+                for name in transcribeCppNames {
+                    guard !Task.isCancelled else { return installedNames }
+                    if TranscribeCppModelCatalog.artifact(for: name)?.installedModelFileURL != nil {
+                        installedNames.insert(name)
+                    }
+                }
+                return installedNames
+            }
+            let installedNames = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            self?.installedLocalModelNames = installedNames
+        }
+    }
+
+    func refreshCloudProviderConfiguration() {
+        providerConfigurationRefreshTask?.cancel()
+        let providerKeys = Set(CloudProviderRegistry.allProviders.map { $0.providerKey.lowercased() })
+            .union(AIProvider.allCases.filter { $0.requiresAPIKey && $0 != .custom }.map { $0.rawValue.lowercased() })
+
+        providerConfigurationRefreshTask = Task { [weak self] in
+            let scan = Task.detached(priority: .utility) {
+                var configuredKeys = Set<String>()
+                for providerKey in providerKeys {
+                    guard !Task.isCancelled else { return configuredKeys }
+                    if APIKeyManager.shared.hasAPIKey(forProvider: providerKey) {
+                        configuredKeys.insert(providerKey)
+                    }
+                }
+                return configuredKeys
+            }
+            let configuredKeys = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard !Task.isCancelled, let self else { return }
+            if self.configuredCloudProviderKeys != configuredKeys {
+                self.configuredCloudProviderKeys = configuredKeys
+            }
         }
     }
 

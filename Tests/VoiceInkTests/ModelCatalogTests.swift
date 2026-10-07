@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import VoiceInk
 
 @MainActor
@@ -120,6 +121,20 @@ final class ModelCatalogTests: XCTestCase {
 
         XCTAssertEqual(speech.map(\.id), ["Speech", "Both"])
         XCTAssertEqual(enhancement.map(\.id), ["Enhancement", "Both"])
+    }
+
+    func testSearchCombinesWithInstallationAndSorting() {
+        let catalog: [any TranscriptionModel] = [tiny, apple, parakeet]
+
+        let result = ModelCatalog.localSpeechModels(
+            from: catalog, installation: .notInstalled, sortOrder: .speed, searchText: "  WHISPER  ",
+            isInstalled: { _ in false })
+        let empty = ModelCatalog.localSpeechModels(
+            from: catalog, installation: .installed, sortOrder: .name, searchText: "not-a-model",
+            isInstalled: { _ in true })
+
+        XCTAssertEqual(result.map(\.name), ["tiny"])
+        XCTAssertTrue(empty.isEmpty)
     }
 
     private func models(

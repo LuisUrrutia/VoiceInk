@@ -45,6 +45,9 @@ struct HistorySearchHeader<Accessory: View>: View {
 }
 
 struct HistoryList<Content: View>: View {
+    var topInset: CGFloat = HistoryLayout.listTopInset
+    var bottomInset: CGFloat = HistoryLayout.listBottomInset
+    var horizontalInset: CGFloat = HistoryLayout.listInset
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -52,9 +55,9 @@ struct HistoryList<Content: View>: View {
             LazyVStack(spacing: HistoryLayout.rowSpacing) {
                 content()
             }
-            .padding(.horizontal, HistoryLayout.listInset)
-            .padding(.top, HistoryLayout.listTopInset)
-            .padding(.bottom, HistoryLayout.listBottomInset)
+            .padding(.horizontal, horizontalInset)
+            .padding(.top, topInset)
+            .padding(.bottom, bottomInset)
         }
         .scrollIndicators(.never)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -102,6 +105,7 @@ struct HistoryTranscriptionRow: View {
     var onPaste: (() -> Void)? = nil
     var onToggleCheck: (() -> Void)? = nil
     var showsCopyButton = false
+    var isCompact = true
 
     @State private var isHovered = false
 
@@ -129,21 +133,23 @@ struct HistoryTranscriptionRow: View {
                 )
             }
         }
-        .frame(height: 28)
-        .padding(.horizontal, HistoryLayout.rowHorizontalPadding)
-        .padding(.vertical, HistoryLayout.rowVerticalPadding)
+        .frame(minHeight: isCompact ? 28 : 32)
+        .padding(.horizontal, isCompact ? HistoryLayout.rowHorizontalPadding : 18)
+        .padding(.vertical, isCompact ? HistoryLayout.rowVerticalPadding : 12)
         .background {
-            DashboardInsightRowBackground()
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(isSelected ? AppTheme.Selection.fill : (isHovered ? AppTheme.Insights.hover : .clear))
+            Group {
+                if isCompact {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(AppTheme.Surface.window)
+                } else {
+                    AppTranslucentCardBackground(cornerRadius: 18)
                 }
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(AppTheme.Selection.border, lineWidth: 1)
-                    }
-                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: isCompact ? 10 : 18)
+                    .fill(isSelected ? AppTheme.Selection.fill : (isHovered ? AppTheme.Surface.subtle : .clear))
+            }
+            .allowsHitTesting(false)
         }
         .onHover { isHovered = $0 }
     }
@@ -172,16 +178,17 @@ struct HistoryTranscriptionRow: View {
                 }
 
                 Text(transcription.preferredHistoryText)
-                    .font(.system(size: 13))
+                    .font(.system(size: isCompact ? 13 : 14))
                     .foregroundStyle(AppTheme.Text.primary)
-                    .lineLimit(1)
+                    .lineLimit(isCompact ? 1 : 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(transcription.timestamp, format: .relative(presentation: .named))
-                    .font(.system(size: 10))
+                    .font(.system(size: isCompact ? 10 : 11))
                     .foregroundStyle(AppTheme.Text.secondary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
+                    .help(transcription.timestamp.formatted(date: .abbreviated, time: .shortened))
             }
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -216,10 +223,10 @@ struct HistoryIconButton: View {
                 }
             }
             .foregroundStyle(AppTheme.Text.secondary)
-            .frame(width: 34, height: HistoryLayout.buttonHeight)
-            .background(QuickPanelButtonBackground(isSelected: isSelected))
+            .frame(width: 18, height: 18)
         }
-        .buttonStyle(.plain)
+        .appGlassButtonStyle(shape: .circle)
+        .tint(isSelected ? Color.accentColor : nil)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -273,7 +280,7 @@ struct HistoryCommandButton: View {
             .frame(minWidth: minimumWidth)
             .frame(height: HistoryLayout.buttonHeight)
             .fixedSize(horizontal: true, vertical: false)
-            .background(QuickPanelButtonBackground())
+            .appGlassControl()
         }
         .buttonStyle(.plain)
     }

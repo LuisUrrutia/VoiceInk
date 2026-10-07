@@ -17,6 +17,9 @@ struct ModelManagementView: View {
     @State private var selectedSource: ModelCatalogSource = .local
     @State private var installationFilter: ModelInstallationFilter = .all
     @State private var sortOrder: ModelCatalogSortOrder = .catalog
+    @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
+    @State private var expandedModelID: UUID?
     @State private var activePanel: ModelManagementPanel?
 
     @State private var isShowingDeleteAlert = false
@@ -92,6 +95,16 @@ struct ModelManagementView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 600, minHeight: 500)
+        .onAppear {
+            transcriptionModelManager.refreshLocalModelInstallation()
+            transcriptionModelManager.refreshCloudProviderConfiguration()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .aiProviderKeyChanged)) { _ in
+            transcriptionModelManager.refreshCloudProviderConfiguration()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            transcriptionModelManager.refreshCloudProviderConfiguration()
+        }
         .onChange(of: selectedCategory) { _, _ in closePanel() }
         .onChange(of: selectedSource) { _, _ in closePanel() }
         .sidePanel(
@@ -113,7 +126,31 @@ struct ModelManagementView: View {
     }
 
     private var headerSection: some View {
-        AppScreenHeader(title: "Model Catalog") {
+        AppWindowToolbar {
+            if selectedSource == .local && selectedCategory == .speech {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search models", text: $searchText).textFieldStyle(.plain)
+                        .font(.system(size: 14)).accessibilityIdentifier("models.search")
+                        .focused($isSearchFocused)
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).accessibilityLabel("Clear model search")
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .appGlassControl()
+                .overlay {
+                    Capsule().strokeBorder(
+                        isSearchFocused ? Color.accentColor.opacity(0.6) : AppTheme.Border.control,
+                        lineWidth: 1
+                    )
+                }
+                .contentShape(Capsule())
+                .onTapGesture { isSearchFocused = true }
+                .frame(maxWidth: 420)
+            }
+            Spacer(minLength: 0)
             settingsButton
         }
     }
@@ -213,18 +250,15 @@ struct ModelManagementView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 360)
+            .controlSize(.large)
+            .fixedSize(horizontal: true, vertical: false)
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) { filterControls }
                 VStack(alignment: .leading, spacing: 10) { filterControls }
             }
 
-            if selectedSource == .local && selectedCategory == .speech && (sortOrder == .speed || sortOrder == .accuracy) {
-                Text("Models without a rating appear last.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if selectedSource == .local && selectedCategory == .enhancement {
+            if selectedSource == .local && selectedCategory == .enhancement {
                 Text("Installation filters apply to downloadable models. Services are configured separately.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -235,28 +269,48 @@ struct ModelManagementView: View {
 
     @ViewBuilder
     private var filterControls: some View {
-        Picker("Source", selection: $selectedSource) {
-            ForEach(ModelCatalogSource.allCases) { source in
-                Text(source.title).tag(source)
+        Menu {
+            Picker("Source", selection: $selectedSource) {
+                ForEach(ModelCatalogSource.allCases) { source in Text(source.title).tag(source) }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label(selectedSource.title, systemImage: selectedSource == .local ? "desktopcomputer" : "cloud")
         }
-        .fixedSize()
+        .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
+        .appHoverHighlight()
 
         if selectedSource == .local {
-            Picker("Installation", selection: $installationFilter) {
-                ForEach(ModelInstallationFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
+            Menu {
+                Picker("Installation", selection: $installationFilter) {
+                    ForEach(ModelInstallationFilter.allCases) { filter in Text(filter.title).tag(filter) }
                 }
-            }
-            .fixedSize()
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: { Text(installationFilter.title) }
+            .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
+            .appHoverHighlight()
 
             if selectedCategory == .speech {
-                Picker("Sort by", selection: $sortOrder) {
-                    ForEach(ModelCatalogSortOrder.allCases) { order in
-                        Text(order.title).tag(order)
+                HStack(spacing: 12) {
+                    Menu {
+                        Picker("Sort by", selection: $sortOrder) {
+                            ForEach(ModelCatalogSortOrder.allCases) { order in Text(order.title).tag(order) }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } label: { Text(sortOrder.title) }
+                    .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
+                    .appHoverHighlight().accessibilityLabel("Sort models")
+
+                    if sortOrder == .speed || sortOrder == .accuracy {
+                        Text("Models without a rating appear last.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .fixedSize()
             }
         }
     }
@@ -273,12 +327,28 @@ struct ModelManagementView: View {
     private var localSpeechModelsSection: some View {
         let models = filteredLocalSpeechModels
 
-        return VStack(spacing: 12) {
+        return VStack(spacing: 8) {
             if models.isEmpty {
                 emptyModelsState
             } else {
-                ForEach(models, id: \.id) { model in
-                    localModelCard(model)
+                HStack(spacing: 10) {
+                    Text("Model name").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 34)
+                    Text("Type").frame(width: 26)
+                    Text("Speed / Accuracy").frame(width: 102, alignment: .leading)
+                    Text("Storage").frame(width: 80, alignment: .trailing)
+                    Spacer().frame(width: 24)
+                }
+                .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.bottom, 6)
+
+                LazyVStack(spacing: 2) {
+                    ForEach(models, id: \.id) { model in
+                        ModelCatalogRow(
+                            model: model, isInstalled: isInstalled(model), isExpanded: expandedModelID == model.id
+                        ) { expandedModelID = expandedModelID == model.id ? nil : model.id }
+                        if expandedModelID == model.id {
+                            localModelCard(model).padding(.bottom, 14)
+                        }
+                    }
                 }
             }
 
@@ -310,7 +380,10 @@ struct ModelManagementView: View {
         } description: {
             Text("Try showing all models to find one to download.")
         } actions: {
-            Button("Show All Models") { installationFilter = .all }
+            Button("Show All Models") {
+                installationFilter = .all
+                searchText = ""
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -318,13 +391,14 @@ struct ModelManagementView: View {
 
     private func localModelCard(_ model: any TranscriptionModel) -> some View {
         let isWarming =
-            (model as? WhisperModel).map { whisperModel in
+            (model as? WhisperModel)
+            .map { whisperModel in
                 warmupCoordinator.isWarming(modelNamed: whisperModel.name)
             } ?? false
 
         return ModelCardView(
             model: model,
-            isDownloaded: whisperModelManager.availableModels.contains { $0.name == model.name },
+            isDownloaded: isInstalled(model),
             downloadProgress: whisperModelManager.downloadProgress,
             modelURL: whisperModelManager.availableModels.first { $0.name == model.name }?.url,
             isWarming: isWarming,
@@ -345,25 +419,14 @@ struct ModelManagementView: View {
     }
 
     private var importLocalModelButton: some View {
-        HStack(spacing: 8) {
-            Button(action: { presentImportPanel() }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "square.and.arrow.down")
-                    Text("Import Local Model…")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(16)
-                .background(AppMaterialCardBackground(cornerRadius: 10))
+        HStack {
+            Button(action: presentImportPanel) {
+                Label("Import Local Model…", systemImage: "square.and.arrow.down")
             }
-            .buttonStyle(.plain)
-
-            InfoTip(
-                "Add a custom fine-tuned whisper model to use with VoiceInk. Select the downloaded .bin file.",
-                learnMoreURL: "https://tryvoiceink.com/docs/custom-local-whisper-models"
-            )
-            .help("Read more about custom local models")
+            .appGlassButtonStyle()
+            Spacer()
         }
+        .padding(.top, 14)
     }
 
     private var intelMacWarningBanner: some View {
@@ -409,20 +472,11 @@ struct ModelManagementView: View {
                 transcriptionModelManager.isAvailableOnCurrentOS($0)
             },
             installation: installationFilter,
-            sortOrder: sortOrder,
-            isInstalled: { model in
-                switch model.provider {
-                case .whisper:
-                    whisperModelManager.availableModels.contains { $0.name == model.name }
-                case .fluidAudio:
-                    fluidAudioModelManager.isFluidAudioModelDownloaded(named: model.name)
-                case .transcribeCpp:
-                    transcribeCppModelManager.isModelDownloaded(named: model.name)
-                default:
-                    false
-                }
-            }
-        )
+            sortOrder: sortOrder, searchText: searchText, isInstalled: isInstalled)
+    }
+
+    private func isInstalled(_ model: any TranscriptionModel) -> Bool {
+        transcriptionModelManager.installedLocalModelNames.contains(model.name)
     }
 
     private func deleteLocalModel(_ model: any TranscriptionModel) {

@@ -153,16 +153,20 @@ class FluidAudioModelManager: ObservableObject {
     // MARK: - Query helpers
 
     func isFluidAudioModelDownloaded(named modelName: String) -> Bool {
+        Self.isModelDownloaded(named: modelName)
+    }
+
+    nonisolated static func isModelDownloaded(named modelName: String) -> Bool {
         switch Self.modelKind(for: modelName) {
         case .nemotron(let variant):
             return Self.nemotronRequiredFilesExist(in: Self.nemotronCacheDirectory(for: variant))
         case .parakeetUnified:
-            let directory = cacheDirectory(for: modelName)
+            let directory = parakeetUnifiedCacheDirectory()
             return Self.parakeetUnifiedRequiredFiles.allSatisfy {
                 FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path)
             }
         case .parakeet(let version):
-            return AsrModels.modelsExist(at: cacheDirectory(for: version), version: version)
+            return AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: version), version: version)
                 && Self.vadModelFilesExist()
         }
     }

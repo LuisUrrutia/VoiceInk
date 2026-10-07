@@ -78,7 +78,7 @@ enum ModelCatalogSortOrder: String, CaseIterable, Identifiable {
         }
     }
 
-    fileprivate func score(for model: any TranscriptionModel) -> Double? {
+    func score(for model: any TranscriptionModel) -> Double? {
         let performance: (speed: Double, accuracy: Double)
         switch model {
         case let model as WhisperModel:
@@ -99,14 +99,22 @@ enum ModelCatalog {
         from models: [any TranscriptionModel],
         installation: ModelInstallationFilter,
         sortOrder: ModelCatalogSortOrder,
-        isInstalled: (any TranscriptionModel) -> Bool
+        searchText: String = "", isInstalled: (any TranscriptionModel) -> Bool
     ) -> [any TranscriptionModel] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = models.filter { model in
+            guard
+                query.isEmpty
+                    || [model.displayName, model.name, model.provider.rawValue, model.language]
+                        .contains(where: {
+                            $0.localizedStandardContains(query)
+                        })
+            else { return false }
             switch model.provider {
             case .nativeApple:
                 return installation.includes(isInstalled: true)
             case .whisper, .fluidAudio, .transcribeCpp:
-                return installation.includes(isInstalled: isInstalled(model))
+                return installation == .all || installation.includes(isInstalled: isInstalled(model))
             default:
                 return false
             }
@@ -114,25 +122,27 @@ enum ModelCatalog {
 
         guard sortOrder != .catalog else { return filtered }
 
-        return filtered.enumerated().sorted { first, second in
-            if sortOrder == .name {
-                let comparison = first.element.displayName.localizedStandardCompare(second.element.displayName)
-                if comparison != .orderedSame { return comparison == .orderedAscending }
-            } else {
-                let firstScore = sortOrder.score(for: first.element)
-                let secondScore = sortOrder.score(for: second.element)
-                switch (firstScore, secondScore) {
-                case (.some(let lhs), .some(let rhs)) where lhs != rhs:
-                    return lhs > rhs
-                case (.some, .none):
-                    return true
-                case (.none, .some):
-                    return false
-                default:
-                    break
+        return filtered.enumerated()
+            .sorted { first, second in
+                if sortOrder == .name {
+                    let comparison = first.element.displayName.localizedStandardCompare(second.element.displayName)
+                    if comparison != .orderedSame { return comparison == .orderedAscending }
+                } else {
+                    let firstScore = sortOrder.score(for: first.element)
+                    let secondScore = sortOrder.score(for: second.element)
+                    switch (firstScore, secondScore) {
+                    case (.some(let lhs), .some(let rhs)) where lhs != rhs:
+                        return lhs > rhs
+                    case (.some, .none):
+                        return true
+                    case (.none, .some):
+                        return false
+                    default:
+                        break
+                    }
                 }
+                return first.offset < second.offset
             }
-            return first.offset < second.offset
-        }.map(\.element)
+            .map(\.element)
     }
 }

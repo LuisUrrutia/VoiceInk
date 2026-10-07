@@ -178,7 +178,7 @@ struct HistoryDetailActionBar: View {
         .frame(maxWidth: 140)
         .frame(height: HistoryLayout.buttonHeight)
         .clipped()
-        .background(QuickPanelButtonBackground())
+        .appGlassControl()
         .fixedSize(horizontal: true, vertical: false)
     }
 

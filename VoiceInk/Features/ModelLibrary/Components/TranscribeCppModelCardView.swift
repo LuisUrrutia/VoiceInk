@@ -2,9 +2,9 @@ import SwiftUI
 
 struct TranscribeCppModelCardView: View {
     let model: TranscribeCppModel
+    let isDownloaded: Bool
     @ObservedObject private var modelManager = TranscribeCppModelManager.shared
 
-    private var isDownloaded: Bool { modelManager.isModelDownloaded(model) }
     private var isDownloading: Bool { modelManager.isModelDownloading(model) }
 
     var body: some View {

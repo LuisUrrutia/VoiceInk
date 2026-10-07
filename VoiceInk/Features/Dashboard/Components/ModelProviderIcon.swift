@@ -5,9 +5,25 @@ struct ModelProviderIcon: View {
     let modelName: String
     let kind: ModelInsightKind
     var size: CGFloat = 24
+    private let transcriptionModel: (any TranscriptionModel)?
+
+    init(modelName: String, kind: ModelInsightKind, size: CGFloat = 24) {
+        self.modelName = modelName
+        self.kind = kind
+        self.size = size
+        transcriptionModel = nil
+    }
+
+    init(model: any TranscriptionModel, size: CGFloat = 24) {
+        modelName = model.name
+        kind = .transcription
+        self.size = size
+        transcriptionModel = model
+    }
 
     var body: some View {
-        let identity = ModelProviderIdentity.resolve(modelName: modelName, kind: kind)
+        let identity = transcriptionModel.map { ModelProviderIdentity.resolve(model: $0) }
+            ?? ModelProviderIdentity.resolve(modelName: modelName, kind: kind)
 
         ProviderBrandIcon(
             descriptor: identity.descriptor,
@@ -25,6 +41,13 @@ private struct ModelProviderIdentity {
     let descriptor: ProviderDescriptor
     let fallbackSystemImage: String
 
+    static func resolve(model: any TranscriptionModel) -> ModelProviderIdentity {
+        if let transcribeCppModel = model as? TranscribeCppModel {
+            return transcribeCppIdentity(publisher: transcribeCppModel.publisher)
+        }
+        return identity(for: model.provider)
+    }
+
     static func resolve(modelName: String, kind: ModelInsightKind) -> ModelProviderIdentity {
         switch kind {
         case .transcription:
@@ -40,10 +63,7 @@ private struct ModelProviderIdentity {
         if let model = TranscriptionModelRegistry.models.first(where: { model in
             namesMatch(model.displayName, trimmedName) || namesMatch(model.name, trimmedName)
         }) {
-            if let transcribeCppModel = model as? TranscribeCppModel {
-                return transcribeCppIdentity(publisher: transcribeCppModel.publisher)
-            }
-            return identity(for: model.provider)
+            return resolve(model: model)
         }
 
         if trimmedName.localizedCaseInsensitiveContains("parakeet")

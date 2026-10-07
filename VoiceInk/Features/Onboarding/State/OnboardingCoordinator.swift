@@ -2,9 +2,6 @@ import SwiftUI
 
 @MainActor
 final class OnboardingCoordinator: ObservableObject {
-    let licenseViewModel = LicenseViewModel.shared
-    @Published var licenseKeyDraft = ""
-
     @Published var storedStage: String {
         didSet {
             defaults.set(storedStage, forKey: OnboardingStorageKeys.stage)
@@ -53,6 +50,12 @@ final class OnboardingCoordinator: ObservableObject {
         }
     }
 
+    @Published var hasSkippedModelSetup: Bool {
+        didSet {
+            defaults.set(hasSkippedModelSetup, forKey: OnboardingStorageKeys.skippedModelSetup)
+        }
+    }
+
     @Published var permissionStatuses: [OnboardingPermissionKind: OnboardingPermissionStatus] = [:]
     @Published var isSelectedTranscriptionProviderVerified = false
     @Published var isSelectedAPIProviderVerified = false
@@ -87,6 +90,7 @@ final class OnboardingCoordinator: ObservableObject {
                 forKey: OnboardingStorageKeys.transcriptionProvider
             ) ?? ""
         self.hasSkippedAPISetup = defaults.bool(forKey: OnboardingStorageKeys.skippedAPISetup)
+        self.hasSkippedModelSetup = defaults.bool(forKey: OnboardingStorageKeys.skippedModelSetup)
     }
 
     deinit {
@@ -94,11 +98,10 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var stage: OnboardingStage {
-        #if LOCAL_BUILD
-            if storedStage == OnboardingStage.license.rawValue {
-                return .trust
-            }
-        #endif
+        // Resume older onboarding sessions at the final, account-free step.
+        if storedStage == "license" {
+            return .trust
+        }
 
         if let stage = OnboardingStage(rawValue: storedStage) {
             return stage
@@ -136,19 +139,11 @@ final class OnboardingCoordinator: ObservableObject {
             return OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 1
         }
 
-        if stage == .license {
-            return OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 2
-        }
-
         return stage.stepNumber
     }
 
     var totalStepCount: Int {
-        #if LOCAL_BUILD
-            OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 1
-        #else
-            OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 2
-        #endif
+        OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 1
     }
 
     var experienceStep: OnboardingExperienceStep {
@@ -240,7 +235,7 @@ final class OnboardingCoordinator: ObservableObject {
             .openAI,
             .openRouter,
             .anthropic,
-            .mistral,
+            .mistral
         ]
 
         let supportedProviders = AIProvider.allCases.filter { provider in
@@ -266,7 +261,7 @@ final class OnboardingCoordinator: ObservableObject {
     var onboardingTranscriptionProviderOptions: [any CloudProvider] {
         let preferredOrder = [
             "AssemblyAI", "Cartesia", "Deepgram", "ElevenLabs", "Soniox",
-            "Speechmatics", "xAI", "Mistral", "Groq", "Gemini",
+            "Speechmatics", "xAI", "Mistral", "Groq", "Gemini"
         ]
 
         return CloudProviderRegistry.allProviders.sorted { first, second in
@@ -418,6 +413,11 @@ final class OnboardingCoordinator: ObservableObject {
             && (isSelectedAPIProviderVerified || hasSkippedAPISetup)
     }
 
+    func canFinishSetup(isTranscriptionSetupReady: Bool) -> Bool {
+        requiredPermissionsGranted && hasSelectedOnboardingMicrophone
+            && (hasSkippedModelSetup || isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady))
+    }
+
     func isCurrentExperienceReady(isTranscriptionSetupReady: Bool) -> Bool {
         isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) && isExperienceModeInstalled
             && hasExperienceModeShortcut
@@ -433,6 +433,7 @@ enum OnboardingStorageKeys {
     static let aiProvider = "onboardingAIProvider"
     static let transcriptionSetupKind = "onboardingTranscriptionSetupKind"
     static let transcriptionProvider = "onboardingTranscriptionProvider"
+    static let skippedModelSetup = "onboardingSkippedModelSetup"
     static let skippedAPISetup = "onboardingSkippedAPISetup"
 
     static let onboardingKeys = [
@@ -442,9 +443,8 @@ enum OnboardingStorageKeys {
         aiProvider,
         transcriptionSetupKind,
         transcriptionProvider,
-        skippedAPISetup,
-        experienceIndex,
-        "onboardingStarterModeIndex",
+        skippedAPISetup, skippedModelSetup, experienceIndex,
+        "onboardingStarterModeIndex"
     ]
 }
 

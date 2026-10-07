@@ -1,8 +1,24 @@
 import SwiftUI
 
+struct AppContentBackground: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        Group {
+            if reduceTransparency {
+                AppTheme.Surface.window
+            } else {
+                VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct AppCardBackground: View {
     var isSelected: Bool = false
-    var cornerRadius: CGFloat = 12
+    var cornerRadius: CGFloat = AppTheme.Radius.card
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
@@ -19,7 +35,7 @@ struct AppCardBackground: View {
 
 struct AppMaterialCardBackground: View {
     var isSelected: Bool = false
-    var cornerRadius: CGFloat = 12
+    var cornerRadius: CGFloat = AppTheme.Radius.card
 
     static let fill = AppTheme.Surface.materialCard
 
@@ -41,6 +57,35 @@ struct AppMaterialCardBackground: View {
                         lineWidth: Self.lineWidth(for: isSelected)
                     )
             )
+    }
+}
+
+struct AppTranslucentCardBackground: View {
+    var cornerRadius: CGFloat = AppTheme.Radius.card
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(reduceTransparency ? AnyShapeStyle(opaqueFill) : AnyShapeStyle(.regularMaterial))
+            .overlay {
+                if !reduceTransparency {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(.white.opacity(colorScheme == .light ? 0.60 : 0.06))
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(.primary.opacity(contrast == .increased ? 0.30 : 0.08))
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private var opaqueFill: Color {
+        colorScheme == .light ? .white : AppTheme.Surface.card
     }
 }
 

@@ -57,17 +57,6 @@ struct CloudProviderManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Cloud Providers")
-                    .font(.system(size: 15, weight: .semibold))
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("Cloud providers process audio and text under their own privacy policies.")
-                        .foregroundStyle(.secondary)
-                    Link("Learn more", destination: URL(string: "https://tryvoiceink.com/privacy")!)
-                }
-                .font(.caption)
-            }
-
             ForEach(providerDescriptors) { descriptor in
                 ProviderListRow(
                     descriptor: descriptor,
@@ -110,8 +99,12 @@ struct ProviderDescriptor: Identifiable {
 
     var brandAssetName: String? {
         switch providerKey.lowercased() {
-        case "openai":
+        case "openai", "whisper":
             return "provider-openai"
+        case "parakeet", "nvidia":
+            return "nvidia-logo"
+        case "cohere":
+            return "provider-cohere"
         case "openrouter":
             return "provider-openrouter"
         case "anthropic":
@@ -188,16 +181,22 @@ private struct ProviderListRow: View {
     let isSelected: Bool
     let onSelect: () -> Void
 
-    private var isConfigured: Bool {
-        APIKeyManager.shared.hasAPIKey(forProvider: descriptor.providerKey)
+    private var isConfigured: Bool? {
+        transcriptionModelManager.configuredCloudProviderKeys.map {
+            $0.contains(descriptor.providerKey.lowercased())
+        }
     }
 
     private var statusText: LocalizedStringKey {
-        isConfigured ? "Connected" : "Not connected"
+        switch isConfigured {
+        case true: "Connected"
+        case false: "Not connected"
+        case nil: "Checking…"
+        }
     }
 
     private var statusColor: Color {
-        isConfigured ? AppTheme.Status.positive : .secondary
+        isConfigured == true ? AppTheme.Status.positive : .secondary
     }
 
     private var iconName: String {

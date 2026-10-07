@@ -18,8 +18,8 @@ struct OnboardingView: View {
             isTranscriptionModelDownloaded: isTranscriptionModelDownloaded
         )
 
-        ZStack(alignment: .bottomLeading) {
-            OnboardingBackground()
+        HStack(spacing: 0) {
+            OnboardingSidebar(stage: coordinator.stage, skippedModel: coordinator.hasSkippedModelSetup)
 
             Group {
                 switch coordinator.stage {
@@ -75,7 +75,7 @@ struct OnboardingView: View {
                             fluidAudioModelManager.cancelDownload($0)
                         },
                         onVerificationChanged: coordinator.flow.refreshTranscriptionSetupVerification,
-                        onBack: coordinator.flow.goToMicrophoneStep,
+                        onBack: coordinator.flow.goToMicrophoneStep, onSkip: coordinator.flow.skipModelSetup,
                         onContinue: {
                             coordinator.flow.goToAPIStep(
                                 isTranscriptionSetupReady: isTranscriptionSetupReady,
@@ -160,7 +160,7 @@ struct OnboardingView: View {
                     .transition(.opacity)
                 case .trust:
                     OnboardingTrustScreen(
-                        contentMaxWidth: contentMaxWidth,
+                        contentMaxWidth: contentMaxWidth, hasSkippedModelSetup: coordinator.hasSkippedModelSetup,
                         onBack: {
                             coordinator.flow.goToPreviousTrustStep(
                                 isTranscriptionSetupReady: isTranscriptionSetupReady,
@@ -168,41 +168,6 @@ struct OnboardingView: View {
                             )
                         },
                         onContinue: {
-                            #if LOCAL_BUILD
-                                coordinator.flow.completeOnboarding(
-                                    isTranscriptionSetupReady: isTranscriptionSetupReady
-                                ) {
-                                    hasCompletedOnboardingV2 = true
-                                }
-                            #else
-                                coordinator.flow.goToLicenseStep(
-                                    isTranscriptionSetupReady: isTranscriptionSetupReady
-                                )
-                            #endif
-                        }
-                    )
-                    .transition(.opacity)
-                case .license:
-                    OnboardingLicenseScreen(
-                        licenseViewModel: coordinator.licenseViewModel,
-                        licenseKeyDraft: $coordinator.licenseKeyDraft,
-                        onBack: {
-                            coordinator.flow.goToPreviousLicenseStep(
-                                isTranscriptionSetupReady: isTranscriptionSetupReady
-                            )
-                        },
-                        onPurchase: {
-                            coordinator.licenseViewModel.openPurchaseLink()
-                        },
-                        onStartTrial: {
-                            coordinator.flow.startLicenseTrial(
-                                isTranscriptionSetupReady: isTranscriptionSetupReady
-                            ) {
-                                hasCompletedOnboardingV2 = true
-                            }
-                        },
-                        onActivate: coordinator.flow.activateLicense,
-                        onFinish: {
                             coordinator.flow.completeOnboarding(
                                 isTranscriptionSetupReady: isTranscriptionSetupReady
                             ) {
@@ -215,16 +180,11 @@ struct OnboardingView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            OnboardingProgressBadge(
-                currentStep: coordinator.currentStepNumber,
-                totalSteps: coordinator.totalStepCount
-            )
-            .padding(.leading, 28)
-            .padding(.bottom, 26)
-            .allowsHitTesting(false)
-
         }
-        .frame(minWidth: 820, minHeight: 680)
+        .background(OnboardingBackground())
+        .frame(
+            minWidth: AppWindowLayout.minimumWidth, minHeight: AppWindowLayout.minimumHeight
+        )
         .overlay(alignment: .topTrailing) {
             if showsSkipButton && coordinator.requiredPermissionsGranted {
                 Button("Skip") {
@@ -297,9 +257,9 @@ struct OnboardingView: View {
 
     private var showsSkipButton: Bool {
         switch coordinator.stage {
-        case .permissions, .microphone, .model, .api:
+        case .permissions, .microphone, .model, .api, .trust:
             return false
-        case .experience, .contextAwareness, .trust, .license:
+        case .experience, .contextAwareness:
             return true
         }
     }

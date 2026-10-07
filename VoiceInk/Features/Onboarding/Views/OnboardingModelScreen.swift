@@ -15,6 +15,7 @@ struct OnboardingModelScreen: View {
     let onCancelDownload: (FluidAudioModel) -> Void
     let onVerificationChanged: () -> Void
     let onBack: () -> Void
+    let onSkip: () -> Void
     let onContinue: () -> Void
 
     var body: some View {
@@ -36,13 +37,22 @@ struct OnboardingModelScreen: View {
                 onVerificationChanged: onVerificationChanged
             )
         } bottomBar: {
-            OnboardingBottomBar(
-                leadingTitle: "Back",
-                primaryTitle: "Continue",
-                isPrimaryEnabled: isSetupReady && !(setupKind == .local && isLocalDownloading),
-                onLeading: onBack,
-                onPrimary: onContinue
-            )
+            VStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    Text("You can choose a model later in Models.").font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Skip for now", action: onSkip).buttonStyle(.borderless)
+                        .accessibilityIdentifier(
+                            "onboarding.skipModel")
+                }
+                OnboardingBottomBar(
+                    leadingTitle: "Back",
+                    primaryTitle: "Continue",
+                    isPrimaryEnabled: isSetupReady && !(setupKind == .local && isLocalDownloading),
+                    onLeading: onBack,
+                    onPrimary: onContinue
+                )
+            }
         }
     }
 }

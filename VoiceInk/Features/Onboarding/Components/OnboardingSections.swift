@@ -2,18 +2,14 @@ import SwiftUI
 
 struct OnboardingBackground: View {
     var body: some View {
-        VisualEffectView(
-            material: .sidebar,
-            blendingMode: .behindWindow
-        )
-        .ignoresSafeArea()
+        AppTheme.Surface.window.ignoresSafeArea()
     }
 }
 
 enum OnboardingLayout {
     static let chromeMaxWidth: CGFloat = 560
-    static let horizontalPadding: CGFloat = 48
-    static let headerTopPadding: CGFloat = 52
+    static let horizontalPadding: CGFloat = 36
+    static let headerTopPadding: CGFloat = 36
     static let bottomPadding: CGFloat = 28
 }
 
@@ -23,50 +19,77 @@ struct OnboardingHeroHeader: View {
     let subtitle: String
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 16) {
             Image(systemName: systemImage)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundColor(AppTheme.Text.primary)
-                .frame(width: 56, height: 56)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(AppTheme.Surface.controlActive)
-                )
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
 
-            VStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text(LocalizedStringKey(title))
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundColor(AppTheme.Text.primary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text(LocalizedStringKey(subtitle))
                     .font(.system(size: 14))
-                    .foregroundColor(AppTheme.Text.muted)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-struct OnboardingProgressBadge: View {
-    let currentStep: Int
-    let totalSteps: Int
+struct OnboardingSidebar: View {
+    let stage: OnboardingStage
+    let skippedModel: Bool
+    private let stages: [OnboardingStage] = [.permissions, .microphone, .model, .api, .experience, .trust]
+    private let titles: [LocalizedStringKey] = [
+        "Permissions", "Microphone", "Model", "Enhancement", "Try it out", "Ready"
+    ]
 
-    private var progress: Double {
-        guard totalSteps > 0 else { return 0 }
-        return Double(currentStep) / Double(totalSteps)
-    }
+    private var currentIndex: Int { stages.firstIndex(of: stage == .contextAwareness ? .experience : stage) ?? 0 }
 
     var body: some View {
-        SegmentedProgressRing(
-            totalSegments: totalSteps,
-            filledSegments: currentStep,
-            progress: progress
-        )
+        VStack(alignment: .leading, spacing: 32) {
+            Label("VoiceInk", systemImage: "waveform").font(.system(size: 20, weight: .semibold)).padding(.top, 16)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("GET STARTED").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    .padding(
+                        .bottom, 8)
+                ForEach(stages.indices, id: \.self) { index in
+                    let skipped = skippedModel && (2...4).contains(index)
+                    HStack(spacing: 10) {
+                        Image(
+                            systemName: skipped
+                                ? "minus.circle" : index < currentIndex ? "checkmark.circle.fill" : "circle"
+                        )
+                        .foregroundStyle(index == currentIndex ? Color.accentColor : Color.secondary).frame(width: 18)
+                        Text(titles[index])
+                            .font(
+                                .system(size: 13, weight: index == currentIndex ? .semibold : .regular))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 9)
+                    .background(
+                        index == currentIndex ? AppTheme.Selection.fill : .clear, in: RoundedRectangle(cornerRadius: 8)
+                    )
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(titles[index])
+                    .accessibilityValue(
+                        skipped
+                            ? "Skipped"
+                            : index < currentIndex ? "Completed" : index == currentIndex ? "Current step" : "Upcoming")
+                }
+            }
+            Spacer()
+            Text("Your voice. Your workflow.").font(.callout).foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .appNavigationSurface()
+        .frame(width: 210)
     }
 }
 
@@ -114,11 +137,9 @@ struct OnboardingBottomBar: View {
             Button(action: onLeading) {
                 Text(LocalizedStringKey(leadingTitle))
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(AppTheme.Action.secondaryForeground)
                     .frame(width: Metrics.controlButtonWidth, height: Metrics.buttonHeight)
-                    .background(AppMaterialCardBackground(cornerRadius: AppTheme.Radius.control))
             }
-            .buttonStyle(.plain)
+            .appGlassButtonStyle()
         } else {
             AppTheme.Surface.clear
                 .frame(width: Metrics.controlButtonWidth, height: Metrics.buttonHeight)
@@ -130,18 +151,11 @@ struct OnboardingBottomBar: View {
         Button(action: onPrimary) {
             Text(LocalizedStringKey(primaryTitle))
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(
-                    isPrimaryEnabled ? AppTheme.Action.primaryForeground : AppTheme.Action.disabledForeground
-                )
                 .padding(.horizontal, Metrics.primaryButtonHorizontalPadding)
                 .frame(minWidth: Metrics.controlButtonWidth, minHeight: Metrics.buttonHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
-                        .fill(isPrimaryEnabled ? AppTheme.Action.primaryFill : AppTheme.Action.disabledFill)
-                )
         }
-        .buttonStyle(.plain)
-        .disabled(!isPrimaryEnabled)
+        .appGlassButtonStyle(.primary)
+        .disabled(!isPrimaryEnabled).keyboardShortcut(.defaultAction)
     }
 }
 
@@ -196,27 +210,25 @@ struct OnboardingStepScreen<Content: View, BottomBar: View>: View {
     var body: some View {
         if showsHeader {
             VStack(spacing: 0) {
-                OnboardingHeroHeader(
-                    systemImage: systemImage,
-                    title: title,
-                    subtitle: subtitle
-                )
-                .frame(maxWidth: OnboardingLayout.chromeMaxWidth)
-                .padding(.top, OnboardingLayout.headerTopPadding)
-
-                Spacer(minLength: 0)
-
-                content
-                    .frame(maxWidth: contentMaxWidth)
-                    .offset(y: contentYOffset)
-
-                Spacer(minLength: 0)
-
-                bottomBar
-                    .frame(maxWidth: OnboardingLayout.chromeMaxWidth)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 32) {
+                        OnboardingHeroHeader(
+                            systemImage: systemImage,
+                            title: title,
+                            subtitle: subtitle
+                        )
+                        content.frame(maxWidth: contentMaxWidth)
+                    }
+                    .frame(maxWidth: max(contentMaxWidth, OnboardingLayout.chromeMaxWidth))
+                    .padding(
+                        .top, OnboardingLayout.headerTopPadding
+                    )
+                    .padding(.bottom, 24).frame(maxWidth: .infinity)
+                }
+                AppGlassContainer { bottomBar }.frame(maxWidth: OnboardingLayout.chromeMaxWidth)
+                    .padding(.top, 16)
                     .padding(.bottom, OnboardingLayout.bottomPadding)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, OnboardingLayout.horizontalPadding)
         } else {
             ZStack {
@@ -228,50 +240,12 @@ struct OnboardingStepScreen<Content: View, BottomBar: View>: View {
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
 
-                    bottomBar
+                    AppGlassContainer { bottomBar }
                         .frame(maxWidth: OnboardingLayout.chromeMaxWidth)
                 }
                 .padding(.bottom, OnboardingLayout.bottomPadding)
             }
             .padding(.horizontal, OnboardingLayout.horizontalPadding)
         }
-    }
-}
-
-private struct SegmentedProgressRing: View {
-    let totalSegments: Int
-    let filledSegments: Int
-    let progress: Double
-
-    private let segmentGap: Double = 0.035
-    private let lineWidth: CGFloat = 4
-
-    var body: some View {
-        ZStack {
-            ForEach(0..<totalSegments, id: \.self) { index in
-                Circle()
-                    .trim(from: segmentStart(index), to: segmentEnd(index))
-                    .stroke(
-                        index < filledSegments ? AppTheme.Accent.primary : AppTheme.Surface.controlActive,
-                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-            }
-
-            Text(progress, format: .percent.precision(.fractionLength(0)))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(AppTheme.Text.primary)
-        }
-        .frame(width: 46, height: 46)
-    }
-
-    private func segmentStart(_ index: Int) -> CGFloat {
-        guard totalSegments > 0 else { return 0 }
-        return CGFloat(Double(index) / Double(totalSegments) + segmentGap / 2)
-    }
-
-    private func segmentEnd(_ index: Int) -> CGFloat {
-        guard totalSegments > 0 else { return 0 }
-        return CGFloat(Double(index + 1) / Double(totalSegments) - segmentGap / 2)
     }
 }

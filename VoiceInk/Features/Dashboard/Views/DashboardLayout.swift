@@ -3,7 +3,7 @@ import CoreGraphics
 enum DashboardLayout {
     static let sectionSpacing: CGFloat = 22
     static let columnSpacing: CGFloat = 18
-    static let pageHorizontalPadding: CGFloat = 24
+    static let pageHorizontalPadding: CGFloat = 28
     static let pageVerticalPadding: CGFloat = 28
     static let contentBottomOffset: CGFloat = 56
     static let footerTopSpacing: CGFloat = 20

@@ -8,22 +8,23 @@ enum QuickPanelEdge {
 enum QuickPanelMetrics {
     static let headerHeight: CGFloat = 56
     static let footerHeight: CGFloat = 48
-    static let fadeLength: CGFloat = 16
+    static let edgePadding: CGFloat = 8
 
-    static let topEdgeHeight = headerHeight + fadeLength
-    static let bottomEdgeHeight = footerHeight + fadeLength
+    static let topEdgeHeight = headerHeight + edgePadding
+    static let bottomEdgeHeight = footerHeight + edgePadding
 }
 
-/// Places scrollable panel content beneath a floating material header and an
-/// optional footer. Callers retain ownership of their content and scroll insets.
+// Callers own scroll insets so headers and footers remain visible while scrolling.
 struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
     private let content: Content
     private let header: Header
     private let footer: Footer?
     private let footerHeight: CGFloat
+    private let inheritsContentBackground: Bool
 
     init(
         footerHeight: CGFloat = QuickPanelMetrics.footerHeight,
+        inheritsContentBackground: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder header: () -> Header,
         @ViewBuilder footer: () -> Footer
@@ -32,6 +33,7 @@ struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
         self.header = header()
         self.footer = footer()
         self.footerHeight = footerHeight
+        self.inheritsContentBackground = inheritsContentBackground
     }
 
     var body: some View {
@@ -39,25 +41,31 @@ struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
             content
 
             VStack(spacing: 0) {
-                QuickPanelScrollEdge(edge: .top) {
+                QuickPanelScrollEdge(edge: .top, inheritsContentBackground: inheritsContentBackground) {
                     header
                 }
 
                 Spacer(minLength: 0)
 
                 if let footer {
-                    QuickPanelScrollEdge(edge: .bottom, contentHeight: footerHeight) {
+                    QuickPanelScrollEdge(
+                        edge: .bottom,
+                        contentHeight: footerHeight,
+                        inheritsContentBackground: inheritsContentBackground
+                    ) {
                         footer
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(inheritsContentBackground ? .clear : AppTheme.Surface.window)
     }
 }
 
 extension QuickPanelScaffold where Footer == EmptyView {
     init(
+        inheritsContentBackground: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder header: () -> Header
     ) {
@@ -65,72 +73,41 @@ extension QuickPanelScaffold where Footer == EmptyView {
         self.header = header()
         self.footer = nil
         self.footerHeight = QuickPanelMetrics.footerHeight
+        self.inheritsContentBackground = inheritsContentBackground
     }
 }
 
 struct QuickPanelScrollEdge<Content: View>: View {
     let edge: QuickPanelEdge
     var contentHeight: CGFloat? = nil
+    var inheritsContentBackground = false
     @ViewBuilder let content: () -> Content
 
     private var edgeHeight: CGFloat {
         let height = contentHeight ?? (edge == .top
             ? QuickPanelMetrics.headerHeight
             : QuickPanelMetrics.footerHeight)
-        return height + QuickPanelMetrics.fadeLength
+        return height + QuickPanelMetrics.edgePadding
     }
 
     var body: some View {
-        ZStack(alignment: edge == .top ? .top : .bottom) {
-            VisualEffectView(material: .hudWindow, blendingMode: .withinWindow)
-                .mask(edgeMask)
-                .allowsHitTesting(false)
-
-            VisualEffectView(material: .hudWindow, blendingMode: .withinWindow)
-                .opacity(0.30)
-                .mask(emphasisMask)
-                .allowsHitTesting(false)
-
+        AppGlassContainer {
             content()
-                .padding(edge == .top ? .top : .bottom, 8)
         }
+        .padding(edge == .top ? .top : .bottom, QuickPanelMetrics.edgePadding)
         .frame(height: edgeHeight)
-    }
-
-    private var edgeMask: some View {
-        LinearGradient(
-            stops: edge == .top
-                ? [
-                    .init(color: .black, location: 0),
-                    .init(color: .black.opacity(0.92), location: 0.60),
-                    .init(color: .clear, location: 1),
-                ]
-                : [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.92), location: 0.40),
-                    .init(color: .black, location: 1),
-                ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    private var emphasisMask: some View {
-        LinearGradient(
-            stops: edge == .top
-                ? [
-                    .init(color: .black, location: 0),
-                    .init(color: .black.opacity(0.88), location: 0.58),
-                    .init(color: .clear, location: 1),
-                ]
-                : [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.88), location: 0.42),
-                    .init(color: .black, location: 1),
-                ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        .frame(maxWidth: .infinity)
+        .background {
+            Group {
+                if inheritsContentBackground {
+                    AppContentBackground()
+                } else {
+                    AppTheme.Surface.window
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 }
 

@@ -56,10 +56,9 @@ struct HistoryAudioPlayer: View {
                 Text(playbackRateLabel)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(AppTheme.Text.secondary)
-                    .frame(width: 34, height: HistoryLayout.buttonHeight)
-                    .background(QuickPanelButtonBackground(isSelected: player.playbackRate != 1.0))
+                    .frame(width: 20, height: 20)
             }
-            .buttonStyle(.plain)
+            .appGlassButtonStyle(shape: .circle)
             .help("Playback speed")
             .accessibilityLabel("Playback speed")
             .accessibilityValue(Text(playbackRateLabel))

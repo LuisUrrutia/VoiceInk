@@ -73,7 +73,6 @@ struct ChangeLogView: View {
                 help: "Close What's New",
                 size: 30,
                 iconSize: 13,
-                cornerRadius: 15,
                 action: onDismiss
             )
         }
