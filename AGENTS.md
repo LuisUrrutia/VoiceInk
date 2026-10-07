@@ -84,6 +84,12 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 - Preserve a recording on an external input when the lid changes. When the active internal microphone becomes blocked, request one switch to a usable alternative without replacing the recording file. Reconcile the effective selection after recording stops.
 - Regression: `RecordingDeviceRoutingTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, covers startup, all input modes, priority order, custom preference restoration, no-input fallback, headset eligibility, and recording-change requests. Verify physical close/open cycles and audio continuity in `VoiceInk Dev.app` when changing lid monitoring or recorder switching; fixture tests do not establish hardware transition timing.
 
+### Stable local signing
+
+- Source: Independent implementation of https://github.com/Beingpax/VoiceInk/pull/586 for this fork.
+- Preserve `LOCAL_CODESIGN_IDENTITY` overrides, including `-` for ad-hoc signing. Automatic selection prefers a unique valid Apple Development identity, then a unique valid identity named exactly `VoiceInk Local Dev`, then ad-hoc signing. Select automatic identities by certificate fingerprint, deduplicate identical fingerprints, and avoid selecting an arbitrary certificate when a type has multiple identities.
+- Regression: `make test-local-signing` exercises the actual local build recipe with isolated external-tool fixtures; `./scripts/check-personal-sync.sh` includes it. Keep manual certificate setup in `BUILDING.md`. Verify permission retention with two real builds using the same certificate and bundle identifier before claiming that macOS permissions survive rebuilds.
+
 ### Dictionary section descriptions
 
 - Source: `feat/dictionary-section-descriptions` at `7f2633335deb9eb25043cc43b7179ddd108ca154`.

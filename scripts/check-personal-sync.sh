@@ -59,6 +59,8 @@ while IFS=$'\t' read -r pr_url reason; do
     printf '%s: %s head %s is integrated\n' "$pr_url" "$state" "$current_head"
 done < scripts/personal-prs.tsv
 
+make test-local-signing
+
 GIT_TERMINAL_PROMPT=0 \
 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
 GIT_CONFIG_COUNT=1 \

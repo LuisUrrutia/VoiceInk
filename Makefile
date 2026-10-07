@@ -6,7 +6,7 @@ LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 LOCAL_CODESIGN_IDENTITY ?=
 RUN_APP_NAME ?= VoiceInk
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup
+.PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup test-local-signing
 
 # Default target
 all: check build
@@ -50,19 +50,24 @@ build: setup
 		-skipMacroValidation \
 		build
 
-# Build locally with stable Apple Development signing when available.
+# Build locally with a stable signing identity when available.
 local: check setup
 	@echo "Building VoiceInk for local use (no Apple Developer certificate required)..."
 	@rm -rf "$(LOCAL_DERIVED_DATA)"
 	@SIGNING_IDENTITY="$(LOCAL_CODESIGN_IDENTITY)"; \
 	if [ -z "$$SIGNING_IDENTITY" ]; then \
-		SIGNING_IDENTITIES=$$(security find-identity -v -p codesigning 2>/dev/null | awk '/"Apple Development: / { print $$2 }'); \
-		SIGNING_IDENTITY_COUNT=$$(printf '%s\n' "$$SIGNING_IDENTITIES" | awk 'NF { count++ } END { print count + 0 }'); \
-		if [ "$$SIGNING_IDENTITY_COUNT" -eq 1 ]; then \
-			SIGNING_IDENTITY=$$(printf '%s\n' "$$SIGNING_IDENTITIES" | awk 'NF { print; exit }'); \
-		elif [ "$$SIGNING_IDENTITY_COUNT" -gt 1 ]; then \
-			echo "Multiple Apple Development identities found; set LOCAL_CODESIGN_IDENTITY to choose one; using ad-hoc signing"; \
-		fi; \
+		AVAILABLE_IDENTITIES=$$(security find-identity -v -p codesigning 2>/dev/null); \
+		for SIGNING_NAME in "Apple Development" "VoiceInk Local Dev"; do \
+			SIGNING_IDENTITIES=$$(printf '%s\n' "$$AVAILABLE_IDENTITIES" | awk -F '"' -v name="$$SIGNING_NAME" \
+				'(name == "VoiceInk Local Dev" && $$2 == name) || (name == "Apple Development" && index($$2, name ": ") == 1) { split($$1, identity, " "); print identity[2] }' | sort -u); \
+			SIGNING_IDENTITY_COUNT=$$(printf '%s\n' "$$SIGNING_IDENTITIES" | awk 'NF { count++ } END { print count + 0 }'); \
+			if [ "$$SIGNING_IDENTITY_COUNT" -eq 1 ]; then \
+				SIGNING_IDENTITY=$$SIGNING_IDENTITIES; \
+				break; \
+			elif [ "$$SIGNING_IDENTITY_COUNT" -gt 1 ]; then \
+				echo "Multiple '$$SIGNING_NAME' identities found; set LOCAL_CODESIGN_IDENTITY to choose one"; \
+			fi; \
+		done; \
 	fi; \
 	if [ -n "$$SIGNING_IDENTITY" ] && [ "$$SIGNING_IDENTITY" != "-" ]; then \
 		SIGNING_REQUIRED=YES; \
@@ -71,6 +76,7 @@ local: check setup
 		SIGNING_IDENTITY="-"; \
 		SIGNING_REQUIRED=NO; \
 		echo "Using ad-hoc signing (permissions may need approval after rebuilds)"; \
+		echo "For stable signing, see the local signing certificate instructions in BUILDING.md"; \
 	fi; \
 	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Release \
 		-derivedDataPath "$(LOCAL_DERIVED_DATA)" \
@@ -101,6 +107,9 @@ local: check setup
 		echo "Error: Could not find built VoiceInk.app at $$APP_PATH"; \
 		exit 1; \
 	fi
+
+test-local-signing:
+	python3 -B -m unittest discover -s Tests/BuildTests -v
 
 # Run application
 run:
@@ -145,7 +154,8 @@ help:
 	@echo "  setup              Copy whisper XCFramework to VoiceInk project"
 	@echo "  build              Build the VoiceInk Xcode project"
 	@echo "  local              Build locally with stable signing when available"
-	@echo "    LOCAL_CODESIGN_IDENTITY=<SHA or name> overrides automatic Apple Development detection"
+	@echo "    LOCAL_CODESIGN_IDENTITY=<SHA or name> overrides automatic signing identity detection"
+	@echo "  test-local-signing Check local signing selection without accessing Keychain or building"
 	@echo "  run                Launch the built VoiceInk app"
 	@echo "  dev                Build and run the app (for development)"
 	@echo "  release            Build DMG and Appcast using release-notes/<version>.html"
