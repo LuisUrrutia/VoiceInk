@@ -6,7 +6,6 @@ struct AppIconButton: View {
     let help: LocalizedStringResource
     var size: CGFloat = 30
     var iconSize: CGFloat = 14
-    var cornerRadius: CGFloat = AppTheme.Radius.pill
     var isDisabled = false
     let action: () -> Void
 
@@ -15,7 +14,6 @@ struct AppIconButton: View {
         help: LocalizedStringResource,
         size: CGFloat = 30,
         iconSize: CGFloat = 14,
-        cornerRadius: CGFloat = AppTheme.Radius.pill,
         isDisabled: Bool = false,
         action: @escaping () -> Void
     ) {
@@ -23,7 +21,6 @@ struct AppIconButton: View {
         self.help = help
         self.size = size
         self.iconSize = iconSize
-        self.cornerRadius = cornerRadius
         self.isDisabled = isDisabled
         self.action = action
     }
@@ -33,10 +30,10 @@ struct AppIconButton: View {
             Image(systemName: systemName)
                 .font(.system(size: iconSize, weight: .medium))
                 .foregroundColor(isDisabled ? .secondary.opacity(0.45) : .primary.opacity(0.7))
-                .frame(width: size, height: size)
+                .frame(width: max(16, size - 12), height: max(16, size - 12))
         }
-        .appGlassButtonStyle()
-        .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
+        .appGlassButtonStyle(shape: .circle)
+        .controlSize(.large)
         .disabled(isDisabled)
         .help(help)
         .accessibilityLabel(help)
@@ -80,19 +77,19 @@ struct AppActionButton: View {
 
 extension View {
     @ViewBuilder
-    func appGlassButtonStyle(_ kind: AppActionButtonKind = .secondary) -> some View {
+    func appGlassButtonStyle(_ kind: AppActionButtonKind = .secondary, shape: ButtonBorderShape = .capsule) -> some View {
         if #available(macOS 26.0, *) {
             if kind == .secondary {
-                buttonStyle(.glass)
+                buttonStyle(.glass).buttonBorderShape(shape)
             } else {
-                buttonStyle(.glassProminent)
+                buttonStyle(.glassProminent).buttonBorderShape(shape)
                     .tint(kind == .destructive ? AppTheme.Status.error : .accentColor)
                     .foregroundStyle(.white)
             }
         } else if kind == .secondary {
-            buttonStyle(.bordered)
+            buttonStyle(.bordered).buttonBorderShape(shape)
         } else {
-            buttonStyle(.borderedProminent)
+            buttonStyle(.borderedProminent).buttonBorderShape(shape)
                 .tint(kind == .destructive ? AppTheme.Status.error : .accentColor)
         }
     }
@@ -116,7 +113,6 @@ struct AppPanelHeader: View {
                 help: "Close",
                 size: 28,
                 iconSize: 14,
-                cornerRadius: AppTheme.Radius.control,
                 action: onClose
             )
         }

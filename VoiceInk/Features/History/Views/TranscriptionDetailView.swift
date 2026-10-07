@@ -45,30 +45,30 @@ struct TranscriptionDetailView: View {
         }
     }
 
+    @ViewBuilder
     private var header: some View {
-        HStack(spacing: 12) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("[", modifiers: .command)
-            .help("Back to history")
-            .accessibilityLabel("Back to history")
+        if presentation == .mainWindow {
+            AppWindowToolbar { headerContent }
+        } else {
+            HStack(spacing: 12) { headerContent }
+                .padding(.horizontal, HistoryLayout.headerInset).frame(height: 52)
+        }
+    }
 
-            Text("Transcription Details")
-                .font(.system(size: 14, weight: .semibold))
+    private var headerContent: some View {
+        Group {
+            AppIconButton(systemName: "chevron.left", help: "Back to history", action: onBack)
+                .keyboardShortcut("[", modifiers: .command)
+
+            Text(transcription.timestamp, format: .dateTime.day().month(.wide).hour().minute())
+                .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
 
             Spacer()
 
             if presentation == .quickPanel {
-                HistoryWindowDragArea()
-                    .frame(width: 120)
-                    .frame(maxHeight: .infinity)
+                HistoryWindowDragArea().frame(width: 120).frame(maxHeight: .infinity)
             }
         }
-        .padding(.horizontal, HistoryLayout.headerInset)
-        .frame(height: 52)
     }
 
     private var transcriptionContent: some View {

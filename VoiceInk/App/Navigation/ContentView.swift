@@ -48,7 +48,6 @@ final class MainWindowNavigation: ObservableObject {
 
 struct ContentView: View {
     @EnvironmentObject private var navigation: MainWindowNavigation
-    @ObservedObject private var audioDevices = AudioDeviceManager.shared
     @AppStorage("mainWindowShowsSidebar") private var showsSidebar = true
 
     var body: some View {
@@ -58,11 +57,17 @@ struct ContentView: View {
             }
 
             VStack(spacing: 0) {
-                AppGlassContainer { windowToolbar }
+                if ![ViewType.history, .models, .modes, .dictionary].contains(navigation.selectedView) {
+                    AppWindowToolbar {
+                        Spacer()
+                        MicrophoneMenu()
+                    }
+                }
                 detailView(for: navigation.selectedView).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(AppTheme.Surface.window)
         }
+        .buttonBorderShape(.capsule)
         .frame(minWidth: AppWindowLayout.minimumWidth, minHeight: AppWindowLayout.minimumHeight)
         .onReceive(NotificationCenter.default.publisher(for: .navigateToDestination)) { notification in
             if let destination = notification.userInfo?["destination"] as? String {
@@ -70,61 +75,6 @@ struct ContentView: View {
             }
         }
     }
-    private var windowToolbar: some View {
-        HStack(spacing: 12) {
-            Button {
-                showsSidebar.toggle()
-            } label: {
-                Image(systemName: "sidebar.left").font(.system(size: 15)).frame(width: 18, height: 22)
-            }
-            .appGlassButtonStyle().help("Toggle sidebar").accessibilityLabel("Toggle sidebar")
-            .keyboardShortcut(
-                "s", modifiers: [.command, .control])
-
-            if !showsSidebar {
-                Menu {
-                    ForEach(ViewType.sidebarGroups, id: \.self) { group in
-                        Section {
-                            ForEach(group) { destination in
-                                Button {
-                                    navigation.navigate(to: destination)
-                                } label: {
-                                    Text(destination.title)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Text(navigation.selectedView.title)
-                }
-                .menuStyle(.borderlessButton).fixedSize()
-            }
-
-            Spacer()
-
-            Button {
-                navigation.navigate(to: .audio)
-            } label: {
-                Label(currentMicrophoneName, systemImage: "mic").font(.system(size: 12)).lineLimit(1)
-                    .truncationMode(
-                        .middle
-                    )
-                    .frame(maxWidth: 300, alignment: .trailing).fixedSize(horizontal: true, vertical: false)
-            }
-            .appGlassButtonStyle()
-            .help("Microphone settings")
-            .accessibilityLabel(
-                "Microphone: \(currentMicrophoneName). Open audio settings.")
-        }
-        .foregroundStyle(.secondary).padding(.horizontal, 18).frame(height: 44)
-    }
-
-    private var currentMicrophoneName: String {
-        let currentID = audioDevices.getCurrentDevice()
-        return audioDevices.availableDevices.first { $0.id == currentID }?.name
-            ?? String(localized: "System microphone")
-    }
-
     @ViewBuilder
     private func detailView(for viewType: ViewType) -> some View {
         switch viewType {

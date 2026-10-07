@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AppCardBackground: View {
     var isSelected: Bool = false
-    var cornerRadius: CGFloat = 12
+    var cornerRadius: CGFloat = AppTheme.Radius.card
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
@@ -19,7 +19,7 @@ struct AppCardBackground: View {
 
 struct AppMaterialCardBackground: View {
     var isSelected: Bool = false
-    var cornerRadius: CGFloat = 12
+    var cornerRadius: CGFloat = AppTheme.Radius.card
 
     static let fill = AppTheme.Surface.materialCard
 

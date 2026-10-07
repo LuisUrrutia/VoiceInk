@@ -65,8 +65,9 @@ struct ModeView: View {
         case settings
     }
 
-    private var isPanelOpen: Bool {
-        activePanel != nil
+    private var isSettingsOpen: Bool {
+        if case .settings? = activePanel { return true }
+        return false
     }
 
     private var headerControls: some View {
@@ -78,7 +79,7 @@ struct ModeView: View {
 
     private var addModeButton: some View {
         AppIconButton(
-            systemName: "plus.circle.fill",
+            systemName: "plus",
             help: "Add a new mode"
         ) {
             openPanel(mode: .add)
@@ -95,12 +96,35 @@ struct ModeView: View {
     }
 
     var body: some View {
+        Group {
+            if case .configuration(let mode)? = activePanel {
+                ModeConfigEditorView(mode: mode, modeManager: modeManager, onDismiss: closePanel)
+                    .environmentObject(modeWarmupStore)
+                    .id(panelID)
+            } else {
+                modeList
+            }
+        }
+        .sidePanel(isPresented: .init(
+            get: { isSettingsOpen },
+            set: { if !$0 { closePanel() } }
+        )) {
+            ModeSettingsPanelView(modeManager: modeManager, onDismiss: closePanel)
+        }
+        .onAppear {
+            modeWarmupStore.configure(
+                aiService: aiService,
+                enhancementService: enhancementService,
+                transcriptionModelManager: transcriptionModelManager
+            )
+        }
+    }
+
+    private var modeList: some View {
         VStack(spacing: 0) {
-            AppScreenHeader(
-                title: "Modes", subtitle: "A different way to write for every task.",
-                infoMessage: "Modes help you set up VoiceInk for different writing tasks, workflows, and scenarios.",
-                infoURL: "https://tryvoiceink.com/docs/modes"
-            ) {
+            AppWindowToolbar {
+                Spacer()
+                MicrophoneMenu()
                 headerControls
             }
 
@@ -159,30 +183,6 @@ struct ModeView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .sidePanel(
-            isPresented: .init(
-                get: { isPanelOpen },
-                set: { if !$0 { closePanel() } }
-            ), dismissOnExitCommand: false
-        ) {
-            switch activePanel {
-            case .configuration(let mode)?:
-                ModeConfigEditorView(mode: mode, modeManager: modeManager, onDismiss: closePanel)
-                    .environmentObject(modeWarmupStore)
-                    .id(panelID)
-            case .settings?:
-                ModeSettingsPanelView(modeManager: modeManager, onDismiss: closePanel)
-            case nil:
-                EmptyView()
-            }
-        }
-        .onAppear {
-            modeWarmupStore.configure(
-                aiService: aiService,
-                enhancementService: enhancementService,
-                transcriptionModelManager: transcriptionModelManager
-            )
         }
     }
 

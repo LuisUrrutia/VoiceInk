@@ -89,11 +89,9 @@ struct DictionarySettingsView: View {
     }
 
     private var headerSection: some View {
-        AppScreenHeader(
-            title: "Dictionary", subtitle: "The words and phrases that make it sound like you.",
-            infoMessage: dictionaryInfoMessage,
-            infoURL: "https://tryvoiceink.com/docs/auto-learn-dictionary"
-        ) {
+        AppWindowToolbar {
+            InfoTip(dictionaryInfoMessage, learnMoreURL: "https://tryvoiceink.com/docs/auto-learn-dictionary")
+            Spacer()
             HStack(spacing: 8) {
                 if hasAutoLearnFailure {
                     AppIconButton(

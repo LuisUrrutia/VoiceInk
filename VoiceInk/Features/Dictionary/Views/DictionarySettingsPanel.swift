@@ -148,7 +148,6 @@ struct DictionarySettingsPanel: View {
                 help: "Close",
                 size: 28,
                 iconSize: 14,
-                cornerRadius: AppTheme.Radius.control,
                 action: onDismiss
             )
         }

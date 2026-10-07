@@ -8,34 +8,40 @@ struct ModelCatalogRow: View {
 
     var body: some View {
         Button(action: onToggle) {
-            HStack(spacing: 12) {
-                Image(systemName: isInstalled ? "checkmark.circle.fill" : "waveform").font(.system(size: 18))
-                    .foregroundStyle(isInstalled ? Color.accentColor : Color.secondary).frame(width: 28)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(model.displayName).font(.system(size: 14, weight: .medium))
-                    Text("\(model.provider.rawValue) · \(model.language)").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                ModelProviderIcon(modelName: model.name, kind: .transcription, size: 24)
+                    .accessibilityHidden(true)
+                HStack(spacing: 6) {
+                    Text(model.displayName).font(.system(size: 13))
+                    if model.language == "English" {
+                        Text("EN").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 4).padding(.vertical, 2)
+                            .background(AppTheme.Surface.subtle, in: RoundedRectangle(cornerRadius: 4))
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 7) {
+                Image(systemName: "waveform").foregroundStyle(.secondary)
+                    .frame(width: 26, height: 24)
+                    .background(AppTheme.Surface.subtle, in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityLabel("Speech model")
+
+                VStack(alignment: .leading, spacing: 4) {
                     rating(ModelCatalogSortOrder.speed.score(for: model), title: "Speed")
                     rating(ModelCatalogSortOrder.accuracy.score(for: model), title: "Accuracy")
                 }
-                .frame(width: 120, alignment: .leading)
+                .frame(width: 102, alignment: .leading)
 
-                VStack(alignment: .trailing, spacing: 5) {
-                    Text(storageSize).font(.callout)
-                    if isInstalled {
-                        Text(model.provider == .nativeApple ? "Built in" : "Installed").font(.caption)
-                            .foregroundStyle(
-                                .secondary)
-                    }
-                }
+                Text(model.provider == .nativeApple ? String(localized: "Built in") : storageSize)
+                .font(.system(size: 12)).foregroundStyle(.secondary)
                 .frame(width: 80, alignment: .trailing)
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right").font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary).frame(width: 20)
+                Image(systemName: isExpanded ? "chevron.up" : (isInstalled ? "checkmark" : "arrow.down.circle"))
+                    .font(.system(size: 14))
+                    .foregroundStyle(isInstalled ? Color.accentColor : Color.secondary).frame(width: 24)
             }
-            .padding(16).contentShape(Rectangle()).background(isExpanded ? AppTheme.Selection.fill : .clear)
+            .frame(minHeight: 40).padding(.horizontal, 10).contentShape(Rectangle())
+            .background(isExpanded ? AppTheme.Selection.fill : .clear, in: RoundedRectangle(cornerRadius: 10))
+            .appHoverHighlight()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
@@ -54,10 +60,10 @@ struct ModelCatalogRow: View {
                         .fill(
                             Double(index) < (value * 5).rounded() ? Color.secondary : Color.secondary.opacity(0.18)
                         )
-                        .frame(width: 16, height: 4)
+                        .frame(width: 14, height: 2)
                 }
             } else {
-                Text("Not rated").font(.caption).foregroundStyle(.secondary)
+                Text("—").font(.caption).foregroundStyle(.tertiary)
             }
         }
         .accessibilityElement(children: .ignore).accessibilityLabel(title)

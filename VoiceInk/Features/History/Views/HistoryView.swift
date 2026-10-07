@@ -10,6 +10,7 @@ struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var searchText = ""
+    @State private var isSelecting = false
     @State private var detailTranscription: Transcription?
     @FocusState private var isSearchFocused: Bool
     @State private var selectedTranscriptions: Set<Transcription> = []
@@ -176,35 +177,36 @@ struct HistoryView: View {
 
     private var historyContent: some View {
         VStack(spacing: 0) {
-            AppScreenHeader(title: "History", subtitle: "Find, replay, and reuse your transcriptions.")
-            QuickPanelScaffold {
-                if displayedTranscriptions.isEmpty && !isLoading {
-                    HistoryEmptyState(
-                        hasSearchQuery: !searchText.isEmpty,
-                        emptyMessage: "Your transcription history will appear here"
-                    )
-                } else {
-                    historyList
+            AppWindowToolbar {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search history", text: $searchText)
+                        .textFieldStyle(.plain).font(.system(size: 14))
+                        .focused($isSearchFocused)
+                    if isLoading { ProgressView().controlSize(.small) }
                 }
-            } header: {
-                searchHeader
-            } footer: {
-                selectionBar
+                .frame(maxWidth: .infinity)
+
+                HistoryIconButton(systemName: "checklist", help: "Select transcriptions", isSelected: isSelecting) {
+                    isSelecting.toggle()
+                    if !isSelecting { selectedTranscriptions.removeAll() }
+                }
+                HistoryIconButton(systemName: "gearshape", help: "History settings") {
+                    activePanel = .settings
+                }
             }
-        }
-    }
 
-    // MARK: - Search Header
+            if displayedTranscriptions.isEmpty && !isLoading {
+                HistoryEmptyState(
+                    hasSearchQuery: !searchText.isEmpty,
+                    emptyMessage: "Your transcription history will appear here"
+                )
+            } else {
+                historyList
+            }
 
-    private var searchHeader: some View {
-        HistorySearchHeader(
-            searchText: $searchText,
-            searchFocus: $isSearchFocused,
-            isSearching: isLoading
-        ) {
-            Spacer()
-            HistoryIconButton(systemName: "gearshape", help: "History settings") {
-                activePanel = .settings
+            if isSelecting {
+                AppGlassContainer { selectionBar }.padding(.horizontal, 14).padding(.bottom, 10)
             }
         }
     }
@@ -253,14 +255,24 @@ struct HistoryView: View {
     // MARK: - History List
 
     private var historyList: some View {
-        HistoryList {
-            ForEach(displayedTranscriptions) { transcription in
+        HistoryList(topInset: 18, bottomInset: 24, horizontalInset: 24) {
+            ForEach(Array(displayedTranscriptions.enumerated()), id: \.element.id) { index, transcription in
+                if index == 0 || !Calendar.current.isDate(
+                    transcription.timestamp, inSameDayAs: displayedTranscriptions[index - 1].timestamp
+                ) {
+                    Text(transcription.timestamp, format: .dateTime.day().month(.wide).year())
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, index == 0 ? 0 : 12).padding(.bottom, 4)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 HistoryTranscriptionRow(
                     transcription: transcription,
                     isSelected: selectedTranscriptions.contains(transcription),
                     onSelect: { openDetail(transcription) },
-                    onToggleCheck: { toggleSelection(transcription) },
-                    showsCopyButton: true
+                    onToggleCheck: isSelecting ? { toggleSelection(transcription) } : nil,
+                    showsCopyButton: true,
+                    isCompact: false
                 )
                 .id(transcription.id)
             }

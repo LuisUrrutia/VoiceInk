@@ -115,7 +115,21 @@ struct ModelManagementView: View {
     }
 
     private var headerSection: some View {
-        AppScreenHeader(title: "Models", subtitle: "Find the right balance of speed, accuracy, and privacy.") {
+        AppWindowToolbar {
+            if selectedSource == .local && selectedCategory == .speech {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search models", text: $searchText).textFieldStyle(.plain)
+                        .font(.system(size: 14)).accessibilityIdentifier("models.search")
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).accessibilityLabel("Clear model search")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                Spacer()
+            }
             settingsButton
         }
     }
@@ -217,24 +231,6 @@ struct ModelManagementView: View {
             .labelsHidden()
             .frame(maxWidth: 360)
 
-            if selectedSource == .local && selectedCategory == .speech {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search local models", text: $searchText).textFieldStyle(.plain)
-                        .accessibilityIdentifier(
-                            "models.search")
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.borderless).accessibilityLabel("Clear model search")
-                    }
-                }
-                .padding(10).background(AppCardBackground(cornerRadius: 8))
-            }
-
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) { filterControls }
                 VStack(alignment: .leading, spacing: 10) { filterControls }
@@ -257,28 +253,33 @@ struct ModelManagementView: View {
 
     @ViewBuilder
     private var filterControls: some View {
-        Picker("Source", selection: $selectedSource) {
-            ForEach(ModelCatalogSource.allCases) { source in
-                Text(source.title).tag(source)
+        Menu {
+            Picker("Source", selection: $selectedSource) {
+                ForEach(ModelCatalogSource.allCases) { source in Text(source.title).tag(source) }
             }
+        } label: {
+            Label(selectedSource.title, systemImage: selectedSource == .local ? "desktopcomputer" : "cloud")
         }
-        .fixedSize()
+        .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
+        .appHoverHighlight()
 
         if selectedSource == .local {
-            Picker("Installation", selection: $installationFilter) {
-                ForEach(ModelInstallationFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
+            Menu {
+                Picker("Installation", selection: $installationFilter) {
+                    ForEach(ModelInstallationFilter.allCases) { filter in Text(filter.title).tag(filter) }
                 }
-            }
-            .fixedSize()
+            } label: { Text(installationFilter.title) }
+            .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
+            .appHoverHighlight()
 
             if selectedCategory == .speech {
-                Picker("Sort by", selection: $sortOrder) {
-                    ForEach(ModelCatalogSortOrder.allCases) { order in
-                        Text(order.title).tag(order)
+                Menu {
+                    Picker("Sort by", selection: $sortOrder) {
+                        ForEach(ModelCatalogSortOrder.allCases) { order in Text(order.title).tag(order) }
                     }
-                }
-                .fixedSize()
+                } label: { Text(sortOrder.title) }
+                .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
+                .appHoverHighlight().accessibilityLabel("Sort models")
             }
         }
     }
@@ -295,19 +296,20 @@ struct ModelManagementView: View {
     private var localSpeechModelsSection: some View {
         let models = filteredLocalSpeechModels
 
-        return VStack(spacing: 16) {
+        return VStack(spacing: 8) {
             if models.isEmpty {
                 emptyModelsState
             } else {
-                HStack {
-                    Text("Model").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Speed / Accuracy").frame(width: 120, alignment: .leading)
+                HStack(spacing: 10) {
+                    Text("Model name").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 34)
+                    Text("Type").frame(width: 26)
+                    Text("Speed / Accuracy").frame(width: 102, alignment: .leading)
                     Text("Storage").frame(width: 80, alignment: .trailing)
-                    Spacer().frame(width: 20)
+                    Spacer().frame(width: 24)
                 }
-                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16)
+                .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.bottom, 6)
 
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 2) {
                     ForEach(models, id: \.id) { model in
                         ModelCatalogRow(
                             model: model, isInstalled: isInstalled(model), isExpanded: expandedModelID == model.id
@@ -315,10 +317,8 @@ struct ModelManagementView: View {
                         if expandedModelID == model.id {
                             localModelCard(model).padding(.horizontal, 14).padding(.bottom, 14)
                         }
-                        if model.id != models.last?.id { Divider().padding(.horizontal, 16) }
                     }
                 }
-                .background(AppCardBackground())
             }
 
             importLocalModelButton
@@ -388,25 +388,14 @@ struct ModelManagementView: View {
     }
 
     private var importLocalModelButton: some View {
-        HStack(spacing: 8) {
-            Button(action: { presentImportPanel() }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "square.and.arrow.down")
-                    Text("Import Local Model…")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(16)
-                .background(AppMaterialCardBackground(cornerRadius: 10))
+        HStack {
+            Button(action: presentImportPanel) {
+                Label("Import Local Model…", systemImage: "square.and.arrow.down")
             }
-            .buttonStyle(.plain)
-
-            InfoTip(
-                "Add a custom fine-tuned whisper model to use with VoiceInk. Select the downloaded .bin file.",
-                learnMoreURL: "https://tryvoiceink.com/docs/custom-local-whisper-models"
-            )
-            .help("Read more about custom local models")
+            .appGlassButtonStyle()
+            Spacer()
         }
+        .padding(.top, 14)
     }
 
     private var intelMacWarningBanner: some View {

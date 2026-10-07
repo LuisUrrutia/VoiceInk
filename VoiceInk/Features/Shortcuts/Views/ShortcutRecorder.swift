@@ -115,11 +115,11 @@ struct ShortcutVisualization: View {
         .frame(minWidth: shortcut == nil ? 104 : nil, minHeight: isCompact ? 20 : 26)
         .fixedSize(horizontal: true, vertical: false)
         .background {
-            RoundedRectangle(cornerRadius: isCompact ? 5 : 6)
+            RoundedRectangle(cornerRadius: isCompact ? 8 : 16)
                 .fill(isRecording ? AppTheme.Accent.fill : AppTheme.Surface.control)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: isCompact ? 5 : 6)
+            RoundedRectangle(cornerRadius: isCompact ? 8 : 16)
                 .stroke(isRecording ? AppTheme.Accent.border : AppTheme.Border.subtle, lineWidth: 1)
         }
     }

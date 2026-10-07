@@ -22,7 +22,7 @@ extension View {
         if #available(macOS 26.0, *) {
             glassEffect(
                 .regular.tint(isSelected ? AppTheme.Selection.fill : nil).interactive(),
-                in: .rect(cornerRadius: AppTheme.Radius.control)
+                in: .capsule
             )
         } else {
             background(QuickPanelButtonBackground(isSelected: isSelected))

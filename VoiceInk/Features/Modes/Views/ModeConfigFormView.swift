@@ -91,7 +91,9 @@ struct ModeConfigFormView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        AppWindowToolbar {
+            AppIconButton(systemName: "chevron.left", help: "Back to modes", action: onDismiss)
+
             Button {
                 isShowingIconPicker.toggle()
             } label: {
@@ -116,17 +118,8 @@ struct ModeConfigFormView: View {
 
             Spacer()
 
-            AppIconButton(
-                systemName: "xmark",
-                help: "Close",
-                size: 28,
-                iconSize: 14,
-                cornerRadius: AppTheme.Radius.control,
-                action: onDismiss
-            )
+
         }
-        .padding(.horizontal, 20)
-        .frame(height: QuickPanelMetrics.headerHeight)
     }
 
     private var formContent: some View {

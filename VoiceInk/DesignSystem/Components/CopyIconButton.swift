@@ -10,17 +10,9 @@ struct CopyIconButton: View {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(copied ? AppTheme.Status.positive : AppTheme.Selection.foreground)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
-                        .fill(AppTheme.Surface.window.opacity(0.92))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
-                                .strokeBorder(AppTheme.Border.card, lineWidth: 1)
-                        }
-                )
+                .frame(width: 16, height: 16)
         }
-        .buttonStyle(.plain)
+        .appGlassButtonStyle(shape: .circle)
         .help(accessibilityLabel)
         .accessibilityLabel(accessibilityLabel)
     }

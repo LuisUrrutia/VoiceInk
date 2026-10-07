@@ -11,7 +11,6 @@ struct AudioSetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppScreenHeader(title: "Audio", subtitle: "Choose your microphone and recording behavior.")
             Form {
                 Section {
                     inputSettingsRows

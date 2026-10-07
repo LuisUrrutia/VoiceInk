@@ -282,10 +282,20 @@ struct DashboardContent: View {
     private var summarySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Picker("Period", selection: $selectedInsightPeriod) {
-                    ForEach(DashboardInsightPeriod.allCases) { period in Text(period.pickerTitle).tag(period) }
+                Menu {
+                    Picker("Period", selection: $selectedInsightPeriod) {
+                        ForEach(DashboardInsightPeriod.allCases) { period in Text(period.pickerTitle).tag(period) }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(selectedInsightPeriod.pickerTitle)
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .appHoverHighlight()
                 }
-                .labelsHidden().frame(width: 145)
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .foregroundStyle(.secondary).accessibilityLabel("Statistics period")
                 Spacer()
                 Button("View insights", action: openInsightsIfAvailable).buttonStyle(.borderless)
                     .disabled(
@@ -305,7 +315,8 @@ struct DashboardContent: View {
                 Divider().frame(height: 32)
                 summaryMetric(Formatters.formattedSavedTime(selectedTimeSavedSummary.timeSaved), title: "Time saved")
             }
-            .padding(.vertical, 22).background(AppCardBackground())
+            .padding(.vertical, 22)
+            .background(AppTheme.Surface.card, in: RoundedRectangle(cornerRadius: 18))
         }
     }
 

@@ -14,8 +14,11 @@ enum AppTheme {
     }
 
     enum Surface {
-        static let card = Color(nsColor: .controlBackgroundColor)
-        static let materialCard = Color(nsColor: .controlBackgroundColor).opacity(0.85)
+        static let card = Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(white: isDark ? 0.20 : 0.94, alpha: 1)
+        })
+        static let materialCard = card
         static let subtle = Color.primary.opacity(0.06)
         static let controlActive = Color.secondary.opacity(0.14)
         static let control = Color(nsColor: .controlBackgroundColor)
@@ -125,8 +128,8 @@ enum AppTheme {
     }
 
     enum Radius {
-        static let control: CGFloat = 8
-        static let card: CGFloat = 12
-        static let pill: CGFloat = 8
+        static let control: CGFloat = 16
+        static let card: CGFloat = 16
+        static let pill: CGFloat = 16
     }
 }

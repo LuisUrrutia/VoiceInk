@@ -332,9 +332,7 @@ struct ConfigurationRow: View {
             .padding(.vertical, 12)
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppMaterialCardBackground.fill)
-
-            Divider()
+            .background(isHovering ? AppTheme.Surface.controlActive : .clear)
 
             HStack(spacing: 8) {
                 let modelMetadata = transcriptionModelMetadata
@@ -461,8 +459,9 @@ struct ConfigurationRow: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 16)
-            .background(AppTheme.Surface.card)
+            .background(isHovering ? AppTheme.Surface.controlActive : .clear)
         }
+        .background(AppTheme.Surface.card)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay {
             RoundedRectangle(cornerRadius: 16)

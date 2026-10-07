@@ -35,7 +35,6 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppScreenHeader(title: "Settings", subtitle: "Make VoiceInk work the way you do.")
             Form {
                 Section("Appearance") {
                     AppearancePicker(selection: $appAppearancePreference)
@@ -60,10 +59,7 @@ struct SettingsView: View {
                         showLanguageRestartAlert = true
                     }
 
-                    Picker("Recorder Style", selection: $recorderUIManager.recorderPanelStyle) {
-                        ForEach(RecorderPanelStyle.allCases) { style in Text(style.displayName).tag(style) }
-                    }
-                    .pickerStyle(.segmented)
+                    RecorderStylePicker(selection: $recorderUIManager.recorderPanelStyle)
 
                     Toggle(isOn: $showLiveTranscript) {
                         HStack(spacing: 4) {
