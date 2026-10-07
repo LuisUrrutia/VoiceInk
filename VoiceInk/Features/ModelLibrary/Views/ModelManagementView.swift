@@ -270,6 +270,8 @@ struct ModelManagementView: View {
             Picker("Source", selection: $selectedSource) {
                 ForEach(ModelCatalogSource.allCases) { source in Text(source.title).tag(source) }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
         } label: {
             Label(selectedSource.title, systemImage: selectedSource == .local ? "desktopcomputer" : "cloud")
         }
@@ -281,6 +283,8 @@ struct ModelManagementView: View {
                 Picker("Installation", selection: $installationFilter) {
                     ForEach(ModelInstallationFilter.allCases) { filter in Text(filter.title).tag(filter) }
                 }
+                .pickerStyle(.inline)
+                .labelsHidden()
             } label: { Text(installationFilter.title) }
             .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
             .appHoverHighlight()
@@ -290,6 +294,8 @@ struct ModelManagementView: View {
                     Picker("Sort by", selection: $sortOrder) {
                         ForEach(ModelCatalogSortOrder.allCases) { order in Text(order.title).tag(order) }
                     }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
                 } label: { Text(sortOrder.title) }
                 .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
                 .appHoverHighlight().accessibilityLabel("Sort models")
