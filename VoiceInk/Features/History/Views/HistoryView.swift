@@ -40,7 +40,7 @@ struct HistoryView: View {
         var descriptor = FetchDescriptor<Transcription>(
             sortBy: [
                 SortDescriptor(\Transcription.timestamp, order: .reverse),
-                SortDescriptor(\Transcription.id, order: .reverse),
+                SortDescriptor(\Transcription.id, order: .reverse)
             ]
         )
 
@@ -119,7 +119,6 @@ struct HistoryView: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: detailTranscription?.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .top)
         .sidePanel(
             isPresented: .init(
                 get: { activePanel != nil },
@@ -176,19 +175,22 @@ struct HistoryView: View {
     }
 
     private var historyContent: some View {
-        QuickPanelScaffold {
-            if displayedTranscriptions.isEmpty && !isLoading {
-                HistoryEmptyState(
-                    hasSearchQuery: !searchText.isEmpty,
-                    emptyMessage: "Your transcription history will appear here"
-                )
-            } else {
-                historyList
+        VStack(spacing: 0) {
+            AppScreenHeader(title: "History", subtitle: "Find, replay, and reuse your transcriptions.")
+            QuickPanelScaffold {
+                if displayedTranscriptions.isEmpty && !isLoading {
+                    HistoryEmptyState(
+                        hasSearchQuery: !searchText.isEmpty,
+                        emptyMessage: "Your transcription history will appear here"
+                    )
+                } else {
+                    historyList
+                }
+            } header: {
+                searchHeader
+            } footer: {
+                selectionBar
             }
-        } header: {
-            searchHeader
-        } footer: {
-            selectionBar
         }
     }
 

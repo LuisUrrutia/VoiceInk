@@ -16,14 +16,17 @@ struct AudioTranscribeView: View {
     }
 
     var body: some View {
-        Group {
-            if transcriptionManager.queue.isEmpty {
-                emptyStateView
-            } else {
-                queueFormView
+        VStack(spacing: 0) {
+            AppScreenHeader(title: "Import Audio", subtitle: "Turn audio and video files into text.")
+            Group {
+                if transcriptionManager.queue.isEmpty {
+                    emptyStateView
+                } else {
+                    queueFormView
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDrop(of: [.fileURL, .data, .audio, .movie], isTargeted: $isDropTargeted) { providers in
             handleDroppedFiles(providers)
             return true
@@ -73,17 +76,14 @@ struct AudioTranscribeView: View {
                     Text("Drop audio or video files here")
                         .font(.headline)
 
-                    Text("or")
-                        .foregroundColor(.secondary)
-
                     Button("Choose Files") {
                         selectFiles()
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
                 }
                 .padding(32)
             }
-            .frame(maxWidth: 480, maxHeight: 200)
+            .frame(maxWidth: 520, maxHeight: 250)
 
             Text("Supports WAV, MP3, M4A, AIFF, MP4, MOV, AAC, FLAC, CAF, AMR, OGG, OPUS, 3GP")
                 .font(.caption)
@@ -346,7 +346,7 @@ struct AudioTranscribeView: View {
             UTType.audio.identifier,
             UTType.movie.identifier,
             UTType.data.identifier,
-            "public.file-url",
+            "public.file-url"
         ]
 
         for provider in providers {

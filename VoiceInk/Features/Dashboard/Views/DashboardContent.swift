@@ -18,8 +18,6 @@ struct DashboardContent: View {
     private static let automaticStatsRefreshMetricLimit = 2_000
     private static let statsRefreshDebounceNanoseconds: UInt64 = 750_000_000
     let modelContext: ModelContext
-    let licenseState: LicenseViewModel.LicenseState
-    let onAddLicenseKey: () -> Void
 
     @State private var statsSummary: DashboardStatsSummary = .empty
     @State private var hasLoadedStatsSnapshot: Bool = false
@@ -37,6 +35,7 @@ struct DashboardContent: View {
     @State private var isInsightsViewPresented = false
     @State private var selectedInsightPeriod: DashboardInsightPeriod = .allTime
     @State private var isAccessibilityEnabled = AXIsProcessTrusted()
+    @EnvironmentObject private var navigation: MainWindowNavigation
     @EnvironmentObject private var updaterViewModel: UpdaterViewModel
     @ObservedObject private var modeManager = ModeManager.shared
     @ObservedObject private var starPrompt = GitHubStarPromptCoordinator.shared
@@ -59,13 +58,9 @@ struct DashboardContent: View {
     }
 
     init(
-        modelContext: ModelContext,
-        licenseState: LicenseViewModel.LicenseState,
-        onAddLicenseKey: @escaping () -> Void
+        modelContext: ModelContext
     ) {
         self.modelContext = modelContext
-        self.licenseState = licenseState
-        self.onAddLicenseKey = onAddLicenseKey
 
         let cachedSummary = DashboardStatsCache.shared.currentSummary()
         let cachedMetadata = DashboardStatsCache.shared.currentMetadata()
@@ -84,7 +79,7 @@ struct DashboardContent: View {
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 } else {
-                    DashboardAmbientBackground()
+                    AppTheme.Surface.window
                 }
 
                 ScrollView {
@@ -232,44 +227,94 @@ struct DashboardContent: View {
     }
 
     private func dashboardMainContent(availableWidth: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: DashboardLayout.sectionSpacing) {
-            licenseStatusMessage
-
+        VStack(alignment: .leading, spacing: 26) {
             greetingHeader
-
-            nameEditorDismissArea {
-                heroSection
-            }
+            summarySection
 
             if !isAccessibilityEnabled {
-                nameEditorDismissArea {
-                    accessibilityReminder
+                accessibilityReminder
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Get started").font(.headline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
+                DashboardGettingStarted(hasModes: modeManager.hasEnabledConfiguration) { destination in
+                    navigation.navigate(to: destination)
                 }
             }
 
-            if !modeManager.hasEnabledConfiguration {
-                nameEditorDismissArea {
-                    DashboardNoModesReminder(onOpenModes: ModeSetupNavigator.openModesSettings)
+            if let count = dashboardReviewCorrectionCount {
+                Button {
+                    openAutoLearnReviewPanel()
+                } label: {
+                    Label("Review \(count) dictionary suggestions", systemImage: "text.badge.checkmark")
                 }
+                .buttonStyle(.borderless)
             }
 
-            if !recentDashboardTranscriptions.isEmpty {
-                nameEditorDismissArea {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Recent activity").font(.headline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Button("View history") { navigation.navigate(to: .history) }.buttonStyle(.borderless)
+                }
+                if recentDashboardTranscriptions.isEmpty {
+                    HStack(spacing: 14) {
+                        Image(systemName: "waveform").font(.title2).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Your words will appear here").font(.headline)
+                            Text("Dictate in any app, then come back to your recent transcriptions.").font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(20).background(AppCardBackground())
+                } else {
                     DashboardTranscriptCards(transcriptions: recentDashboardTranscriptions)
                 }
             }
 
             Spacer(minLength: DashboardLayout.footerTopSpacing)
-
-            nameEditorDismissArea {
-                HStack {
-                    Spacer()
-                    footerActionsView
-                }
-                .frame(maxWidth: .infinity)
-            }
+            footerActionsView.frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(width: availableWidth, alignment: .topLeading)
+    }
+
+    private var summarySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Picker("Period", selection: $selectedInsightPeriod) {
+                    ForEach(DashboardInsightPeriod.allCases) { period in Text(period.pickerTitle).tag(period) }
+                }
+                .labelsHidden().frame(width: 145)
+                Spacer()
+                Button("View insights", action: openInsightsIfAvailable).buttonStyle(.borderless)
+                    .disabled(
+                        !canViewInsights
+                    )
+                    .help(insightsActionHelp)
+            }
+            HStack(spacing: 0) {
+                summaryMetric(Formatters.formattedNumber(selectedTotals.words), title: "Words")
+                Divider().frame(height: 32)
+                summaryMetric(Formatters.formattedNumber(selectedTotals.count), title: "Dictations")
+                Divider().frame(height: 32)
+                summaryMetric(
+                    selectedTotals.duration > 0
+                        ? String(Int(Double(selectedTotals.words) * 60 / selectedTotals.duration)) : "—",
+                    title: "Words / min")
+                Divider().frame(height: 32)
+                summaryMetric(Formatters.formattedSavedTime(selectedTimeSavedSummary.timeSaved), title: "Time saved")
+            }
+            .padding(.vertical, 22).background(AppCardBackground())
+        }
+    }
+
+    private func summaryMetric(_ value: String, title: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(value).font(.system(size: 23, weight: .semibold)).monospacedDigit()
+            Text(title).font(.callout).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 22).accessibilityElement(children: .combine)
     }
 
     private var recentDashboardTranscriptions: [Transcription] {
@@ -345,24 +390,12 @@ struct DashboardContent: View {
         !hasLoadedStatsSnapshot || statsSummary.totalCount < Self.automaticStatsRefreshMetricLimit
     }
 
-    private var insightsActionTitle: LocalizedStringKey {
-        canViewInsights ? "View Insights" : "Insights Locked"
-    }
-
-    private var insightsActionIcon: String {
-        canViewInsights ? "chart.line.uptrend.xyaxis" : "lock.fill"
-    }
-
     private var insightsActionHelp: String {
         if canViewInsights {
             return String(localized: "View dashboard insights")
         }
 
         return String(localized: "Continue using VoiceInk to unlock these stats.")
-    }
-
-    private var insightsActionAccessibilityLabel: String {
-        canViewInsights ? "View insights" : "Insights locked"
     }
 
     private var accessibilityReminder: some View {
@@ -372,10 +405,6 @@ struct DashboardContent: View {
     private var greetingHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(greetingEmoji)
-                    .font(.system(size: 25))
-                    .accessibilityHidden(true)
-
                 Text("\(greetingText),")
                     .font(displayNameFont)
                     .foregroundStyle(AppTheme.Text.primary)
@@ -427,29 +456,29 @@ struct DashboardContent: View {
                     }
                 }
         } else {
-            Text(defaultedDisplayName)
-                .font(displayNameFont)
-                .foregroundStyle(AppTheme.Text.primary)
-                .lineLimit(1)
-                .frame(width: displayNameFieldWidth, alignment: .leading)
-                .help("Click to edit dashboard name")
-                .contentShape(Rectangle())
-                .onTapGesture(perform: beginEditingDisplayName)
+            Button(action: beginEditingDisplayName) {
+                Text(defaultedDisplayName)
+                    .font(displayNameFont)
+            }
+            .buttonStyle(
+                .plain
+            )
+            .foregroundStyle(AppTheme.Text.primary)
+            .lineLimit(1)
+            .frame(width: displayNameFieldWidth, alignment: .leading)
+            .help("Click to edit dashboard name")
+            .contentShape(Rectangle())
+            .accessibilityLabel("Edit display name")
         }
     }
 
     private var displayNameFont: Font {
-        .system(size: Self.displayNameFontSize, weight: .bold, design: .rounded)
+        .system(size: Self.displayNameFontSize, weight: .bold, design: .default)
     }
 
     private var dismissingSpacer: some View {
         Spacer(minLength: 0)
             .contentShape(Rectangle())
-            .onTapGesture(perform: dismissDisplayNameEditorIfNeeded)
-    }
-
-    private func nameEditorDismissArea<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
             .onTapGesture(perform: dismissDisplayNameEditorIfNeeded)
     }
 
@@ -584,32 +613,6 @@ struct DashboardContent: View {
 
     // MARK: - Sections
 
-    @ViewBuilder
-    private var licenseStatusMessage: some View {
-        switch licenseState {
-        case .unlicensed:
-            TrialMessageView(
-                message: Text("Activate a license to continue using VoiceInk."),
-                type: .licenseRequired,
-                onAddLicenseKey: onAddLicenseKey
-            )
-        case .trial(let daysRemaining):
-            TrialMessageView(
-                message: Text(String(localized: "You have \(daysRemaining) days left in your trial")),
-                type: daysRemaining <= 2 ? .warning : .info,
-                onAddLicenseKey: onAddLicenseKey
-            )
-        case .trialExpired:
-            TrialMessageView(
-                message: nil,
-                type: .expired,
-                onAddLicenseKey: onAddLicenseKey
-            )
-        case .licensed:
-            EmptyView()
-        }
-    }
-
     private var dashboardInsightsView: some View {
         DashboardInsightsView(
             selectedPeriod: $selectedInsightPeriod,
@@ -626,22 +629,6 @@ struct DashboardContent: View {
         )
     }
 
-    private var heroSection: some View {
-        DashboardHeroCard(
-            isLocked: shouldShowLockedInsightsState,
-            headline: momentumHeadline,
-            subtext: momentumSubtext,
-            actionTitle: insightsActionTitle,
-            actionIcon: insightsActionIcon,
-            canViewInsights: canViewInsights,
-            actionHelp: insightsActionHelp,
-            actionAccessibilityLabel: insightsActionAccessibilityLabel,
-            reviewCorrectionCount: dashboardReviewCorrectionCount,
-            onViewInsights: openInsightsIfAvailable,
-            onReviewCorrections: openAutoLearnReviewPanel
-        )
-    }
-
     @ViewBuilder
     private var footerStarButtonLabel: some View {
         if starPrompt.openFailed {
@@ -649,7 +636,7 @@ struct DashboardContent: View {
         } else {
             switch starPrompt.completionState {
             case .starred:
-                footerActionLabel(icon: "checkmark", title: "Starred — thank you!", color: AppTheme.Sidebar.license)
+                footerActionLabel(icon: "checkmark", title: "Starred — thank you!", color: AppTheme.Status.positive)
             case .opened:
                 footerActionLabel(icon: "arrow.up.right", title: "GitHub opened", color: AppTheme.Sidebar.fallback)
             case .none:
@@ -697,7 +684,7 @@ struct DashboardContent: View {
                 footerActionLabel(
                     icon: isSystemInfoCopied ? "checkmark" : "doc.on.doc",
                     title: isSystemInfoCopied ? "Copied!" : "Copy System Info",
-                    color: isSystemInfoCopied ? AppTheme.Sidebar.license : AppTheme.Sidebar.fallback
+                    color: isSystemInfoCopied ? AppTheme.Status.positive : AppTheme.Sidebar.fallback
                 )
             }
             .buttonStyle(.plain)
@@ -749,11 +736,13 @@ struct DashboardContent: View {
 
     private var displayNameFieldWidth: CGFloat {
         let name = isEditingDisplayName ? displayNameDraft : defaultedDisplayName
-        let measuredWidth = (name as NSString).size(
-            withAttributes: [
-                .font: NSFont.systemFont(ofSize: Self.displayNameFontSize, weight: Self.displayNameFontWeight)
-            ]
-        ).width
+        let measuredWidth = (name as NSString)
+            .size(
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: Self.displayNameFontSize, weight: Self.displayNameFontWeight)
+                ]
+            )
+            .width
         return min(
             max(measuredWidth + (Self.displayNameHorizontalPadding * 2) + 6, Self.displayNameMinWidth),
             Self.displayNameMaxWidth
@@ -1023,13 +1012,5 @@ private struct DashboardNoModesReminder: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppCardBackground(cornerRadius: 16))
-    }
-}
-
-private struct DashboardAmbientBackground: View {
-    var body: some View {
-        Color.clear
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
     }
 }

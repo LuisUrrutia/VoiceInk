@@ -217,7 +217,7 @@ struct HistoryIconButton: View {
             }
             .foregroundStyle(AppTheme.Text.secondary)
             .frame(width: 34, height: HistoryLayout.buttonHeight)
-            .background(QuickPanelButtonBackground(isSelected: isSelected))
+            .appGlassControl(isSelected: isSelected)
         }
         .buttonStyle(.plain)
         .help(help)
@@ -273,7 +273,7 @@ struct HistoryCommandButton: View {
             .frame(minWidth: minimumWidth)
             .frame(height: HistoryLayout.buttonHeight)
             .fixedSize(horizontal: true, vertical: false)
-            .background(QuickPanelButtonBackground())
+            .appGlassControl()
         }
         .buttonStyle(.plain)
     }

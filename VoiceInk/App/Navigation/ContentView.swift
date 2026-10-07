@@ -1,4 +1,3 @@
-import OSLog
 import SwiftUI
 
 enum ViewType: String, CaseIterable, Identifiable {
@@ -10,9 +9,21 @@ enum ViewType: String, CaseIterable, Identifiable {
     case audio = "Audio"
     case dictionary = "Dictionary"
     case settings = "Settings"
-    case license = "VoiceInk Pro"
 
     var id: String { rawValue }
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .dashboard: "Home"
+        case .models: "Models"
+        case .transcribeAudio: "Import Audio"
+        default: LocalizedStringKey(rawValue)
+        }
+    }
+
+    static let sidebarGroups: [[ViewType]] = [
+        [.dashboard, .modes, .dictionary], [.settings, .audio, .models], [.history, .transcribeAudio]
+    ]
 }
 
 final class MainWindowNavigation: ObservableObject {
@@ -36,50 +47,82 @@ final class MainWindowNavigation: ObservableObject {
 }
 
 struct ContentView: View {
-    private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "ContentView")
-    private static let detailBackgroundTintOpacity = 0.50
     @EnvironmentObject private var navigation: MainWindowNavigation
+    @ObservedObject private var audioDevices = AudioDeviceManager.shared
+    @AppStorage("mainWindowShowsSidebar") private var showsSidebar = true
 
     var body: some View {
         HStack(spacing: 0) {
-            AppSidebar(selectedView: $navigation.selectedView)
+            if showsSidebar {
+                AppSidebar(selectedView: $navigation.selectedView)
+            }
 
-            detailContent
+            VStack(spacing: 0) {
+                AppGlassContainer { windowToolbar }
+                detailView(for: navigation.selectedView).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(AppTheme.Surface.window)
         }
-        .frame(width: AppWindowLayout.width)
-        .frame(minHeight: AppWindowLayout.minimumHeight)
-        .onAppear {
-            logger.notice("ContentView appeared")
-        }
-        .onDisappear {
-            logger.notice("ContentView disappeared")
-        }
+        .frame(minWidth: AppWindowLayout.minimumWidth, minHeight: AppWindowLayout.minimumHeight)
         .onReceive(NotificationCenter.default.publisher(for: .navigateToDestination)) { notification in
             if let destination = notification.userInfo?["destination"] as? String {
-                logger.notice("navigateToDestination received: \(destination, privacy: .public)")
                 navigation.navigate(to: destination)
             }
         }
     }
+    private var windowToolbar: some View {
+        HStack(spacing: 12) {
+            Button {
+                showsSidebar.toggle()
+            } label: {
+                Image(systemName: "sidebar.left").font(.system(size: 15)).frame(width: 18, height: 22)
+            }
+            .appGlassButtonStyle().help("Toggle sidebar").accessibilityLabel("Toggle sidebar")
+            .keyboardShortcut(
+                "s", modifiers: [.command, .control])
 
-    @ViewBuilder
-    private var detailContent: some View {
-        detailView(for: navigation.selectedView)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(detailBackground)
+            if !showsSidebar {
+                Menu {
+                    ForEach(ViewType.sidebarGroups, id: \.self) { group in
+                        Section {
+                            ForEach(group) { destination in
+                                Button {
+                                    navigation.navigate(to: destination)
+                                } label: {
+                                    Text(destination.title)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(navigation.selectedView.title)
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+            }
+
+            Spacer()
+
+            Button {
+                navigation.navigate(to: .audio)
+            } label: {
+                Label(currentMicrophoneName, systemImage: "mic").font(.system(size: 12)).lineLimit(1)
+                    .truncationMode(
+                        .middle
+                    )
+                    .frame(maxWidth: 300, alignment: .trailing).fixedSize(horizontal: true, vertical: false)
+            }
+            .appGlassButtonStyle()
+            .help("Microphone settings")
+            .accessibilityLabel(
+                "Microphone: \(currentMicrophoneName). Open audio settings.")
+        }
+        .foregroundStyle(.secondary).padding(.horizontal, 18).frame(height: 44)
     }
 
-    private var detailBackground: some View {
-        ZStack {
-            VisualEffectView(
-                material: .sidebar,
-                blendingMode: .behindWindow
-            )
-
-            AppTheme.Surface.window
-                .opacity(Self.detailBackgroundTintOpacity)
-        }
-        .ignoresSafeArea(.container, edges: .top)
+    private var currentMicrophoneName: String {
+        let currentID = audioDevices.getCurrentDevice()
+        return audioDevices.availableDevices.first { $0.id == currentID }?.name
+            ?? String(localized: "System microphone")
     }
 
     @ViewBuilder
@@ -101,8 +144,6 @@ struct ContentView: View {
             ModeView()
         case .settings:
             SettingsView()
-        case .license:
-            LicenseManagementView()
         }
     }
 }

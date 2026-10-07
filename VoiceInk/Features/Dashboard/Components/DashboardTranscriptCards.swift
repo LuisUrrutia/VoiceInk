@@ -4,20 +4,13 @@ struct DashboardTranscriptCards: View {
     let transcriptions: [Transcription]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Recent Transcripts")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(AppTheme.Text.primary)
-                .lineLimit(1)
+        VStack(spacing: 0) {
+            ForEach(Array(transcriptions.enumerated()), id: \.element.id) { index, transcription in
+                DashboardTranscriptCardRow(transcription: transcription)
 
-            VStack(spacing: 0) {
-                ForEach(Array(transcriptions.enumerated()), id: \.element.id) { index, transcription in
-                    DashboardTranscriptCardRow(transcription: transcription)
-
-                    if index < transcriptions.count - 1 {
-                        Divider()
-                            .padding(.horizontal, 8)
-                    }
+                if index < transcriptions.count - 1 {
+                    Divider()
+                        .padding(.horizontal, 8)
                 }
             }
         }
@@ -74,20 +67,22 @@ private struct DashboardTranscriptCardRow: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            rowContent
+            Button {
+                isExpanded.toggle()
+            } label: {
+                rowContent
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 10)
                 .padding(.horizontal, 8)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    isExpanded.toggle()
-                }
-                .accessibilityAddTraits(.isButton)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Transcript from \(metadataText)")
+            .accessibilityValue(isExpanded ? copyText : previewText)
 
             CopyIconButton(textToCopy: copyText, accessibilityLabel: "Copy transcript")
                 .frame(width: Self.copyButtonSize, height: Self.copyButtonSize)
-                .opacity(isHovering ? 1 : 0)
-                .allowsHitTesting(isHovering)
+                .opacity(isHovering ? 1 : 0.5)
                 .padding(.top, Self.copyButtonTopInset)
                 .padding(.trailing, Self.copyButtonTrailingInset)
         }
@@ -97,9 +92,7 @@ private struct DashboardTranscriptCardRow: View {
                 isHovering = hovering
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Transcript from \(metadataText)")
-        .accessibilityValue(isExpanded ? copyText : previewText)
+        .accessibilityElement(children: .contain)
     }
 
     private var rowContent: some View {

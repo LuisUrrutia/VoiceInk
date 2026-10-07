@@ -14,13 +14,12 @@ enum AppTheme {
     }
 
     enum Surface {
-        static let card = Color.secondary.opacity(0.10)
-        static let materialCard = Color(nsColor: .controlBackgroundColor).opacity(0.50)
+        static let card = Color(nsColor: .controlBackgroundColor)
+        static let materialCard = Color(nsColor: .controlBackgroundColor).opacity(0.85)
         static let subtle = Color.primary.opacity(0.06)
         static let controlActive = Color.secondary.opacity(0.14)
         static let control = Color(nsColor: .controlBackgroundColor)
         static let window = Color(nsColor: .windowBackgroundColor)
-        static let sidePanelOverlay = Color(nsColor: .windowBackgroundColor).opacity(0.50)
         static let clear = Color.clear
     }
 
@@ -29,7 +28,6 @@ enum AppTheme {
         static let card = Color(nsColor: .separatorColor).opacity(0.35)
         static let control = Color(nsColor: .separatorColor)
         static let tint = Color.primary.opacity(0.12)
-        static let sidePanelOuter = Color.white.opacity(0.12)
     }
 
     enum Selection {
@@ -77,10 +75,11 @@ enum AppTheme {
         }
 
         private static func dynamic(light: NSColor, dark: NSColor) -> Color {
-            Color(nsColor: NSColor(name: nil) { appearance in
-                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return isDark ? dark : light
-            })
+            Color(
+                nsColor: NSColor(name: nil) { appearance in
+                    let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    return isDark ? dark : light
+                })
         }
     }
 
@@ -92,7 +91,6 @@ enum AppTheme {
         static let dictionary = Color(nsColor: .systemBlue)
         static let transcribeAudio = Color(red: 0.86, green: 0.32, blue: 0.27)
         static let fallback = Color(nsColor: .systemGray)
-        static let license = Color(nsColor: .systemGreen)
     }
 
     enum Waveform {
@@ -127,8 +125,8 @@ enum AppTheme {
     }
 
     enum Radius {
-        static let control: CGFloat = 14
+        static let control: CGFloat = 8
         static let card: CGFloat = 12
-        static let pill: CGFloat = 22
+        static let pill: CGFloat = 8
     }
 }

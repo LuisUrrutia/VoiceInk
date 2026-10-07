@@ -8,14 +8,13 @@ enum QuickPanelEdge {
 enum QuickPanelMetrics {
     static let headerHeight: CGFloat = 56
     static let footerHeight: CGFloat = 48
-    static let fadeLength: CGFloat = 16
+    static let edgePadding: CGFloat = 8
 
-    static let topEdgeHeight = headerHeight + fadeLength
-    static let bottomEdgeHeight = footerHeight + fadeLength
+    static let topEdgeHeight = headerHeight + edgePadding
+    static let bottomEdgeHeight = footerHeight + edgePadding
 }
 
-/// Places scrollable panel content beneath a floating material header and an
-/// optional footer. Callers retain ownership of their content and scroll insets.
+// Callers own scroll insets so headers and footers remain visible while scrolling.
 struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
     private let content: Content
     private let header: Header
@@ -53,6 +52,7 @@ struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(AppTheme.Surface.window)
     }
 }
 
@@ -77,60 +77,17 @@ struct QuickPanelScrollEdge<Content: View>: View {
         let height = contentHeight ?? (edge == .top
             ? QuickPanelMetrics.headerHeight
             : QuickPanelMetrics.footerHeight)
-        return height + QuickPanelMetrics.fadeLength
+        return height + QuickPanelMetrics.edgePadding
     }
 
     var body: some View {
-        ZStack(alignment: edge == .top ? .top : .bottom) {
-            VisualEffectView(material: .hudWindow, blendingMode: .withinWindow)
-                .mask(edgeMask)
-                .allowsHitTesting(false)
-
-            VisualEffectView(material: .hudWindow, blendingMode: .withinWindow)
-                .opacity(0.30)
-                .mask(emphasisMask)
-                .allowsHitTesting(false)
-
+        AppGlassContainer {
             content()
-                .padding(edge == .top ? .top : .bottom, 8)
         }
+        .padding(edge == .top ? .top : .bottom, QuickPanelMetrics.edgePadding)
         .frame(height: edgeHeight)
-    }
-
-    private var edgeMask: some View {
-        LinearGradient(
-            stops: edge == .top
-                ? [
-                    .init(color: .black, location: 0),
-                    .init(color: .black.opacity(0.92), location: 0.60),
-                    .init(color: .clear, location: 1),
-                ]
-                : [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.92), location: 0.40),
-                    .init(color: .black, location: 1),
-                ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    private var emphasisMask: some View {
-        LinearGradient(
-            stops: edge == .top
-                ? [
-                    .init(color: .black, location: 0),
-                    .init(color: .black.opacity(0.88), location: 0.58),
-                    .init(color: .clear, location: 1),
-                ]
-                : [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.88), location: 0.42),
-                    .init(color: .black, location: 1),
-                ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        .frame(maxWidth: .infinity)
+        .background(AppTheme.Surface.window)
     }
 }
 

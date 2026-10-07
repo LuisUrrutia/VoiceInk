@@ -4,8 +4,8 @@ import SwiftUI
 struct AppIconButton: View {
     let systemName: String
     let help: LocalizedStringResource
-    var size: CGFloat = 40
-    var iconSize: CGFloat = 18
+    var size: CGFloat = 30
+    var iconSize: CGFloat = 14
     var cornerRadius: CGFloat = AppTheme.Radius.pill
     var isDisabled = false
     let action: () -> Void
@@ -13,8 +13,8 @@ struct AppIconButton: View {
     init(
         systemName: String,
         help: LocalizedStringResource,
-        size: CGFloat = 40,
-        iconSize: CGFloat = 18,
+        size: CGFloat = 30,
+        iconSize: CGFloat = 14,
         cornerRadius: CGFloat = AppTheme.Radius.pill,
         isDisabled: Bool = false,
         action: @escaping () -> Void
@@ -34,11 +34,9 @@ struct AppIconButton: View {
                 .font(.system(size: iconSize, weight: .medium))
                 .foregroundColor(isDisabled ? .secondary.opacity(0.45) : .primary.opacity(0.7))
                 .frame(width: size, height: size)
-                .background(
-                    AppCardBackground(isSelected: false, cornerRadius: cornerRadius)
-                )
         }
-        .buttonStyle(.plain)
+        .appGlassButtonStyle()
+        .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
         .disabled(isDisabled)
         .help(help)
         .accessibilityLabel(help)
@@ -74,50 +72,28 @@ struct AppActionButton: View {
             Text(title)
                 .frame(minWidth: minWidth)
         }
-        .buttonStyle(AppActionButtonStyle(kind: kind))
+        .font(.system(size: 12, weight: .semibold))
+        .controlSize(.large)
+        .appGlassButtonStyle(kind)
     }
 }
 
-private struct AppActionButtonStyle: ButtonStyle {
-    let kind: AppActionButtonKind
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(foregroundColor)
-            .padding(.horizontal, 14)
-            .frame(height: 32)
-            .background(backgroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
+extension View {
+    @ViewBuilder
+    func appGlassButtonStyle(_ kind: AppActionButtonKind = .secondary) -> some View {
+        if #available(macOS 26.0, *) {
+            if kind == .secondary {
+                buttonStyle(.glass)
+            } else {
+                buttonStyle(.glassProminent)
+                    .tint(kind == .destructive ? AppTheme.Status.error : .accentColor)
+                    .foregroundStyle(.white)
             }
-            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.45)
-    }
-
-    private var foregroundColor: Color {
-        switch kind {
-        case .secondary: AppTheme.Action.secondaryForeground
-        case .primary: AppTheme.Action.primaryForeground
-        case .destructive: AppTheme.Action.destructiveForeground
-        }
-    }
-
-    private var backgroundColor: Color {
-        switch kind {
-        case .secondary: AppTheme.Surface.control
-        case .primary: AppTheme.Action.primaryFill
-        case .destructive: AppTheme.Action.destructiveFill
-        }
-    }
-
-    private var borderColor: Color {
-        switch kind {
-        case .secondary: AppTheme.Border.control
-        case .primary: AppTheme.Accent.border
-        case .destructive: Color.white.opacity(0.14)
+        } else if kind == .secondary {
+            buttonStyle(.bordered)
+        } else {
+            buttonStyle(.borderedProminent)
+                .tint(kind == .destructive ? AppTheme.Status.error : .accentColor)
         }
     }
 }
@@ -153,6 +129,7 @@ struct AppPanelHeader: View {
 
 struct AppScreenHeader<Trailing: View>: View {
     let title: LocalizedStringKey
+    var subtitle: LocalizedStringKey?
     var infoMessage: LocalizedStringKey?
     var infoURL: String?
     @ViewBuilder let trailing: () -> Trailing
@@ -160,9 +137,13 @@ struct AppScreenHeader<Trailing: View>: View {
     var body: some View {
         HStack {
             HStack(spacing: 8) {
-                Text(title)
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(.primary)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .accessibilityAddTraits(.isHeader)
+                    if let subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
+                }
 
                 if let infoMessage {
                     if let infoURL {
@@ -177,17 +158,21 @@ struct AppScreenHeader<Trailing: View>: View {
 
             trailing()
         }
-        .frame(height: 40)
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 12)
+        .frame(minHeight: 40)
+        .padding(.horizontal, 28)
+        .padding(.top, 24)
+        .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
     }
 }
 
 extension AppScreenHeader where Trailing == EmptyView {
-    init(title: LocalizedStringKey, infoMessage: LocalizedStringKey? = nil, infoURL: String? = nil) {
+    init(
+        title: LocalizedStringKey, subtitle: LocalizedStringKey? = nil, infoMessage: LocalizedStringKey? = nil,
+        infoURL: String? = nil
+    ) {
         self.title = title
+        self.subtitle = subtitle
         self.infoMessage = infoMessage
         self.infoURL = infoURL
         self.trailing = { EmptyView() }

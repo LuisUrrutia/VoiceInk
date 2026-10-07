@@ -17,6 +17,8 @@ struct ModelManagementView: View {
     @State private var selectedSource: ModelCatalogSource = .local
     @State private var installationFilter: ModelInstallationFilter = .all
     @State private var sortOrder: ModelCatalogSortOrder = .catalog
+    @State private var searchText = ""
+    @State private var expandedModelID: UUID?
     @State private var activePanel: ModelManagementPanel?
 
     @State private var isShowingDeleteAlert = false
@@ -113,7 +115,7 @@ struct ModelManagementView: View {
     }
 
     private var headerSection: some View {
-        AppScreenHeader(title: "Model Catalog") {
+        AppScreenHeader(title: "Models", subtitle: "Find the right balance of speed, accuracy, and privacy.") {
             settingsButton
         }
     }
@@ -215,12 +217,32 @@ struct ModelManagementView: View {
             .labelsHidden()
             .frame(maxWidth: 360)
 
+            if selectedSource == .local && selectedCategory == .speech {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search local models", text: $searchText).textFieldStyle(.plain)
+                        .accessibilityIdentifier(
+                            "models.search")
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.borderless).accessibilityLabel("Clear model search")
+                    }
+                }
+                .padding(10).background(AppCardBackground(cornerRadius: 8))
+            }
+
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) { filterControls }
                 VStack(alignment: .leading, spacing: 10) { filterControls }
             }
 
-            if selectedSource == .local && selectedCategory == .speech && (sortOrder == .speed || sortOrder == .accuracy) {
+            if selectedSource == .local && selectedCategory == .speech
+                && (sortOrder == .speed || sortOrder == .accuracy)
+            {
                 Text("Models without a rating appear last.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -273,13 +295,30 @@ struct ModelManagementView: View {
     private var localSpeechModelsSection: some View {
         let models = filteredLocalSpeechModels
 
-        return VStack(spacing: 12) {
+        return VStack(spacing: 16) {
             if models.isEmpty {
                 emptyModelsState
             } else {
-                ForEach(models, id: \.id) { model in
-                    localModelCard(model)
+                HStack {
+                    Text("Model").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Speed / Accuracy").frame(width: 120, alignment: .leading)
+                    Text("Storage").frame(width: 80, alignment: .trailing)
+                    Spacer().frame(width: 20)
                 }
+                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16)
+
+                LazyVStack(spacing: 0) {
+                    ForEach(models, id: \.id) { model in
+                        ModelCatalogRow(
+                            model: model, isInstalled: isInstalled(model), isExpanded: expandedModelID == model.id
+                        ) { expandedModelID = expandedModelID == model.id ? nil : model.id }
+                        if expandedModelID == model.id {
+                            localModelCard(model).padding(.horizontal, 14).padding(.bottom, 14)
+                        }
+                        if model.id != models.last?.id { Divider().padding(.horizontal, 16) }
+                    }
+                }
+                .background(AppCardBackground())
             }
 
             importLocalModelButton
@@ -310,7 +349,10 @@ struct ModelManagementView: View {
         } description: {
             Text("Try showing all models to find one to download.")
         } actions: {
-            Button("Show All Models") { installationFilter = .all }
+            Button("Show All Models") {
+                installationFilter = .all
+                searchText = ""
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -318,7 +360,8 @@ struct ModelManagementView: View {
 
     private func localModelCard(_ model: any TranscriptionModel) -> some View {
         let isWarming =
-            (model as? WhisperModel).map { whisperModel in
+            (model as? WhisperModel)
+            .map { whisperModel in
                 warmupCoordinator.isWarming(modelNamed: whisperModel.name)
             } ?? false
 
@@ -409,20 +452,21 @@ struct ModelManagementView: View {
                 transcriptionModelManager.isAvailableOnCurrentOS($0)
             },
             installation: installationFilter,
-            sortOrder: sortOrder,
-            isInstalled: { model in
-                switch model.provider {
-                case .whisper:
-                    whisperModelManager.availableModels.contains { $0.name == model.name }
-                case .fluidAudio:
-                    fluidAudioModelManager.isFluidAudioModelDownloaded(named: model.name)
-                case .transcribeCpp:
-                    transcribeCppModelManager.isModelDownloaded(named: model.name)
-                default:
-                    false
-                }
-            }
-        )
+            sortOrder: sortOrder, searchText: searchText, isInstalled: isInstalled)
+    }
+
+    private func isInstalled(_ model: any TranscriptionModel) -> Bool {
+        switch model.provider {
+        case .nativeApple: true
+        case .whisper:
+            whisperModelManager.availableModels.contains { $0.name == model.name }
+        case .fluidAudio:
+            fluidAudioModelManager.isFluidAudioModelDownloaded(named: model.name)
+        case .transcribeCpp:
+            transcribeCppModelManager.isModelDownloaded(named: model.name)
+        default:
+            false
+        }
     }
 
     private func deleteLocalModel(_ model: any TranscriptionModel) {

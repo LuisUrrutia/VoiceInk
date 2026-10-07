@@ -97,7 +97,7 @@ struct ModeView: View {
     var body: some View {
         VStack(spacing: 0) {
             AppScreenHeader(
-                title: "Modes",
+                title: "Modes", subtitle: "A different way to write for every task.",
                 infoMessage: "Modes help you set up VoiceInk for different writing tasks, workflows, and scenarios.",
                 infoURL: "https://tryvoiceink.com/docs/modes"
             ) {
@@ -132,6 +132,8 @@ struct ModeView: View {
                                             .lineSpacing(2)
                                         }
                                     }
+
+                                    AppActionButton("Create a mode", kind: .primary) { openPanel(mode: .add) }
 
                                     Spacer()
                                 }

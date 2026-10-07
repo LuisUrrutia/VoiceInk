@@ -57,7 +57,7 @@ struct HistoryAudioPlayer: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(AppTheme.Text.secondary)
                     .frame(width: 34, height: HistoryLayout.buttonHeight)
-                    .background(QuickPanelButtonBackground(isSelected: player.playbackRate != 1.0))
+                    .appGlassControl(isSelected: player.playbackRate != 1.0)
             }
             .buttonStyle(.plain)
             .help("Playback speed")

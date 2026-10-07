@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct DictionarySettingsView: View {
-    @State private var selectedSection: DictionarySection = .replacements
+    @State private var selectedSection: DictionarySection = .spellings
     @State private var activePanel: DictionaryPanel?
     @State private var isAutoLearnReviewPresented = false
     @AppStorage(AutoLearnSettings.hasFailureKey) private var hasAutoLearnFailure = false
@@ -90,7 +90,7 @@ struct DictionarySettingsView: View {
 
     private var headerSection: some View {
         AppScreenHeader(
-            title: "Dictionary",
+            title: "Dictionary", subtitle: "The words and phrases that make it sound like you.",
             infoMessage: dictionaryInfoMessage,
             infoURL: "https://tryvoiceink.com/docs/auto-learn-dictionary"
         ) {
