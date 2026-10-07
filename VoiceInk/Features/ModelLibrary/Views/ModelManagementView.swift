@@ -95,7 +95,16 @@ struct ModelManagementView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 600, minHeight: 500)
-        .onAppear { transcriptionModelManager.refreshLocalModelInstallation() }
+        .onAppear {
+            transcriptionModelManager.refreshLocalModelInstallation()
+            transcriptionModelManager.refreshCloudProviderConfiguration()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .aiProviderKeyChanged)) { _ in
+            transcriptionModelManager.refreshCloudProviderConfiguration()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            transcriptionModelManager.refreshCloudProviderConfiguration()
+        }
         .onChange(of: selectedCategory) { _, _ in closePanel() }
         .onChange(of: selectedSource) { _, _ in closePanel() }
         .sidePanel(

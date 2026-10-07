@@ -7,8 +7,10 @@ class TranscriptionModelManager: ObservableObject {
     @Published var currentTranscriptionModel: (any TranscriptionModel)?
     @Published var allAvailableModels: [any TranscriptionModel] = TranscriptionModelRegistry.models
     @Published private(set) var installedLocalModelNames: Set<String> = ["apple-speech"]
+    @Published private(set) var configuredCloudProviderKeys: Set<String>?
 
     private var installationRefreshTask: Task<Void, Never>?
+    private var providerConfigurationRefreshTask: Task<Void, Never>?
 
     private weak var whisperModelManager: WhisperModelManager?
     private weak var fluidAudioModelManager: FluidAudioModelManager?
@@ -189,6 +191,34 @@ class TranscriptionModelManager: ObservableObject {
             }
             guard !Task.isCancelled else { return }
             self?.installedLocalModelNames = installedNames
+        }
+    }
+
+    func refreshCloudProviderConfiguration() {
+        providerConfigurationRefreshTask?.cancel()
+        let providerKeys = Set(CloudProviderRegistry.allProviders.map { $0.providerKey.lowercased() })
+            .union(AIProvider.allCases.filter { $0.requiresAPIKey && $0 != .custom }.map { $0.rawValue.lowercased() })
+
+        providerConfigurationRefreshTask = Task { [weak self] in
+            let scan = Task.detached(priority: .utility) {
+                var configuredKeys = Set<String>()
+                for providerKey in providerKeys {
+                    guard !Task.isCancelled else { return configuredKeys }
+                    if APIKeyManager.shared.hasAPIKey(forProvider: providerKey) {
+                        configuredKeys.insert(providerKey)
+                    }
+                }
+                return configuredKeys
+            }
+            let configuredKeys = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard !Task.isCancelled, let self else { return }
+            if self.configuredCloudProviderKeys != configuredKeys {
+                self.configuredCloudProviderKeys = configuredKeys
+            }
         }
     }
 
