@@ -17,7 +17,6 @@ struct AudioTranscribeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppScreenHeader(title: "Import Audio", subtitle: "Turn audio and video files into text.")
             Group {
                 if transcriptionManager.queue.isEmpty {
                     emptyStateView
