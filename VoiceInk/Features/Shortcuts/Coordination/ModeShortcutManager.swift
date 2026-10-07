@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 class ModeShortcutManager {
     private let shortcutMonitor = ShortcutMonitor()
+    private let monitoringLifecycle = ShortcutMonitoringLifecycle()
     private let modeProvider: @MainActor () -> RecordingShortcutManager.Mode
     private let shortcutModeHandler: RecordingShortcutModeHandler
     private var shortcutChangeObserver: NSObjectProtocol?
@@ -63,6 +64,12 @@ class ModeShortcutManager {
     }
 
     private func refreshModeShortcuts() {
+        monitoringLifecycle.refreshWhenReady { [weak self] in
+            self?.refreshShortcutMonitor()
+        }
+    }
+
+    private func refreshShortcutMonitor() {
         shortcutModeHandler.clearPendingModeDoubleTaps()
         let shortcuts = ModeManager.shared.enabledConfigurations.reduce(into: [ShortcutAction: Shortcut]()) {
             result, config in
