@@ -72,6 +72,9 @@ struct MicrophoneMenu: View {
             Button("Audio Settings…") { navigation.navigate(to: .audio) }
         } label: {
             HStack(spacing: 10) {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .accessibilityHidden(true)
                 Text(microphoneName)
                     .lineLimit(1).truncationMode(.middle)
                 Image(systemName: "mic")

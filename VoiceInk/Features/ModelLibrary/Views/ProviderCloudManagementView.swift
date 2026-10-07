@@ -110,8 +110,12 @@ struct ProviderDescriptor: Identifiable {
 
     var brandAssetName: String? {
         switch providerKey.lowercased() {
-        case "openai":
+        case "openai", "whisper":
             return "provider-openai"
+        case "parakeet", "nvidia":
+            return "nvidia-logo"
+        case "cohere":
+            return "provider-cohere"
         case "openrouter":
             return "provider-openrouter"
         case "anthropic":

@@ -57,6 +57,7 @@ struct ModeView: View {
     @EnvironmentObject private var enhancementService: AIEnhancementService
     @EnvironmentObject private var aiService: AIService
     @EnvironmentObject private var transcriptionModelManager: TranscriptionModelManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activePanel: PanelType?
     @State private var panelID = UUID()
 
@@ -67,6 +68,11 @@ struct ModeView: View {
 
     private var isSettingsOpen: Bool {
         if case .settings? = activePanel { return true }
+        return false
+    }
+
+    private var isEditingMode: Bool {
+        if case .configuration? = activePanel { return true }
         return false
     }
 
@@ -96,15 +102,19 @@ struct ModeView: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if case .configuration(let mode)? = activePanel {
                 ModeConfigEditorView(mode: mode, modeManager: modeManager, onDismiss: closePanel)
                     .environmentObject(modeWarmupStore)
                     .id(panelID)
+                    .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
             } else {
                 modeList
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
             }
         }
+        .clipped()
+        .animation(reduceMotion ? .easeOut(duration: 0.12) : .smooth(duration: 0.32), value: isEditingMode)
         .sidePanel(isPresented: .init(
             get: { isSettingsOpen },
             set: { if !$0 { closePanel() } }

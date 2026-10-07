@@ -18,6 +18,7 @@ struct ModelManagementView: View {
     @State private var installationFilter: ModelInstallationFilter = .all
     @State private var sortOrder: ModelCatalogSortOrder = .catalog
     @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
     @State private var expandedModelID: UUID?
     @State private var activePanel: ModelManagementPanel?
 
@@ -121,15 +122,25 @@ struct ModelManagementView: View {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Search models", text: $searchText).textFieldStyle(.plain)
                         .font(.system(size: 14)).accessibilityIdentifier("models.search")
+                        .focused($isSearchFocused)
                     if !searchText.isEmpty {
                         Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
                             .buttonStyle(.plain).accessibilityLabel("Clear model search")
                     }
                 }
-                .frame(maxWidth: .infinity)
-            } else {
-                Spacer()
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .appGlassControl()
+                .overlay {
+                    Capsule().strokeBorder(
+                        isSearchFocused ? Color.accentColor.opacity(0.6) : AppTheme.Border.control,
+                        lineWidth: 1
+                    )
+                }
+                .contentShape(Capsule())
+                .onTapGesture { isSearchFocused = true }
+                .frame(maxWidth: 420)
             }
+            Spacer(minLength: 0)
             settingsButton
         }
     }
@@ -229,7 +240,8 @@ struct ModelManagementView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 360)
+            .controlSize(.large)
+            .fixedSize(horizontal: true, vertical: false)
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) { filterControls }
