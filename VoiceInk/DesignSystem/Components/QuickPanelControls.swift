@@ -81,7 +81,6 @@ struct QuickPanelScrollEdge<Content: View>: View {
     let edge: QuickPanelEdge
     var contentHeight: CGFloat? = nil
     var inheritsContentBackground = false
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @ViewBuilder let content: () -> Content
 
     private var edgeHeight: CGFloat {
@@ -100,8 +99,8 @@ struct QuickPanelScrollEdge<Content: View>: View {
         .frame(maxWidth: .infinity)
         .background {
             Group {
-                if inheritsContentBackground && !reduceTransparency {
-                    VisualEffectView(material: .headerView, blendingMode: .withinWindow)
+                if inheritsContentBackground {
+                    AppContentBackground()
                 } else {
                     AppTheme.Surface.window
                 }
