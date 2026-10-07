@@ -96,6 +96,12 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 - Preserve awaited hardware shutdown, draining queued audio and closing the WAV before transcription or canceled-history metadata reads. Coalesce overlapping stops and keep new recording starts behind hardware shutdown and engine file/history/resource cleanup. Keep prepared audio hardware reusable, retain final streaming chunks, and prevent stale startup or session-preparation completions from changing a newer session. Preserve session-scoped media restoration and canceled recordings in History without duplicate entries.
 - Regression: `RecordingFinalizationTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, covers closed WAV contents, final streaming chunks, overlapping and canceled stop callers, canceled restarts, cancellation during shutdown, duplicate cancellation, reset during cancellation, and stale finalization completion. In `VoiceInk Dev.app`, check normal dictation, rapid stop/cancel/restart, cancellation during startup and realtime session preparation, canceled History entries, microphone state, and mute/media restoration.
 
+### Shortcut monitoring launch lifecycle
+
+- Request: Implement the intent of https://github.com/Beingpax/VoiceInk/pull/605 in the fork's current shortcut architecture.
+- Preserve launch-aware activation of recording, global utility, and mode shortcuts. Wait for AppKit launch completion rather than a fixed delay, use the latest configuration when launch finishes, and refresh immediately when the app has already launched. Release pending refreshes and launch observers with their owner. Keep existing shortcut registration, recording modes, and recorder-panel shortcuts compatible.
+- Regression: `ShortcutMonitoringLifecycleTests` and `SystemHotKeyTests` run in `VoiceInkTests` through `./scripts/check-personal-sync.sh`. In `VoiceInk Dev.app`, check menu-bar interaction and previously configured recording, utility, and mode shortcuts immediately after a cold launch; changes to primary, secondary, utility, and mode shortcuts after launch; and toggle, push-to-talk, hybrid, and double-tap behavior. Also check recorder-panel cancellation and an unrelated navigation path.
+
 ### Dictionary section descriptions
 
 - Source: `feat/dictionary-section-descriptions` at `7f2633335deb9eb25043cc43b7179ddd108ca154`.

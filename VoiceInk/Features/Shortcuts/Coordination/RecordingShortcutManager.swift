@@ -39,6 +39,7 @@ class RecordingShortcutManager: ObservableObject {
     private var recorderPanelShortcutManager: RecorderPanelShortcutManager
     private let modeShortcutManager: ModeShortcutManager
     private let shortcutMonitor = ShortcutMonitor()
+    private let monitoringLifecycle = ShortcutMonitoringLifecycle()
     private var shortcutChangeObserver: NSObjectProtocol?
     private let shortcutModeHandler: RecordingShortcutModeHandler
     private let primaryRecordingShortcutModeSource: RecordingShortcutModeSource
@@ -139,16 +140,15 @@ class RecordingShortcutManager: ObservableObject {
             }
         }
 
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            self.refreshShortcutMonitoring()
-        }
+        refreshShortcutMonitoring()
     }
 
     private func refreshShortcutMonitoring() {
-        removeAllMonitoring()
-
-        refreshShortcutMonitor()
+        monitoringLifecycle.refreshWhenReady { [weak self] in
+            guard let self else { return }
+            self.removeAllMonitoring()
+            self.refreshShortcutMonitor()
+        }
     }
 
     private func refreshShortcutMonitor() {
