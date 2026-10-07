@@ -23,7 +23,10 @@ struct TranscriptionDetailView: View {
     }
 
     var body: some View {
-        QuickPanelScaffold(footerHeight: footerHeight) {
+        QuickPanelScaffold(
+            footerHeight: footerHeight,
+            inheritsContentBackground: presentation == .mainWindow
+        ) {
             ScrollView {
                 transcriptionContent
                     .padding(.horizontal, HistoryLayout.detailInset)

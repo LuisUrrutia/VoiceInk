@@ -20,9 +20,11 @@ struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
     private let header: Header
     private let footer: Footer?
     private let footerHeight: CGFloat
+    private let inheritsContentBackground: Bool
 
     init(
         footerHeight: CGFloat = QuickPanelMetrics.footerHeight,
+        inheritsContentBackground: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder header: () -> Header,
         @ViewBuilder footer: () -> Footer
@@ -31,6 +33,7 @@ struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
         self.header = header()
         self.footer = footer()
         self.footerHeight = footerHeight
+        self.inheritsContentBackground = inheritsContentBackground
     }
 
     var body: some View {
@@ -38,26 +41,31 @@ struct QuickPanelScaffold<Content: View, Header: View, Footer: View>: View {
             content
 
             VStack(spacing: 0) {
-                QuickPanelScrollEdge(edge: .top) {
+                QuickPanelScrollEdge(edge: .top, inheritsContentBackground: inheritsContentBackground) {
                     header
                 }
 
                 Spacer(minLength: 0)
 
                 if let footer {
-                    QuickPanelScrollEdge(edge: .bottom, contentHeight: footerHeight) {
+                    QuickPanelScrollEdge(
+                        edge: .bottom,
+                        contentHeight: footerHeight,
+                        inheritsContentBackground: inheritsContentBackground
+                    ) {
                         footer
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(AppTheme.Surface.window)
+        .background(inheritsContentBackground ? .clear : AppTheme.Surface.window)
     }
 }
 
 extension QuickPanelScaffold where Footer == EmptyView {
     init(
+        inheritsContentBackground: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder header: () -> Header
     ) {
@@ -65,12 +73,15 @@ extension QuickPanelScaffold where Footer == EmptyView {
         self.header = header()
         self.footer = nil
         self.footerHeight = QuickPanelMetrics.footerHeight
+        self.inheritsContentBackground = inheritsContentBackground
     }
 }
 
 struct QuickPanelScrollEdge<Content: View>: View {
     let edge: QuickPanelEdge
     var contentHeight: CGFloat? = nil
+    var inheritsContentBackground = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @ViewBuilder let content: () -> Content
 
     private var edgeHeight: CGFloat {
@@ -87,7 +98,17 @@ struct QuickPanelScrollEdge<Content: View>: View {
         .padding(edge == .top ? .top : .bottom, QuickPanelMetrics.edgePadding)
         .frame(height: edgeHeight)
         .frame(maxWidth: .infinity)
-        .background(AppTheme.Surface.window)
+        .background {
+            Group {
+                if inheritsContentBackground && !reduceTransparency {
+                    VisualEffectView(material: .headerView, blendingMode: .withinWindow)
+                } else {
+                    AppTheme.Surface.window
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 }
 

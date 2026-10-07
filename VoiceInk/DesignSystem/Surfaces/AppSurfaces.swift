@@ -1,5 +1,21 @@
 import SwiftUI
 
+struct AppContentBackground: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        Group {
+            if reduceTransparency {
+                AppTheme.Surface.window
+            } else {
+                VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct AppCardBackground: View {
     var isSelected: Bool = false
     var cornerRadius: CGFloat = AppTheme.Radius.card

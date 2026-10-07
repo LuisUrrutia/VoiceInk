@@ -65,7 +65,10 @@ struct ContentView: View {
                 }
                 detailView(for: navigation.selectedView).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(AppTheme.Surface.window)
+            .background {
+                AppContentBackground()
+                    .ignoresSafeArea()
+            }
         }
         .buttonBorderShape(.capsule)
         .frame(minWidth: AppWindowLayout.minimumWidth, minHeight: AppWindowLayout.minimumHeight)

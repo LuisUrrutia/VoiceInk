@@ -62,7 +62,7 @@ struct ModeConfigFormView: View {
     }
 
     var body: some View {
-        QuickPanelScaffold {
+        QuickPanelScaffold(inheritsContentBackground: true) {
             formContent
         } header: {
             header

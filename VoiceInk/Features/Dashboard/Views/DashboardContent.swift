@@ -78,8 +78,6 @@ struct DashboardContent: View {
                     AppTheme.Insights.page
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
-                } else {
-                    AppTheme.Surface.window
                 }
 
                 ScrollView {
