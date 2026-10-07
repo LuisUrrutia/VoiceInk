@@ -114,7 +114,7 @@ enum ModelCatalog {
             case .nativeApple:
                 return installation.includes(isInstalled: true)
             case .whisper, .fluidAudio, .transcribeCpp:
-                return installation.includes(isInstalled: isInstalled(model))
+                return installation == .all || installation.includes(isInstalled: isInstalled(model))
             default:
                 return false
             }

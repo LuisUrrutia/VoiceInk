@@ -37,11 +37,11 @@ struct ModelCardView: View {
                 }
             case .fluidAudio:
                 if let fluidAudioModel = model as? FluidAudioModel {
-                    FluidAudioModelCardView(model: fluidAudioModel)
+                    FluidAudioModelCardView(model: fluidAudioModel, isDownloaded: isDownloaded)
                 }
             case .transcribeCpp:
                 if let transcribeCppModel = model as? TranscribeCppModel {
-                    TranscribeCppModelCardView(model: transcribeCppModel)
+                    TranscribeCppModelCardView(model: transcribeCppModel, isDownloaded: isDownloaded)
                 }
             case .nativeApple:
                 if let nativeAppleModel = model as? NativeAppleModel {

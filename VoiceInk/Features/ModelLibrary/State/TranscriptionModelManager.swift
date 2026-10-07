@@ -6,6 +6,9 @@ import os
 class TranscriptionModelManager: ObservableObject {
     @Published var currentTranscriptionModel: (any TranscriptionModel)?
     @Published var allAvailableModels: [any TranscriptionModel] = TranscriptionModelRegistry.models
+    @Published private(set) var installedLocalModelNames: Set<String> = ["apple-speech"]
+
+    private var installationRefreshTask: Task<Void, Never>?
 
     private weak var whisperModelManager: WhisperModelManager?
     private weak var fluidAudioModelManager: FluidAudioModelManager?
@@ -38,7 +41,7 @@ class TranscriptionModelManager: ObservableObject {
         transcribeCppModelManager.onModelsChanged = { [weak self] in
             self?.refreshAllAvailableModels()
         }
-
+        refreshLocalModelInstallation()
     }
 
     // MARK: - Computed: usable models
@@ -140,6 +143,7 @@ class TranscriptionModelManager: ObservableObject {
         }
 
         allAvailableModels = models
+        refreshLocalModelInstallation()
 
         if let currentSelection,
             let updatedModel = TranscriptionModelRegistry.model(forSelectionKey: currentSelection, in: allAvailableModels)
@@ -152,6 +156,39 @@ class TranscriptionModelManager: ObservableObject {
             }
         } else {
             currentTranscriptionModel = nil
+        }
+    }
+
+    func refreshLocalModelInstallation() {
+        installationRefreshTask?.cancel()
+        let whisperNames = Set(whisperModelManager?.availableModels.map(\.name) ?? [])
+        let fluidAudioNames = allAvailableModels.filter { $0.provider == .fluidAudio }.map(\.name)
+        let transcribeCppNames = allAvailableModels.filter { $0.provider == .transcribeCpp }.map(\.name)
+
+        installationRefreshTask = Task { [weak self] in
+            let scan = Task.detached(priority: .utility) {
+                var installedNames = whisperNames.union(["apple-speech"])
+                for name in fluidAudioNames {
+                    guard !Task.isCancelled else { return installedNames }
+                    if FluidAudioModelManager.isModelDownloaded(named: name) {
+                        installedNames.insert(name)
+                    }
+                }
+                for name in transcribeCppNames {
+                    guard !Task.isCancelled else { return installedNames }
+                    if TranscribeCppModelCatalog.artifact(for: name)?.installedModelFileURL != nil {
+                        installedNames.insert(name)
+                    }
+                }
+                return installedNames
+            }
+            let installedNames = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            self?.installedLocalModelNames = installedNames
         }
     }
 

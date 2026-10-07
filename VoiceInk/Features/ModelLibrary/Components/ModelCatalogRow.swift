@@ -9,7 +9,7 @@ struct ModelCatalogRow: View {
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: 10) {
-                ModelProviderIcon(modelName: model.name, kind: .transcription, size: 24)
+                ModelProviderIcon(model: model, size: 24)
                     .accessibilityHidden(true)
                 HStack(spacing: 6) {
                     Text(model.displayName).font(.system(size: 13))

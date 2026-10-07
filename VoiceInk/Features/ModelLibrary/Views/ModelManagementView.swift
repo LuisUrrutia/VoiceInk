@@ -95,6 +95,7 @@ struct ModelManagementView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 600, minHeight: 500)
+        .onAppear { transcriptionModelManager.refreshLocalModelInstallation() }
         .onChange(of: selectedCategory) { _, _ in closePanel() }
         .onChange(of: selectedSource) { _, _ in closePanel() }
         .sidePanel(
@@ -379,7 +380,7 @@ struct ModelManagementView: View {
 
         return ModelCardView(
             model: model,
-            isDownloaded: whisperModelManager.availableModels.contains { $0.name == model.name },
+            isDownloaded: isInstalled(model),
             downloadProgress: whisperModelManager.downloadProgress,
             modelURL: whisperModelManager.availableModels.first { $0.name == model.name }?.url,
             isWarming: isWarming,
@@ -457,17 +458,7 @@ struct ModelManagementView: View {
     }
 
     private func isInstalled(_ model: any TranscriptionModel) -> Bool {
-        switch model.provider {
-        case .nativeApple: true
-        case .whisper:
-            whisperModelManager.availableModels.contains { $0.name == model.name }
-        case .fluidAudio:
-            fluidAudioModelManager.isFluidAudioModelDownloaded(named: model.name)
-        case .transcribeCpp:
-            transcribeCppModelManager.isModelDownloaded(named: model.name)
-        default:
-            false
-        }
+        transcriptionModelManager.installedLocalModelNames.contains(model.name)
     }
 
     private func deleteLocalModel(_ model: any TranscriptionModel) {
