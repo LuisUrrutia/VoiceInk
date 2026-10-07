@@ -82,6 +82,13 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 - Preserve Vocabulary as the first option in the Dictionary section selector, followed by Word Replacements.
 - Regression: `DictionarySmokeTests.testVocabularyPrecedesWordReplacementsInSectionSelector`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`.
 
+### Vocabulary compact composer
+
+- Request: Implement the selected Compact bar prototype with Liquid Glass input and selection controls.
+- Keep the word field, destination-section menu, and always-visible Add word action in one row, with New section and vocabulary examples in the header. Disable Add word for blank input; Return and Add word use the existing vocabulary service, clear the field only after success, and return focus to it. Preserve comma-separated input, section-scoped duplicate checks, grouped terms, section descriptions, editing, deletion, and drag-and-drop membership.
+- Use native Liquid Glass button/menu styling and a native TextField with the system glass effect, a visible border, and a focus indication on macOS 26+, with the existing control fallbacks on macOS 15. Keep No section available even before sections exist, show section choices directly, and reset a deleted destination to No section.
+- Regression: `VocabularySectionTests` and `DictionarySmokeTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, retain service and membership coverage. Validate the native composer in `VoiceInk Dev.app`: blank input and its disabled action, stable layout while typing, Return and Add word submission, multiple comma-separated terms, duplicate errors without losing input, no-section and named-section destinations, destination deletion, New section, examples, focus and keyboard navigation, long section names, narrow window widths, both appearances, and Reduce Transparency. Check grouped terms and drag-and-drop after adding words.
+
 ### Model catalog categories, filters, and sorting
 
 - Request: Separate speech models from enhancement models and services, and filter and sort the catalog.
