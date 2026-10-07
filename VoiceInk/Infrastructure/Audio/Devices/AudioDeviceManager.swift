@@ -19,6 +19,9 @@ enum AudioInputMode: String, CaseIterable {
 
 class AudioDeviceManager: ObservableObject {
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AudioDeviceManager")
+    let userDefaults: UserDefaults
+    let notificationCenter: NotificationCenter
+    private var deviceChangeListener: AudioObjectPropertyListenerBlock?
     @Published var availableDevices: [(id: AudioDeviceID, uid: String, name: String)] = []
     @Published var selectedDeviceID: AudioDeviceID?
     @Published var inputMode: AudioInputMode = .custom
@@ -33,10 +36,12 @@ class AudioDeviceManager: ObservableObject {
 
     static let shared = AudioDeviceManager()
 
-    init() {
+    init(userDefaults: UserDefaults = .standard, notificationCenter: NotificationCenter = .default) {
+        self.userDefaults = userDefaults
+        self.notificationCenter = notificationCenter
         loadPrioritizedDevices()
 
-        if let savedMode = UserDefaults.standard.audioInputModeRawValue,
+        if let savedMode = userDefaults.audioInputModeRawValue,
             let mode = AudioInputMode(rawValue: savedMode)
         {
             inputMode = mode
@@ -44,12 +49,15 @@ class AudioDeviceManager: ObservableObject {
             inputMode = .systemDefault
         }
 
-        setupRecordingDeviceRouting()
+        startMonitoring()
 
         loadAvailableDevices { [weak self] in
             self?.initializeSelectedDevice()
         }
+    }
 
+    func startMonitoring() {
+        setupRecordingDeviceRouting()
         setupDeviceChangeNotifications()
     }
 
@@ -90,10 +98,10 @@ class AudioDeviceManager: ObservableObject {
         case .prioritized:
             selectHighestPriorityAvailableDevice()
         case .custom:
-            if let savedUID = UserDefaults.standard.selectedAudioDeviceUID {
-                let savedModelUID = UserDefaults.standard.selectedAudioDeviceModelUID
+            if let savedUID = userDefaults.selectedAudioDeviceUID {
+                let savedModelUID = userDefaults.selectedAudioDeviceModelUID
                 if let found = findAvailableDevice(uid: savedUID, modelUID: savedModelUID) {
-                    selectedDeviceID = found.id
+                    selectedDeviceID = isDeviceUsableForRecording(found.id) ? found.id : findBestAvailableDevice()
                     if found.uid != savedUID || savedModelUID == nil {
                         updateCustomDeviceHints(deviceID: found.id, uid: found.uid)
                     }
@@ -264,7 +272,7 @@ class AudioDeviceManager: ObservableObject {
             DispatchQueue.main.async {
                 self.inputMode = .custom
                 self.selectedDeviceID = id
-                UserDefaults.standard.audioInputModeRawValue = AudioInputMode.custom.rawValue
+                self.userDefaults.audioInputModeRawValue = AudioInputMode.custom.rawValue
                 self.updateCustomDeviceHints(deviceID: id, uid: uid, modelUID: modelUID)
                 self.notifyDeviceChange()
             }
@@ -276,7 +284,7 @@ class AudioDeviceManager: ObservableObject {
 
     func selectInputMode(_ mode: AudioInputMode) {
         inputMode = mode
-        UserDefaults.standard.audioInputModeRawValue = mode.rawValue
+        userDefaults.audioInputModeRawValue = mode.rawValue
 
         switch mode {
         case .systemDefault:
@@ -297,7 +305,7 @@ class AudioDeviceManager: ObservableObject {
     }
 
     private func loadPrioritizedDevices() {
-        if let data = UserDefaults.standard.prioritizedDevicesData,
+        if let data = userDefaults.prioritizedDevicesData,
             let devices = try? JSONDecoder().decode([PrioritizedDevice].self, from: data)
         {
             prioritizedDevices = devices
@@ -306,7 +314,7 @@ class AudioDeviceManager: ObservableObject {
 
     func savePrioritizedDevices() {
         if let data = try? JSONEncoder().encode(prioritizedDevices) {
-            UserDefaults.standard.prioritizedDevicesData = data
+            userDefaults.prioritizedDevicesData = data
         }
     }
 
@@ -376,20 +384,19 @@ class AudioDeviceManager: ObservableObject {
 
         let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
 
-        let status = AudioObjectAddPropertyListener(
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.handleDeviceListChange()
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
             systemObjectID,
             &address,
-            { (_, _, _, userData) -> OSStatus in
-                let manager = Unmanaged<AudioDeviceManager>.fromOpaque(userData!).takeUnretainedValue()
-                DispatchQueue.main.async {
-                    manager.handleDeviceListChange()
-                }
-                return noErr
-            },
-            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+            DispatchQueue.main,
+            listener
         )
 
-        if status != noErr {
+        if status == noErr {
+            deviceChangeListener = listener
+        } else {
             logger.error("Failed to add device change listener: \(status, privacy: .public)")
         }
     }
@@ -459,17 +466,18 @@ class AudioDeviceManager: ObservableObject {
     }
 
     private func updateCustomDeviceHints(deviceID: AudioDeviceID, uid: String, modelUID: String? = nil) {
-        UserDefaults.standard.selectedAudioDeviceUID = uid
-        UserDefaults.standard.selectedAudioDeviceModelUID = modelUID ?? getDeviceModelUID(deviceID: deviceID)
+        userDefaults.selectedAudioDeviceUID = uid
+        userDefaults.selectedAudioDeviceModelUID = modelUID ?? getDeviceModelUID(deviceID: deviceID)
     }
 
     private func reconcileCustomDeviceAfterListChange() {
-        let savedUID = UserDefaults.standard.selectedAudioDeviceUID ?? ""
-        let savedModelUID = UserDefaults.standard.selectedAudioDeviceModelUID
+        let savedUID = userDefaults.selectedAudioDeviceUID ?? ""
+        let savedModelUID = userDefaults.selectedAudioDeviceModelUID
 
         if let desired = findAvailableDevice(uid: savedUID, modelUID: savedModelUID) {
-            if selectedDeviceID != desired.id {
-                selectedDeviceID = desired.id
+            let effectiveDeviceID = isDeviceUsableForRecording(desired.id) ? desired.id : findBestAvailableDevice()
+            if selectedDeviceID != effectiveDeviceID {
+                selectedDeviceID = effectiveDeviceID
                 if desired.uid != savedUID || savedModelUID == nil {
                     updateCustomDeviceHints(deviceID: desired.id, uid: desired.uid)
                 }
@@ -483,19 +491,18 @@ class AudioDeviceManager: ObservableObject {
     }
 
     deinit {
+        guard let deviceChangeListener else { return }
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
 
-        AudioObjectRemovePropertyListener(
+        AudioObjectRemovePropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
-            { (_, _, _, userData) -> OSStatus in
-                return noErr
-            },
-            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+            DispatchQueue.main,
+            deviceChangeListener
         )
 
     }
@@ -602,6 +609,6 @@ class AudioDeviceManager: ObservableObject {
     }
 
     func notifyDeviceChange() {
-        NotificationCenter.default.post(name: NSNotification.Name("AudioDeviceChanged"), object: nil)
+        notificationCenter.post(name: NSNotification.Name("AudioDeviceChanged"), object: nil)
     }
 }
