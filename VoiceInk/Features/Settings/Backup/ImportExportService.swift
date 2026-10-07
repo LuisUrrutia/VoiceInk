@@ -175,6 +175,7 @@ class ImportExportService {
             secondaryRecordingShortcutModeRawValue: recordingShortcutManager.secondaryRecordingShortcutMode.rawValue,
             launchAtLoginEnabled: launchAtLoginEnabled,
             isMenuBarOnly: menuBarManager.isMenuBarOnly,
+            showMenuBarIcon: menuBarManager.showMenuBarIcon,
             recorderType: recorderUIManager.recorderPanelStyle.rawValue,
             appAppearancePreference: AppAppearancePreference.stored.rawValue,
             appLanguagePreference: AppLanguagePreference.storedRawValue,
@@ -314,7 +315,7 @@ class ImportExportService {
                 return
             }
 
-            try await BackupImporter.apply(
+            let imported = try await BackupImporter.apply(
                 backup,
                 categories: selectedCategories,
                 enhancementService: enhancementService,
@@ -326,6 +327,7 @@ class ImportExportService {
                 modelContext: modelContext,
                 transcriptionModelManager: transcriptionModelManager
             )
+            guard imported else { return }
 
             showImportSuccessAlert(
                 message: String(

@@ -25,7 +25,6 @@ struct VoiceInkApp: App {
     @StateObject private var activeWindowService = ActiveWindowService.shared
     @AppStorage(OnboardingSettings.completedV2Key) private var hasCompletedOnboardingV2 = false
     @AppStorage("enableAnnouncements") private var enableAnnouncements = true
-    @State private var showMenuBarIcon = true
     @State private var didShowLaunchReminders = false
 
     // Audio cleanup manager for automatic deletion of old audio files
@@ -379,6 +378,7 @@ struct VoiceInkApp: App {
                             })
                 }
             }
+            .background(MainWindowRequestBridge())
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: AppWindowLayout.width, height: AppWindowLayout.minimumHeight)
@@ -391,7 +391,10 @@ struct VoiceInkApp: App {
             }
         }
 
-        MenuBarExtra(isInserted: $showMenuBarIcon) {
+        MenuBarExtra(isInserted: Binding(
+            get: { menuBarManager.showMenuBarIcon },
+            set: { menuBarManager.setMenuBarIconVisible($0) }
+        )) {
             MenuBarView()
                 .environmentObject(engine)
                 .environmentObject(whisperModelManager)
@@ -413,14 +416,14 @@ struct VoiceInkApp: App {
             }(NSImage(named: "menuBarIcon")!)
 
             Image(nsImage: image)
-                .background(MainWindowRequestBridge(menuBarManager: menuBarManager))
+                .background(MainWindowRequestBridge())
         }
         .menuBarExtraStyle(.menu)
 
         #if DEBUG
             WindowGroup("Debug") {
                 Button("Toggle Menu Bar Only") {
-                    menuBarManager.isMenuBarOnly.toggle()
+                    menuBarManager.toggleMenuBarOnly()
                 }
             }
         #endif
@@ -460,22 +463,13 @@ struct VoiceInkApp: App {
 
 private struct MainWindowRequestBridge: View {
     @Environment(\.openWindow) private var openWindow
-    let menuBarManager: MenuBarManager
 
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
-            .onReceive(NotificationCenter.default.publisher(for: .showMainWindowRequested)) { _ in
-                let existingWindow = WindowManager.shared.currentMainWindow()
-
-                if existingWindow == nil {
-                    menuBarManager.activateForPresentedWindow()
-                    WindowManager.shared.prepareForUserRequestedMainWindow()
+            .onAppear {
+                WindowManager.shared.configureMainWindowOpener {
                     openWindow(id: AppWindowID.main)
-                } else {
-                    menuBarManager.activateForPresentedWindow()
-                    openWindow(id: AppWindowID.main)
-                    WindowManager.shared.showMainWindow()
                 }
             }
     }

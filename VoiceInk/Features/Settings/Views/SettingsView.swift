@@ -235,7 +235,15 @@ struct SettingsView: View {
                 }
 
                 Section("General") {
-                    Toggle("Hide Dock Icon", isOn: $menuBarManager.isMenuBarOnly)
+                    Toggle("Hide Dock Icon", isOn: Binding(
+                        get: { menuBarManager.isMenuBarOnly },
+                        set: { menuBarManager.setDockIconHidden($0) }
+                    ))
+
+                    Toggle("Hide Menu Bar Icon", isOn: Binding(
+                        get: { !menuBarManager.showMenuBarIcon },
+                        set: { menuBarManager.setMenuBarIconVisible(!$0) }
+                    ))
 
                     Toggle(
                         String(localized: "Launch at Login"),

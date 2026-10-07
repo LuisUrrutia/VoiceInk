@@ -1,27 +1,34 @@
 import Cocoa
+import Carbon.HIToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     weak var menuBarManager: MenuBarManager?
+    private var launchedAsLoginItem = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        launchedAsLoginItem = Self.isLoginItemLaunch(NSAppleEventManager.shared().currentAppleEvent)
+        WindowManager.shared.configureLaunch(isLoginItem: launchedAsLoginItem)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        menuBarManager?.applyActivationPolicy()
+        if launchedAsLoginItem {
+            menuBarManager?.applyActivationPolicy()
+            WindowManager.shared.hideMainWindow()
+        } else {
+            menuBarManager?.activateForPresentedWindow()
+            WindowManager.shared.requestMainWindow()
+        }
+    }
+
+    static func isLoginItemLaunch(_ event: NSAppleEventDescriptor?) -> Bool {
+        event?.eventID == kAEOpenApplication
+            && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if let menuBarManager, !menuBarManager.isMenuBarOnly {
-            if WindowManager.shared.currentMainWindow() != nil {
-                WindowManager.shared.showMainWindow()
-                return false
-            }
-
-            WindowManager.shared.prepareForUserRequestedMainWindow()
-            NotificationCenter.default.post(name: .showMainWindowRequested, object: nil)
-            return false
-        }
-
-        return true
+        !WindowManager.shared.requestMainWindow()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

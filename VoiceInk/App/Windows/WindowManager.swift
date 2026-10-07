@@ -52,9 +52,29 @@ class WindowManager: NSObject {
     private weak var mainWindow: NSWindow?
     private var didApplyInitialPlacement = false
     private var shouldShowNextConfiguredMainWindow = false
+    private var launchedInBackground = false
+    private lazy var mainWindowRequests = MainWindowRequestCoordinator(
+        showExistingWindow: { [weak self] in self?.showMainWindow() != nil },
+        prepareWindow: { [weak self] in self?.prepareForUserRequestedMainWindow() }
+    )
 
     private override init() {
         super.init()
+        _ = mainWindowRequests
+    }
+
+    func configureLaunch(isLoginItem: Bool) {
+        launchedInBackground = isLoginItem
+        if !isLoginItem { prepareForUserRequestedMainWindow() }
+    }
+
+    func configureMainWindowOpener(_ opener: @escaping () -> Void) {
+        mainWindowRequests.configureOpener(opener)
+    }
+
+    @discardableResult
+    func requestMainWindow() -> Bool {
+        mainWindowRequests.requestWindow()
     }
 
     func prepareForUserRequestedMainWindow() {
@@ -98,7 +118,7 @@ class WindowManager: NSObject {
         if shouldShowNextConfiguredMainWindow {
             shouldShowNextConfiguredMainWindow = false
             presentMainWindow(window)
-        } else if UserDefaults.standard.bool(forKey: "IsMenuBarOnly") {
+        } else if launchedInBackground || UserDefaults.standard.bool(forKey: AppIconVisibility.dockHiddenKey) {
             window.orderOut(nil)
         }
     }

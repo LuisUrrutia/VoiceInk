@@ -139,6 +139,12 @@ struct MenuBarView: View {
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
 
+            Button("Hide Menu Bar Icon") {
+                DispatchQueue.main.async {
+                    menuBarManager.setMenuBarIconVisible(false)
+                }
+            }
+
             Toggle(
                 "Launch at Login",
                 isOn: Binding(

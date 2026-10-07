@@ -81,6 +81,7 @@ struct GeneralBackup: Codable {
     let secondaryRecordingShortcutModeRawValue: String?
     let launchAtLoginEnabled: Bool?
     let isMenuBarOnly: Bool?
+    let showMenuBarIcon: Bool?
     let recorderType: String?
     let appAppearancePreference: String?
     let appLanguagePreference: String?
@@ -101,6 +102,13 @@ struct GeneralBackup: Codable {
     let autoLearnReviewSchedule: String?
     let autoLearnProvider: String?
     let autoLearnModel: String?
+
+    func iconVisibility(restoring current: AppIconVisibility) -> AppIconVisibility {
+        AppIconVisibility(
+            isDockIconHidden: isMenuBarOnly ?? current.isDockIconHidden,
+            isMenuBarIconVisible: showMenuBarIcon ?? current.isMenuBarIconVisible
+        )
+    }
 }
 
 struct WordBackup: Codable {
