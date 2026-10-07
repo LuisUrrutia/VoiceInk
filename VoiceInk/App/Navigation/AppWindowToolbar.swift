@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AppWindowToolbar<Content: View>: View {
+    var showsNavigationControls = true
     @EnvironmentObject private var navigation: MainWindowNavigation
     @AppStorage("mainWindowShowsSidebar") private var showsSidebar = true
     @ViewBuilder let content: () -> Content
@@ -8,26 +9,28 @@ struct AppWindowToolbar<Content: View>: View {
     var body: some View {
         AppGlassContainer {
             HStack(spacing: 14) {
-                AppIconButton(systemName: "sidebar.left", help: "Toggle sidebar") {
-                    showsSidebar.toggle()
-                }
-                .keyboardShortcut("s", modifiers: [.command, .control])
+                if showsNavigationControls {
+                    AppIconButton(systemName: "sidebar.left", help: "Toggle sidebar") {
+                        showsSidebar.toggle()
+                    }
+                    .keyboardShortcut("s", modifiers: [.command, .control])
 
-                if !showsSidebar {
-                    Menu {
-                        ForEach(ViewType.sidebarGroups, id: \.self) { group in
-                            Section {
-                                ForEach(group) { destination in
-                                    Button { navigation.navigate(to: destination) } label: {
-                                        Text(destination.title)
+                    if !showsSidebar {
+                        Menu {
+                            ForEach(ViewType.sidebarGroups, id: \.self) { group in
+                                Section {
+                                    ForEach(group) { destination in
+                                        Button { navigation.navigate(to: destination) } label: {
+                                            Text(destination.title)
+                                        }
                                     }
                                 }
                             }
+                        } label: {
+                            Text(navigation.selectedView.title)
                         }
-                    } label: {
-                        Text(navigation.selectedView.title)
+                        .menuStyle(.borderlessButton).fixedSize()
                     }
-                    .menuStyle(.borderlessButton).fixedSize()
                 }
 
                 content()

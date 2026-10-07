@@ -91,7 +91,7 @@ struct ModeConfigFormView: View {
     }
 
     private var header: some View {
-        AppWindowToolbar {
+        AppWindowToolbar(showsNavigationControls: false) {
             AppIconButton(systemName: "chevron.left", help: "Back to modes", action: onDismiss)
 
             Button {
@@ -117,8 +117,6 @@ struct ModeConfigFormView: View {
                 .focused($isNameFieldFocused)
 
             Spacer()
-
-
         }
     }
 
