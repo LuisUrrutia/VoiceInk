@@ -719,7 +719,7 @@ private struct DashboardAccessibilityReminder: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(AppTheme.Accent.fill)
 
-                Image(systemName: "hand.raised")
+                Image(appSymbol: "hand.raised")
                     .font(.system(size: 15, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AppTheme.Accent.primary)

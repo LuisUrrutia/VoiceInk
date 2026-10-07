@@ -56,7 +56,7 @@ struct NativeAppleLanguageAssetControl: View {
             EmptyView()
         case .needsDownload:
             Button(action: downloadAsset) {
-                Image(systemName: "arrow.down.circle.fill")
+                Image(appSymbol: "arrow.down.circle.fill")
                     .font(.system(size: 14, weight: .semibold))
             }
             .buttonStyle(.plain)
@@ -78,7 +78,7 @@ struct NativeAppleLanguageAssetControl: View {
                 .frame(width: 28, height: 24)
         case .reservationLimitReached:
             Button(action: refreshAssetState) {
-                Image(systemName: "exclamationmark.circle")
+                Image(appSymbol: "exclamationmark.circle")
                     .font(.system(size: 14, weight: .semibold))
             }
             .buttonStyle(.plain)
@@ -86,7 +86,7 @@ struct NativeAppleLanguageAssetControl: View {
             .frame(width: 28, height: 24)
         case .failed:
             Button(action: downloadAsset) {
-                Image(systemName: "arrow.clockwise.circle.fill")
+                Image(appSymbol: "arrow.clockwise.circle.fill")
                     .font(.system(size: 14, weight: .semibold))
             }
             .buttonStyle(.plain)

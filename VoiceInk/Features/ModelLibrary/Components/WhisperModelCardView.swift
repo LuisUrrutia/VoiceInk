@@ -114,7 +114,7 @@ struct WhisperModelCardView: View {
                     HStack(spacing: 4) {
                         Text(LocalizedStringKey(isDownloading ? "Cancel" : "Download"))
                             .font(.system(size: 12, weight: .medium))
-                        Image(systemName: isDownloading ? "xmark.circle" : "arrow.down.circle")
+                        Image(appSymbol: isDownloading ? "xmark.circle" : "arrow.down.circle")
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundColor(.white)

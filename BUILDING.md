@@ -83,7 +83,9 @@ python3 scripts/phosphor-symbols.py .tmp/swiftdraw/.build/release/swiftdrawcli
 
 The generator verifies the pinned Phosphor archive's checksum and stages all conversions before replacing the catalog, Swift mapping and bundled MIT license. Download or conversion failures preserve the existing files. Include all three outputs in the same commit.
 
-Use `Image(appSymbol:)` or `Label(_:appSymbol:)` with an SF Symbol name. Mapped names use Phosphor; other names, or missing assets, use the system symbol. Sidebar tint layers use VoiceInk's current accent color. The custom symbols keep one fixed stroke weight while their size follows the font.
+Use `Image(appSymbol:)` or `Label(_:appSymbol:)` with a mapped SF Symbol name. These identifiers preserve saved mode icons; the artwork comes from Phosphor. Unknown imported names use a Phosphor question mark. Add an alias to the catalog before introducing a new interface symbol. Sidebar tint layers use VoiceInk's current accent color. The custom symbols keep one fixed stroke weight while their size follows the font.
+
+Bundled provider logo assets, installed application icons and user-selected emojis retain their original artwork. App Shortcuts use system symbols because Apple's `AppShortcut` API requires `systemImageName`.
 
 ## Troubleshooting
 

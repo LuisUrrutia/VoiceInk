@@ -486,7 +486,7 @@ struct AssistantPanelView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             Button(action: sendDraftMessage) {
-                Image(systemName: "paperplane.fill")
+                Image(appSymbol: "paperplane.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(canSendDraft ? .black : .white.opacity(0.35))
                     .frame(width: 24, height: 24)

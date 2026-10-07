@@ -188,7 +188,7 @@ struct AudioFileRow: View {
 
     private func failedRow(message: String) -> some View {
         HStack {
-            Image(systemName: "exclamationmark.circle.fill")
+            Image(appSymbol: "exclamationmark.circle.fill")
                 .foregroundColor(AppTheme.Status.error)
 
             VStack(alignment: .leading, spacing: 2) {

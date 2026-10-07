@@ -37,7 +37,7 @@ struct CustomModelCardView: View {
 
     private var metadataSection: some View {
         HStack(spacing: 12) {
-            Label(model.modelName, systemImage: "cube")
+            Label(model.modelName, appSymbol: "cube")
                 .font(.system(size: 11))
                 .foregroundColor(Color(.secondaryLabelColor))
                 .lineLimit(1)

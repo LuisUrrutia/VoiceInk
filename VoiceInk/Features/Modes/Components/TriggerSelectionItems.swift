@@ -283,7 +283,7 @@ struct TriggerAppIcon: View {
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
         } else {
-            Image(systemName: "app.fill")
+            Image(appSymbol: "app.fill")
                 .font(.system(size: size * 0.58, weight: .medium))
                 .foregroundStyle(.primary)
                 .frame(width: size, height: size)

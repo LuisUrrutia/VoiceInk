@@ -3,16 +3,15 @@ import SwiftUI
 
 extension Image {
     init(appSymbol systemName: String) {
-        if let asset = AppSymbolCatalog.symbols[systemName], NSImage(named: asset) != nil {
-            // Preserve the system symbol's spoken label when replacing its artwork.
-            if let description = NSImage(systemSymbolName: systemName, accessibilityDescription: nil)?.accessibilityDescription {
-                self.init(asset, label: Text(description))
-            } else {
-                self.init(decorative: asset)
-            }
-        } else {
-            self.init(systemName: systemName)
-        }
+        let mappedAsset = AppSymbolCatalog.symbols[systemName] ?? AppSymbolCatalog.fallback
+        let asset = NSImage(named: mappedAsset) != nil ? mappedAsset : AppSymbolCatalog.fallback
+        // Preserve the system symbol's spoken label when replacing its artwork.
+        let description = NSImage(systemSymbolName: systemName, accessibilityDescription: nil)?.accessibilityDescription
+            ?? asset.dropFirst(3)
+                .replacingOccurrences(of: ".fill", with: "")
+                .replacingOccurrences(of: "-", with: " ")
+                .capitalized
+        self.init(asset, label: Text(description))
     }
 
     static func appSymbolTint(_ systemName: String) -> Image? {

@@ -82,7 +82,7 @@ struct DashboardPeakHoursCard: View {
 
     private var lockedOverlay: some View {
         VStack(spacing: 8) {
-            Image(systemName: "lock.fill")
+            Image(appSymbol: "lock.fill")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(AppTheme.Accent.primary)
                 .frame(width: 34, height: 34)

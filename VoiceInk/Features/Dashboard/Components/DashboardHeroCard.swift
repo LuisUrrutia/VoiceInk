@@ -131,7 +131,7 @@ struct DashboardHeroCard: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.white.opacity(0.78))
 
-                Image(systemName: "lock.fill")
+                Image(appSymbol: "lock.fill")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(DashboardMomentumBackground.accent)
             }

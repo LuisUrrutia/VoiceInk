@@ -41,7 +41,7 @@ struct VoiceInkRefineModelCardView: View {
     private var metadataSection: some View {
         HStack(spacing: 12) {
             Label("Enhancement Model", appSymbol: "sparkles")
-            Label("On-Device", systemImage: "checkmark.shield")
+            Label("On-Device", appSymbol: "checkmark.shield")
             Label {
                 Text(verbatim: VoiceInkRefineService.downloadSizeDescription)
             } icon: {
@@ -164,7 +164,7 @@ struct VoiceInkRefineModelCardView: View {
                             } else {
                                 Text("Retry")
                             }
-                            Image(systemName: "arrow.down.circle")
+                            Image(appSymbol: "arrow.down.circle")
                         }
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white)

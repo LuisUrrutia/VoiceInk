@@ -272,7 +272,7 @@ struct APIKeyManagementView: View {
                             if let url = getAPIKeyURL() {
                                 Link(destination: url) {
                                     HStack {
-                                        Image(systemName: "key.fill")
+                                        Image(appSymbol: "key.fill")
                                         Text("Get API Key")
                                     }
                                     .font(.caption)

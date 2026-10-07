@@ -107,7 +107,7 @@ struct OnboardingMicrophoneScreen: View {
 
     private var emptyState: some View {
         VStack(spacing: 14) {
-            Image(systemName: "mic.slash")
+            Image(appSymbol: "mic.slash")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundColor(AppTheme.Text.secondary)
 

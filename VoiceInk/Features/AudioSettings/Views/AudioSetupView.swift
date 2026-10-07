@@ -206,7 +206,7 @@ struct AudioSetupView: View {
                 Button {
                     audioDeviceManager.removePrioritizedDevice(id: prioritizedDevice.id)
                 } label: {
-                    Image(systemName: "minus.circle")
+                    Image(appSymbol: "minus.circle")
                 }
                 .help("Remove")
             }

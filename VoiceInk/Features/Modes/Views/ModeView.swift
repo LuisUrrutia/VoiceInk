@@ -148,7 +148,7 @@ struct ModeView: View {
                                         .frame(height: geometry.size.height * 0.2)
 
                                     VStack(spacing: 16) {
-                                        Image(systemName: "square.grid.2x2.fill")
+                                        Image(appSymbol: "square.grid.2x2.fill")
                                             .font(.system(size: 48, weight: .regular))
                                             .foregroundColor(.secondary.opacity(0.6))
 

@@ -79,7 +79,7 @@ struct OnboardingExperienceCard: View {
         HStack(spacing: 8) {
             trafficLights
 
-            Image(systemName: "note.text")
+            Image(appSymbol: "note.text")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(AppTheme.Text.secondary)
 

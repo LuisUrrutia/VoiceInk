@@ -223,12 +223,12 @@ private struct ModeIconButton: View {
                     )
             }
             .buttonStyle(.plain)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
 
             if isRemovable {
                 Button(action: removeAction) {
                     Image(appSymbol: "xmark.circle.fill")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(Color.white, AppTheme.Status.error)
+                        .foregroundStyle(AppTheme.Status.error)
                         .font(.caption2)
                         .background(Circle().fill(Color.white.opacity(0.8)))
                 }

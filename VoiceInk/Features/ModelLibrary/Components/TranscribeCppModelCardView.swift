@@ -117,7 +117,7 @@ struct TranscribeCppModelCardView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(LocalizedStringKey(isDownloading ? "Cancel" : "Download"))
-                        Image(systemName: isDownloading ? "xmark.circle" : "arrow.down.circle")
+                        Image(appSymbol: isDownloading ? "xmark.circle" : "arrow.down.circle")
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
