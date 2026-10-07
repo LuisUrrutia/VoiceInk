@@ -4,6 +4,14 @@ import XCTest
 
 @MainActor
 final class DictionarySmokeTests: XCTestCase {
+    func testVocabularyPrecedesWordReplacementsInSectionSelector() {
+        let sections = DictionarySettingsView.DictionarySection.allCases
+
+        let titles = sections.map(\.rawValue)
+
+        XCTAssertEqual(titles, ["Vocabulary", "Word Replacements"])
+    }
+
     func testExistingWordReplacementStillRuns() throws {
         let schema = Schema([WordReplacement.self])
         let configuration = ModelConfiguration("dictionary", schema: schema, isStoredInMemoryOnly: true)
