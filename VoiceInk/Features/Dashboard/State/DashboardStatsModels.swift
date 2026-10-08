@@ -86,7 +86,7 @@ enum DashboardInsightPeriod: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct DashboardPeriodWindows {
+struct DashboardPeriodWindows: Sendable {
     let now: Date
     let calendar: Calendar
     let todayInterval: DateInterval
