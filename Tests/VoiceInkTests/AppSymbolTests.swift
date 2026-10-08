@@ -40,8 +40,15 @@ struct AppSymbolTests {
             let regularPixels = try pixels(of: Image(appSymbol: regular))
             let filledPixels = try pixels(of: Image(appSymbol: filled))
 
-            #expect(regularPixels == filledPixels, "Legacy variant differs: \(filled)")
+            #expect(renderingsMatch(regularPixels, filledPixels), "Legacy variant differs: \(filled)")
         }
+    }
+
+    @Test func distinctSymbolsRenderDifferentOutlines() throws {
+        let microphonePixels = try pixels(of: Image(appSymbol: "mic"))
+        let gearPixels = try pixels(of: Image(appSymbol: "gearshape"))
+
+        #expect(!renderingsMatch(microphonePixels, gearPixels))
     }
 
     @Test func unknownImportedIconUsesPhosphorFallback() throws {
@@ -51,12 +58,28 @@ struct AppSymbolTests {
         let unknownPixels = try pixels(of: unknown)
         let fallbackPixels = try pixels(of: fallback)
 
-        #expect(unknownPixels == fallbackPixels)
+        #expect(renderingsMatch(unknownPixels, fallbackPixels))
     }
 
-    private func pixels(of image: Image) throws -> Data {
-        let renderer = ImageRenderer(content: image.font(.system(size: 24)).frame(width: 32, height: 32))
-        let rendered = try #require(renderer.nsImage)
-        return try #require(rendered.tiffRepresentation)
+    private func pixels(of image: Image) throws -> [UInt8] {
+        let renderer = ImageRenderer(content: image.font(.system(size: 24)).foregroundStyle(.black).frame(width: 32, height: 32))
+        renderer.scale = 1
+        let rendered = try #require(renderer.cgImage)
+        #expect(rendered.width == 32 && rendered.height == 32)
+        let colorSpace = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        var pixels = [UInt8](repeating: 0, count: 32 * 32 * 4)
+        try pixels.withUnsafeMutableBytes { bytes in
+            let context = try #require(CGContext(
+                data: bytes.baseAddress, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 32 * 4,
+                space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ))
+            context.draw(rendered, in: CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        return pixels
+    }
+
+    private func renderingsMatch(_ first: [UInt8], _ second: [UInt8]) -> Bool {
+        // Identical antialiased edges can differ by one 8-bit alpha step in ImageRenderer.
+        first.count == second.count && zip(first, second).allSatisfy { abs(Int($0) - Int($1)) <= 1 }
     }
 }
