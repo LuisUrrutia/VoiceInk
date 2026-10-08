@@ -17,6 +17,8 @@ import json
 import os
 from pathlib import Path
 import sys
+import plistlib
+import shutil
 
 tool = Path(sys.argv[0]).name
 with open(os.environ["VOICEINK_TEST_EVENTS"], "a") as events:
@@ -25,11 +27,27 @@ if tool == "security":
     print(os.environ["VOICEINK_TEST_IDENTITIES"])
     sys.exit(int(os.environ["VOICEINK_TEST_SECURITY_STATUS"]))
 if tool == "xcodebuild":
+    if sys.argv[1:] == ["-version"]:
+        print("Xcode 27.0\\nBuild version fixture")
+        sys.exit(0)
     status = int(os.environ["VOICEINK_TEST_BUILD_STATUS"])
     if status == 0:
         derived_data = Path(sys.argv[sys.argv.index("-derivedDataPath") + 1])
-        (derived_data / "Build/Products/Release/VoiceInk.app").mkdir(parents=True, exist_ok=True)
+        app = derived_data / "Build/Products/Release/VoiceInk.app"
+        (app / "Contents/MacOS").mkdir(parents=True, exist_ok=True)
+        (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.prakashjoshipax.VoiceInk", "CFBundleExecutable": "VoiceInk"}))
+        executable = app / "Contents/MacOS/VoiceInk"
+        executable.write_text("fixture")
+        executable.chmod(0o755)
     sys.exit(status)
+if tool == "xcrun":
+    print("Apple Swift version 6.4" if "swift" in sys.argv else "/fixture/sdk")
+if tool == "codesign":
+    print("Identifier=com.prakashjoshipax.VoiceInk")
+if tool == "osascript":
+    print("[]")
+if tool == "ditto":
+    shutil.copytree(sys.argv[1], sys.argv[2])
 """
 
 
@@ -47,11 +65,19 @@ class LocalSigningTests(unittest.TestCase):
         self.events_path = self.workspace / "events.jsonl"
         self.bin = self.workspace / "bin"
         self.bin.mkdir()
-        for name in ("security", "xcodebuild", "rm", "ditto", "xattr"):
+        for name in ("make", "git"):
+            resolved = subprocess.check_output(["xcrun", "--find", "gnumake" if name == "make" else name], text=True).strip()
+            (self.bin / name).symlink_to(resolved)
+        (self.bin / "python3").symlink_to(sys.executable)
+        for name in ("security", "xcodebuild", "xcrun", "codesign", "osascript", "ditto"):
             tool = self.bin / name
             tool.write_text(f"#!{sys.executable}\n{TOOL_FIXTURE}")
             tool.chmod(0o755)
         (self.workspace / "framework").mkdir()
+        self.developer = self.workspace / "Xcode.app/Contents/Developer"
+        (self.developer / "usr/bin").mkdir(parents=True)
+        (self.developer / "usr/bin/xcodebuild").touch()
+        (self.workspace / "home/Downloads").mkdir(parents=True)
 
     def build(self, identities="", override=None, security_status=0, build_status=0):
         environment = os.environ.copy()
@@ -61,6 +87,8 @@ class LocalSigningTests(unittest.TestCase):
             VOICEINK_TEST_IDENTITIES=identities,
             VOICEINK_TEST_SECURITY_STATUS=str(security_status),
             VOICEINK_TEST_BUILD_STATUS=str(build_status),
+            DEVELOPER_DIR=str(self.developer),
+            HOME=str(self.workspace / "home"),
         )
         command = [
             "make", "--no-print-directory", "-f", str(ROOT / "Makefile"), "local",
@@ -79,7 +107,7 @@ class LocalSigningTests(unittest.TestCase):
 
     def assert_signing(self, result, events, fingerprint):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        build = next(event for event in events if event[0] == "xcodebuild")
+        build = next(event for event in events if event[0] == "xcodebuild" and "build" in event)
         self.assertIn(f"CODE_SIGN_IDENTITY={fingerprint}", build)
         self.assertIn(f"CODE_SIGNING_REQUIRED={'NO' if fingerprint == '-' else 'YES'}", build)
         self.assertIn("CODE_SIGNING_ALLOWED=YES", build)

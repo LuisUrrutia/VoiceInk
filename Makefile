@@ -5,8 +5,10 @@ FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 LOCAL_CODESIGN_IDENTITY ?=
 RUN_APP_NAME ?= VoiceInk
+BUILD_SCRIPTS := $(shell cd "$$(dirname "$(strip $(MAKEFILE_LIST))")" && pwd)/scripts
+XCODE_TOOLCHAIN := python3 "$(BUILD_SCRIPTS)/xcode-toolchain.py"
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup test-local-signing
+.PHONY: all clean whisper setup build local local-build check healthcheck help dev run release release-setup test-local-signing test-local-workflow
 
 # Default target
 all: check build
@@ -19,23 +21,23 @@ dev: build run
 check:
 	@echo "Checking prerequisites..."
 	@command -v git >/dev/null 2>&1 || { echo "git is not installed"; exit 1; }
-	@command -v xcodebuild >/dev/null 2>&1 || { echo "xcodebuild is not installed (need Xcode)"; exit 1; }
-	@command -v swift >/dev/null 2>&1 || { echo "swift is not installed"; exit 1; }
+	@$(XCODE_TOOLCHAIN)
 	@echo "Prerequisites OK"
 
 healthcheck: check
 
 # Build process
-whisper:
-	@mkdir -p $(DEPS_DIR)
+whisper: check
+	@mkdir -p "$(DEPS_DIR)"
 	@if [ ! -d "$(FRAMEWORK_PATH)" ]; then \
 		echo "Building whisper.xcframework in $(DEPS_DIR)..."; \
 		if [ ! -d "$(WHISPER_CPP_DIR)" ]; then \
-			git clone https://github.com/ggerganov/whisper.cpp.git $(WHISPER_CPP_DIR); \
+			GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git clone git@github.com:ggerganov/whisper.cpp.git "$(WHISPER_CPP_DIR)" || exit $$?; \
 		else \
-			(cd $(WHISPER_CPP_DIR) && git pull); \
+			case $$(git -C "$(WHISPER_CPP_DIR)" remote get-url origin) in git@github.com:ggerganov/whisper.cpp.git|ssh://git@github.com/ggerganov/whisper.cpp.git) ;; *) echo "whisper.cpp origin must use SSH"; exit 1 ;; esac; \
+			(cd "$(WHISPER_CPP_DIR)" && GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git pull --ff-only) || exit $$?; \
 		fi; \
-		cd $(WHISPER_CPP_DIR) && ./build-xcframework.sh; \
+		cd "$(WHISPER_CPP_DIR)" && $(XCODE_TOOLCHAIN) -- ./build-xcframework.sh; \
 	else \
 		echo "whisper.xcframework already built in $(DEPS_DIR), skipping build"; \
 	fi
@@ -45,15 +47,14 @@ setup: whisper
 	@echo "Please ensure your Xcode project references the framework from this new location."
 
 build: setup
-	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug CODE_SIGN_IDENTITY="" \
+	$(XCODE_TOOLCHAIN) -- xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug CODE_SIGN_IDENTITY="" \
 		-skipPackagePluginValidation \
 		-skipMacroValidation \
 		build
 
 # Build locally with a stable signing identity when available.
-local: check setup
+local-build: check setup
 	@echo "Building VoiceInk for local use (no Apple Developer certificate required)..."
-	@rm -rf "$(LOCAL_DERIVED_DATA)"
 	@SIGNING_IDENTITY="$(LOCAL_CODESIGN_IDENTITY)"; \
 	if [ -z "$$SIGNING_IDENTITY" ]; then \
 		AVAILABLE_IDENTITIES=$$(security find-identity -v -p codesigning 2>/dev/null); \
@@ -78,7 +79,7 @@ local: check setup
 		echo "Using ad-hoc signing (permissions may need approval after rebuilds)"; \
 		echo "For stable signing, see the local signing certificate instructions in BUILDING.md"; \
 	fi; \
-	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Release \
+	$(XCODE_TOOLCHAIN) -- xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Release \
 		-derivedDataPath "$(LOCAL_DERIVED_DATA)" \
 		-xcconfig LocalBuild.xcconfig \
 		CODE_SIGN_IDENTITY="$$SIGNING_IDENTITY" \
@@ -90,12 +91,14 @@ local: check setup
 		-skipPackagePluginValidation \
 		-skipMacroValidation \
 		build
+	@python3 "$(BUILD_SCRIPTS)/install-local-app.py" --app "$(LOCAL_DERIVED_DATA)/Build/Products/Release/VoiceInk.app" --verify-only
+	@echo "Build verified at $(LOCAL_DERIVED_DATA)/Build/Products/Release/VoiceInk.app (no application copied or installed)"
+
+local: local-build
 	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/Release/VoiceInk.app" && \
 	if [ -d "$$APP_PATH" ]; then \
 		echo "Copying VoiceInk.app to ~/Downloads..."; \
-		rm -rf "$$HOME/Downloads/VoiceInk.app"; \
-		ditto "$$APP_PATH" "$$HOME/Downloads/VoiceInk.app"; \
-		xattr -cr "$$HOME/Downloads/VoiceInk.app"; \
+		python3 "$(BUILD_SCRIPTS)/install-local-app.py" --app "$$APP_PATH" --destination "$$HOME/Downloads/VoiceInk.app" --no-relaunch || exit $$?; \
 		echo ""; \
 		echo "Build complete! App saved to: ~/Downloads/VoiceInk.app"; \
 		echo "Run with: open ~/Downloads/VoiceInk.app"; \
@@ -109,7 +112,10 @@ local: check setup
 	fi
 
 test-local-signing:
-	python3 -B -m unittest discover -s Tests/BuildTests -v
+	python3 -B -m unittest discover -s Tests/BuildTests -p test_local_signing.py -v
+
+test-local-workflow:
+	python3 -B -m unittest discover -s Tests/BuildTests -p test_local_workflow.py -v
 
 # Run application
 run:
@@ -149,13 +155,15 @@ clean:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  check/healthcheck  Check if required CLI tools are installed"
+	@echo "  check/healthcheck  Check full Xcode, Swift, macOS SDK and Metal"
 	@echo "  whisper            Clone and build whisper.cpp XCFramework"
 	@echo "  setup              Copy whisper XCFramework to VoiceInk project"
 	@echo "  build              Build the VoiceInk Xcode project"
 	@echo "  local              Build locally with stable signing when available"
+	@echo "  local-build        Build and verify a local app without copying or installing"
 	@echo "    LOCAL_CODESIGN_IDENTITY=<SHA or name> overrides automatic signing identity detection"
 	@echo "  test-local-signing Check local signing selection without accessing Keychain or building"
+	@echo "  test-local-workflow Check toolchain, topic update and isolated installation fixtures"
 	@echo "  run                Launch the built VoiceInk app"
 	@echo "  dev                Build and run the app (for development)"
 	@echo "  release            Build DMG and Appcast using release-notes/<version>.html"

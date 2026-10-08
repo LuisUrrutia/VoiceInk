@@ -68,7 +68,7 @@ For a focused test, narrow `-only-testing` to the relevant test class or suite. 
 
 Use the Debug `VoiceInk Dev.app` for development smoke checks. Its bundle identity and persistence are separate from the installed app; `LOCAL_BUILD` also has its own persistence directory. Preserve these boundaries when changing storage or migration code.
 
-When local packaging is requested, inspect `make local` first: it recreates `.local-build` and replaces `~/Downloads/VoiceInk.app`. It does not install into `/Applications`. `make clean` removes the shared `~/VoiceInk-Dependencies` directory, so it is not a routine checkout cleanup command. Verify the actual bundle signature when signing is requested; a build setting alone is not evidence of the final signer.
+When local packaging is requested, inspect `make local` first: it builds incrementally in `.local-build` and replaces `~/Downloads/VoiceInk.app` through verified staging. `make local-build` only builds and verifies the bundle. Neither installs into `/Applications`. `make clean` removes the shared `~/VoiceInk-Dependencies` directory, so it is not a routine checkout cleanup command. Verify the actual bundle signature when signing is requested; a build setting alone is not evidence of the final signer.
 
 ## Tracked local overlays
 
@@ -98,6 +98,14 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 - Source: Independent implementation of https://github.com/Beingpax/VoiceInk/pull/586 for this fork.
 - Preserve `LOCAL_CODESIGN_IDENTITY` overrides, including `-` for ad-hoc signing. Automatic selection prefers a unique valid Apple Development identity, then a unique valid identity named exactly `VoiceInk Local Dev`, then ad-hoc signing. Select automatic identities by certificate fingerprint, deduplicate identical fingerprints, and avoid selecting an arbitrary certificate when a type has multiple identities.
 - Regression: `make test-local-signing` exercises the actual local build recipe with isolated external-tool fixtures; `./scripts/check-personal-sync.sh` includes it. Keep manual certificate setup in `BUILDING.md`. Verify permission retention with two real builds using the same certificate and bundle identifier before claiming that macOS permissions survive rebuilds.
+
+### Compatible toolchain and explicit local update workflow
+
+- Sources: Independently adapt the build and automation behavior from https://github.com/goyal-chintan/VoiceInk/commit/489e28d506cfadd345a2c41e2d6d0ae0c020110f, https://github.com/goyal-chintan/VoiceInk/commit/4e6af23a1181c18138b7d9d2729bc91dcb5a9ae8, https://github.com/goyal-chintan/VoiceInk/commit/20ac80bb971cbfc6a0a6ab378c7b3b04e556f29e and https://github.com/elyutoy/VoiceInk/commit/2030d00fa12253ff40ff439841af9c48589217f4.
+- Preserve full Xcode selection, explicit developer-directory overrides, Swift and Metal prerequisite diagnostics, deterministic signing and a verified build-only local recipe. Toolchain checks do not change global selection or install components. Release keeps its existing developer-directory override.
+- Keep update, build and installation explicit and separate. Topic updates use current fork `origin/main`, preserve dirty work by refusing mutation, use worktree-aware Git metadata, and fail on network or rebase errors. Protected and synchronization branches remain outside this rebase workflow; upstream integration continues through separate merge-based PRs. No automatic push or background updater is included.
+- Optional installation verifies bundle identity, executable and signature before replacement, stages and backs up on the destination volume, requests bounded graceful shutdown of only the exact destination app, restores the old bundle on pre-commit errors or signals, and reports relaunch separately. Preserve signature and extended attributes; no forced process termination or completed-bundle resigning.
+- Regression: `make test-local-workflow` and `make test-local-signing` exercise the actual commands with isolated repositories, bundle destinations and external-tool fixtures; both run through `./scripts/check-personal-sync.sh`. Fixture evidence does not establish actual installation, release, macOS permission retention or dictation continuity. Use a checkout-owned Debug `VoiceInk Dev.app` for app smoke checks.
 
 ### Recording finalization
 

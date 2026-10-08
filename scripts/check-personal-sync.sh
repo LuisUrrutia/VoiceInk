@@ -61,6 +61,7 @@ while IFS=$'\t' read -r pr_url reason; do
 done < scripts/personal-prs.tsv
 
 make test-local-signing
+make test-local-workflow
 
 GIT_TERMINAL_PROMPT=0 \
 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
