@@ -8,21 +8,16 @@ enum LanguageDisplayMode {
 
 struct LanguageSelectionView: View {
     @ObservedObject var transcriptionModelManager: TranscriptionModelManager
-    @AppStorage("SelectedLanguage") private var selectedLanguage: String = "en"
+    @State private var selectedLanguages = UserDefaults.standard.selectedTranscriptionLanguages
     // Add display mode parameter with full as the default
     var displayMode: LanguageDisplayMode = .full
     @ObservedObject var whisperPrompt: WhisperPrompt
 
-    private func updateLanguage(_ language: String) {
-        guard selectedLanguage != language else { return }
-
-        // Update UI state - the UserDefaults updating is now automatic with @AppStorage
-        selectedLanguage = language
-
-        // Force the prompt to update for the new language
-        whisperPrompt.updateTranscriptionPrompt()
-
-        // Post notification for language change
+    private func updateLanguages(_ languages: [String]) {
+        let selection = TranscriptionLanguageSupport.normalizedSelection(languages)
+        guard selectedLanguages != selection else { return }
+        selectedLanguages = selection
+        UserDefaults.standard.selectedTranscriptionLanguages = selection
         NotificationCenter.default.post(name: .languageDidChange, object: nil)
         NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
     }
@@ -38,33 +33,21 @@ struct LanguageSelectionView: View {
         transcriptionModelManager.currentTranscriptionModel?.provider == .nativeApple
     }
 
-    private func availableLanguagesForCurrentModel() -> [String: String] {
-        guard let currentModel = transcriptionModelManager.currentTranscriptionModel else {
-            return ["en": "English"]  // Default to English if no model found
-        }
-        return TranscriptionLanguageSupport.languages(for: currentModel)
-    }
-
     private func useCompatibleLanguageForCurrentModel() {
         guard let currentModel = transcriptionModelManager.currentTranscriptionModel else { return }
-        updateLanguage(TranscriptionLanguageSupport.validLanguageOrFallback(selectedLanguage, for: currentModel))
+        updateLanguages(TranscriptionLanguageSupport.validLanguagesOrFallback(selectedLanguages, for: currentModel))
     }
 
-    // Get the display name of the current language
-    private func currentLanguageDisplayName() -> String {
-        return availableLanguagesForCurrentModel()[selectedLanguage] ?? "Unknown"
-    }
-
-    private var selectedLanguageBinding: Binding<String> {
+    private var selectedLanguagesBinding: Binding<[String]> {
         Binding(
-            get: { selectedLanguage },
-            set: { updateLanguage($0) }
+            get: { selectedLanguages },
+            set: { updateLanguages($0) }
         )
     }
 
     private var nativeAppleAssetControl: some View {
         NativeAppleLanguageAssetControl(
-            localeIdentifier: selectedLanguage,
+            localeIdentifier: selectedLanguages.first ?? "en-US",
             isVisible: true
         )
         .layoutPriority(1)
@@ -80,12 +63,19 @@ struct LanguageSelectionView: View {
             }
         }
         .onAppear {
+            selectedLanguages = UserDefaults.standard.selectedTranscriptionLanguages
             useCompatibleLanguageForCurrentModel()
         }
         .onChange(of: transcriptionModelManager.currentTranscriptionModel?.name) { _, _ in
+            selectedLanguages = UserDefaults.standard.selectedTranscriptionLanguages
             useCompatibleLanguageForCurrentModel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .AppSettingsDidChange)) { _ in
+            selectedLanguages = UserDefaults.standard.selectedTranscriptionLanguages
+            useCompatibleLanguageForCurrentModel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .languageDidChange)) { _ in
+            selectedLanguages = UserDefaults.standard.selectedTranscriptionLanguages
             useCompatibleLanguageForCurrentModel()
         }
     }
@@ -102,22 +92,11 @@ struct LanguageSelectionView: View {
             Text("Transcription Language")
                 .font(.headline)
 
-            if transcriptionModelManager.currentTranscriptionModel != nil {
+            if let model = transcriptionModelManager.currentTranscriptionModel {
                 if hasLanguageChoices() {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            Picker("Select Language", selection: selectedLanguageBinding) {
-                                ForEach(
-                                    availableLanguagesForCurrentModel().sorted(by: {
-                                        if $0.key == "auto" { return true }
-                                        if $1.key == "auto" { return false }
-                                        return $0.value < $1.value
-                                    }), id: \.key
-                                ) { key, value in
-                                    Text(value).tag(key)
-                                }
-                            }
-                            .pickerStyle(MenuPickerStyle())
+                            TranscriptionLanguagePicker(selection: selectedLanguagesBinding, model: model)
                             .frame(maxWidth: isNativeAppleModelSelected() ? 280 : .infinity, alignment: .leading)
 
                             if isNativeAppleModelSelected() {
@@ -125,9 +104,9 @@ struct LanguageSelectionView: View {
                             }
                         }
 
-                        Text(
-                            "Select a supported transcription language or locale. Automatic multilingual transcription is shown when available."
-                        )
+                        Text(TranscriptionLanguageSupport.supportsMultipleSelection(for: model)
+                            ? "Choose languages to guide Whisper with their prompts. With multiple languages, Whisper detects the language automatically and may recognize other languages."
+                            : "Select a supported transcription language or locale.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     }
@@ -146,7 +125,7 @@ struct LanguageSelectionView: View {
                     }
                     .onAppear {
                         // Ensure English is set when viewing English-only model
-                        updateLanguage("en")
+                        updateLanguages(["en"])
                     }
                 }
             } else {
@@ -164,34 +143,9 @@ struct LanguageSelectionView: View {
     // New compact view for menu bar
     private var menuItemView: some View {
         Group {
-            if hasLanguageChoices() {
+            if hasLanguageChoices(), let model = transcriptionModelManager.currentTranscriptionModel {
                 HStack(spacing: 8) {
-                    Menu {
-                        ForEach(
-                            availableLanguagesForCurrentModel().sorted(by: {
-                                if $0.key == "auto" { return true }
-                                if $1.key == "auto" { return false }
-                                return $0.value < $1.value
-                            }), id: \.key
-                        ) { key, value in
-                            Button {
-                                updateLanguage(key)
-                            } label: {
-                                HStack {
-                                    Text(value)
-                                    if selectedLanguage == key {
-                                        Image(appSymbol: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Text(String(format: String(localized: "Language: %@"), currentLanguageDisplayName()))
-                            Image(appSymbol: "chevron.up.chevron.down")
-                                .font(.system(size: 10))
-                        }
-                    }
+                    TranscriptionLanguagePicker(selection: selectedLanguagesBinding, model: model)
 
                     if isNativeAppleModelSelected() {
                         nativeAppleAssetControl
@@ -208,7 +162,7 @@ struct LanguageSelectionView: View {
                 .disabled(true)
                 .onAppear {
                     // Ensure English is set for English-only models
-                    updateLanguage("en")
+                    updateLanguages(["en"])
                 }
             }
         }

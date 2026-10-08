@@ -7,6 +7,22 @@ extension UserDefaults {
         static let selectedAudioDeviceModelUID = "selectedAudioDeviceModelUID"
         static let prioritizedDevices = "prioritizedDevices"
         static let affiliatePromotionDismissed = "VoiceInkAffiliatePromotionDismissed"
+        static let selectedLanguages = "SelectedLanguages"
+        static let selectedLanguage = "SelectedLanguage"
+    }
+
+    var selectedTranscriptionLanguages: [String] {
+        get {
+            if let selection = stringArray(forKey: Keys.selectedLanguages) {
+                return TranscriptionLanguageSupport.normalizedSelection(selection)
+            }
+            return TranscriptionLanguageSupport.normalizedSelection([string(forKey: Keys.selectedLanguage) ?? "en"])
+        }
+        set {
+            let selection = TranscriptionLanguageSupport.normalizedSelection(newValue)
+            set(selection, forKey: Keys.selectedLanguages)
+            set(TranscriptionLanguageSupport.recognitionLanguage(for: selection), forKey: Keys.selectedLanguage)
+        }
     }
 
     var audioInputModeRawValue: String? {

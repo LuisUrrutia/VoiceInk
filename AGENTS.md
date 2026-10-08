@@ -19,7 +19,7 @@ For read-only requests, report drift without changing the checkout. Before editi
 1. Fetch `origin/personal` over SSH and use its current tip as the base for a focused topic branch, such as `feat/<change>`, `fix/<change>`, or `docs/<change>`. Keep unrelated work out of the branch. Use the existing worktree policy for branch and worktree lifecycle operations.
 2. Implement the requested change and its applicable checks. Record new retained behavior and its regression check as described below.
 3. Publish the topic branch to `origin` and open a PR in `LuisUrrutia/VoiceInk` with base `personal`. Review the diff against that base and describe the behavior and actual validation. The inherited upstream notices that PRs are not accepted apply to `Beingpax/VoiceInk`; they do not prohibit PRs within this fork. Submit a PR to upstream only when explicitly requested.
-4. Update ordinary topic PRs from `personal` by rebasing their own commits, following the existing publication rules. Merge approved changes through the fork PR; do not commit directly to `personal` or force-push it. Opening a PR does not authorize merging it or replacing an installed app.
+4. Update ordinary topic PRs from `personal` by rebasing their own commits, following the existing publication rules. Merge eligible changes through the fork PR under the `pr-followup` policy; do not commit directly to `personal` or force-push it. Opening a PR does not authorize replacing an installed app.
 
 Upstream synchronization is a separate maintenance task, performed when requested or before a fork release. Do not automatically merge upstream into every feature branch when work resumes. If upstream drift affects the requested change, report it and keep synchronization reviewable as a separate PR.
 
@@ -69,6 +69,13 @@ Use the Debug `VoiceInk Dev.app` for development smoke checks. Its bundle identi
 When local packaging is requested, inspect `make local` first: it recreates `.local-build` and replaces `~/Downloads/VoiceInk.app`. It does not install into `/Applications`. `make clean` removes the shared `~/VoiceInk-Dependencies` directory, so it is not a routine checkout cleanup command. Verify the actual bundle signature when signing is requested; a build setting alone is not evidence of the final signer.
 
 ## Tracked local overlays
+
+### Multiple Whisper transcription languages
+
+- Request: Independently adapt https://github.com/servitola/VoiceInk/commit/19ea75024adfe10a236293c54a2f84c4d1b4c6d6 to this fork's current architecture.
+- Preserve ordered, nonempty language selections in global settings and modes for multilingual local Whisper models. Automatic detection excludes explicit selections; multiple explicit languages use automatic recognition with their combined language prompts, without claiming to restrict recognition to those languages. Keep legacy single-language preferences and modes readable, and mirror the effective recognition language for existing consumers.
+- Carry mode languages into recording, imported audio, and History transcription requests. Validate selections against the actual model, and retain one supported language or locale for other providers and English-only Whisper models. Preserve Apple Speech asset controls and provider-qualified model selection keys.
+- Regression: `TranscriptionLanguageTests` runs in `VoiceInkTests` through `./scripts/check-personal-sync.sh` and covers legacy persistence, ordered prompts, automatic detection, nonempty selections, provider fallback, mode editing, and mode runtime requests. In `VoiceInk Dev.app`, verify global and mode menus, saving and reopening bilingual modes, automatic detection, model switching, and unrelated navigation. Verify real bilingual recording, audio import, and History retranscription with an installed multilingual Whisper model before claiming recognition quality.
 
 ### Display-backed recording context capture
 

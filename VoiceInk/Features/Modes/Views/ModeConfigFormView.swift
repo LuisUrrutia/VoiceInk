@@ -276,9 +276,9 @@ struct ModeConfigFormView: View {
             let modelInfo = warmupSnapshot.transcriptionModel(named: selectedModel),
             modelInfo.supportedLanguages.count > 1
         {
-            let languageBinding = Binding<String?>(
-                get: { effectiveLanguage(for: modelInfo) },
-                set: { draft.selectedLanguage = $0 }
+            let languageBinding = Binding<[String]>(
+                get: { TranscriptionLanguageSupport.validLanguagesOrFallback(draft.transcriptionLanguages, for: modelInfo) },
+                set: { draft.setTranscriptionLanguages($0) }
             )
 
             HStack(spacing: 8) {
@@ -298,28 +298,23 @@ struct ModeConfigFormView: View {
                     .frame(width: 28, height: 24)
                 }
 
-                Picker("", selection: languageBinding) {
-                    ForEach(
-                        availableLanguages(for: modelInfo).sorted(by: {
-                            if $0.key == "auto" { return true }
-                            if $1.key == "auto" { return false }
-                            return $0.value < $1.value
-                        }), id: \.key
-                    ) { key, value in
-                        Text(value).tag(key as String?)
-                    }
-                }
-                .labelsHidden()
+                TranscriptionLanguagePicker(selection: languageBinding, model: modelInfo)
             }
             .onAppear {
-                draft.selectedLanguage = effectiveLanguage(for: modelInfo)
+                draft.useCompatibleLanguage(for: modelInfo)
+            }
+
+            if TranscriptionLanguageSupport.supportsMultipleSelection(for: modelInfo) {
+                Text("Choose languages to guide Whisper with their prompts. With multiple languages, Whisper detects the language automatically and may recognize other languages.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         } else if let selectedModel = effectiveModelName,
             let modelInfo = warmupSnapshot.transcriptionModel(named: selectedModel)
         {
             EmptyView()
                 .onAppear {
-                    draft.selectedLanguage = effectiveLanguage(for: modelInfo)
+                    draft.useCompatibleLanguage(for: modelInfo)
                 }
         }
     }
@@ -686,16 +681,8 @@ struct ModeConfigFormView: View {
         .frame(height: QuickPanelMetrics.footerHeight)
     }
 
-    private func availableLanguages(for model: any TranscriptionModel) -> [String: String] {
-        TranscriptionLanguageSupport.languages(for: model, realtimeEnabled: draft.isRealtimeTranscriptionEnabled)
-    }
-
     private func effectiveLanguage(for model: any TranscriptionModel) -> String {
-        TranscriptionLanguageSupport.validLanguageOrFallback(
-            draft.selectedLanguage ?? UserDefaults.standard.string(forKey: "SelectedLanguage"),
-            for: model,
-            realtimeEnabled: draft.isRealtimeTranscriptionEnabled
-        )
+        TranscriptionLanguageSupport.validLanguagesOrFallback(draft.transcriptionLanguages, for: model).first ?? "en"
     }
 
 }

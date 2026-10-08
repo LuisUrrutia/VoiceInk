@@ -1,6 +1,41 @@
 import Foundation
 
 enum TranscriptionLanguageSupport {
+    static func supportsMultipleSelection(for model: any TranscriptionModel) -> Bool {
+        model.provider == .whisper && model.isMultilingualModel && model.supportedLanguages["auto"] != nil
+    }
+
+    static func normalizedSelection(_ languages: [String]) -> [String] {
+        if languages.contains("auto") { return ["auto"] }
+        var seen = Set<String>()
+        let selection = languages.filter { !$0.isEmpty && seen.insert($0).inserted }
+        return selection.isEmpty ? ["en"] : selection
+    }
+
+    static func validLanguagesOrFallback(_ selection: [String], for model: any TranscriptionModel) -> [String] {
+        let available = languages(for: model)
+        let supported = normalizedSelection(selection).filter { available[$0] != nil }
+        guard !supported.isEmpty else {
+            return [validLanguageOrFallback(nil, for: model)]
+        }
+        return supportsMultipleSelection(for: model) ? supported : Array(supported.prefix(1))
+    }
+
+    static func settingLanguage(_ language: String, isSelected: Bool, in selection: [String]) -> [String] {
+        let current = normalizedSelection(selection)
+        if isSelected {
+            if language == "auto" { return ["auto"] }
+            return normalizedSelection(current.filter { $0 != "auto" } + [language])
+        }
+        let remaining = current.filter { $0 != language }
+        return remaining.isEmpty ? current : remaining
+    }
+
+    static func recognitionLanguage(for selection: [String]) -> String {
+        let languages = normalizedSelection(selection)
+        return languages.count > 1 ? "auto" : languages[0]
+    }
+
     static func languages(for model: any TranscriptionModel, realtimeEnabled: Bool? = nil) -> [String: String] {
         model.supportedLanguages
     }
