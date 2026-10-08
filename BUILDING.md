@@ -111,6 +111,10 @@ This certificate is for local development. Certificate creation and trust settin
 
 ## Other Commands
 
+The headless local Parakeet transcriber is built with `make cli` and checked with
+`make test-cli`. See [the CLI guide](cli/parakeet/README.md) for model requirements,
+read-only settings and dictionary exports, output formats, and batch usage.
+
 - `make check` — verify compatible full Xcode, Swift, macOS SDK and Metal
 - `make whisper` — prepare `whisper.xcframework`
 - `make build` — build the standard Debug configuration

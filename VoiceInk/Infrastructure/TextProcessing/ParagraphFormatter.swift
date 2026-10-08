@@ -1,8 +1,8 @@
 import Foundation
 import NaturalLanguage
 
-struct ParagraphFormatter {
-    static func format(_ text: String) -> String {
+public struct ParagraphFormatter {
+    public static func format(_ text: String) -> String {
         let TARGET_WORD_COUNT = 50
         let MAX_SENTENCES_PER_CHUNK = 4
         let MIN_WORDS_FOR_SIGNIFICANT_SENTENCE = 4

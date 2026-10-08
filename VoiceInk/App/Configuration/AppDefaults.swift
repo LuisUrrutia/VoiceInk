@@ -144,9 +144,6 @@ enum AppDefaults {
                 .rawValue,
 
             // Recording & Transcription
-            "IsTextFormattingEnabled": true,
-            "IsVADEnabled": true,
-            "SelectedLanguage": "en",
             "AppendTrailingSpace": true,
             "RecorderType": "mini",
             RecorderDisplaySettingsKeys.showLiveTranscript: true,
@@ -174,7 +171,7 @@ enum AppDefaults {
             // Model
             "PrewarmModelOnWake": true,
 
-        ])
+        ].merging(TranscriptionTextDefaults.preferences) { _, shared in shared })
 
         PasteMethod.migrateLegacyUserDefaultIfNeeded()
     }
