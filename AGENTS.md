@@ -1,13 +1,15 @@
 # Personal fork maintenance
 
-These instructions apply to `personal` and the topic and synchronization branches that target it. `AGENTS.md` is the canonical project policy; `CLAUDE.md` imports it.
+These instructions apply to `main` and the topic and synchronization branches that target it. `AGENTS.md` is the canonical project policy; `CLAUDE.md` imports it.
 
-`personal` is the maintained version of this fork. It follows `Beingpax/VoiceInk`'s `main` while retaining changes explicitly requested for this fork. Upstream review or acceptance is not a prerequisite for keeping those changes here.
+`main` is the maintained version of this fork. It follows `Beingpax/VoiceInk`'s `main` while retaining changes explicitly requested for this fork. Upstream review or acceptance is not a prerequisite for keeping those changes here. The former `personal` branch has been promoted to `main`; `scripts/check-personal-sync.sh` and `scripts/personal-prs.tsv` retain their names for compatibility.
 
 ## Repository and project context
 
 - `origin`: `git@github.com:LuisUrrutia/VoiceInk.git` (the personal fork).
 - `upstream`: `git@github.com:Beingpax/VoiceInk.git` (the original repository).
+- `main` / `origin/main`: the maintained fork and the base for fork PRs.
+- `upstream` / `origin/upstream`: a mirror of the original repository's `main`, with no fork commits. The fork branch `upstream` is distinct from the remote named `upstream`.
 - Use SSH for Git network operations. Verify both remotes before fetching or publishing; do not infer the PR destination from the name `origin` or GitHub's default branch.
 - VoiceInk is a native macOS dictation app written in Swift and SwiftUI. The Xcode project is `VoiceInk.xcodeproj`, the scheme is `VoiceInk`, and the deployment target is macOS 15.0.
 - Feature code lives in `VoiceInk/Features/`; persistence lives in `VoiceInk/Infrastructure/Persistence/`. Regression tests live in `Tests/VoiceInkTests/`. Inspect `Makefile` and `BUILDING.md` for build and packaging commands, and the Xcode project for current build settings.
@@ -16,21 +18,21 @@ These instructions apply to `personal` and the topic and synchronization branche
 
 For read-only requests, report drift without changing the checkout. Before editing, inspect the current branch, working tree, and requested scope; preserve uncommitted work.
 
-1. Fetch `origin/personal` over SSH and use its current tip as the base for a focused topic branch, such as `feat/<change>`, `fix/<change>`, or `docs/<change>`. Keep unrelated work out of the branch. Use the existing worktree policy for branch and worktree lifecycle operations.
+1. Fetch `origin/main` over SSH and use its current tip as the base for a focused topic branch, such as `feat/<change>`, `fix/<change>`, or `docs/<change>`. Keep unrelated work out of the branch. Use the existing worktree policy for branch and worktree lifecycle operations.
 2. Implement the requested change and its applicable checks. Record new retained behavior and its regression check as described below.
-3. Publish the topic branch to `origin` and open a PR in `LuisUrrutia/VoiceInk` with base `personal`. Review the diff against that base and describe the behavior and actual validation. The inherited upstream notices that PRs are not accepted apply to `Beingpax/VoiceInk`; they do not prohibit PRs within this fork. Submit a PR to upstream only when explicitly requested.
-4. Update ordinary topic PRs from `personal` by rebasing their own commits, following the existing publication rules. Merge eligible changes through the fork PR under the `pr-followup` policy; do not commit directly to `personal` or force-push it. Opening a PR does not authorize replacing an installed app.
+3. Publish the topic branch to `origin` and open a PR in `LuisUrrutia/VoiceInk` with base `main`. Review the diff against that base and describe the behavior and actual validation. The inherited upstream notices that PRs are not accepted apply to `Beingpax/VoiceInk`; they do not prohibit PRs within this fork. Submit a PR to upstream only when explicitly requested.
+4. Update ordinary topic PRs from `main` by rebasing their own commits, following the existing publication rules. Merge eligible changes through the fork PR under the `pr-followup` policy; do not commit directly to `main` or force-push it. Opening a PR does not authorize replacing an installed app.
 
 Upstream synchronization is a separate maintenance task, performed when requested or before a fork release. Do not automatically merge upstream into every feature branch when work resumes. If upstream drift affects the requested change, report it and keep synchronization reviewable as a separate PR.
 
 ## Synchronize with upstream
 
-1. Verify the remotes and preserve local work. Refresh the fork base with `git fetch --no-tags origin refs/heads/personal:refs/remotes/origin/personal` and upstream with `git fetch --no-tags upstream refs/heads/main:refs/remotes/upstream/main`. Create a dedicated `sync/upstream-<date>` branch from the current `origin/personal`.
+1. Verify the remotes and preserve local work. Refresh the fork base with `git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main` and upstream with `git fetch --no-tags upstream refs/heads/main:refs/remotes/upstream/main`. After fetching upstream, fast-forward the fork mirror with `git push origin refs/remotes/upstream/main:refs/heads/upstream`. Publish the mirror only to `origin`; if the push is not a fast-forward, report the divergence before changing history. Create a dedicated `sync/upstream-<date>` branch from the current `origin/main`.
 2. Merge `upstream/main` into the synchronization branch. Preserve the original upstream commits and the fork's retained behavior. Resolve conflicts using the current implementation and regression contracts below, rather than choosing an entire side of a conflict.
 3. For every entry in `scripts/personal-prs.tsv`, query its live GitHub state, current head, and merge commit when merged. GitHub is the authority; the file records retention intent. If a PR is merged and its merge commit is included in the fetched upstream history, upstream supplies it: do not apply it again. If its merge commit is not yet included, refresh upstream before proceeding. For an open or closed unmerged PR, fetch its current `refs/pull/<number>/head` from `upstream` over SSH. Review a changed head even when an older version was applied. If the current head is not an ancestor of the synchronization branch, review the diff and merge its missing changes. Preserve ancestry so the synchronization checker can verify the retained head.
 4. Check upstream and retained-head ancestry on the synchronization branch, run the tests and build below, and exercise a smoke path outside the affected features. Report any head changes or conflicts that cannot be integrated safely.
-5. Open a synchronization PR in `LuisUrrutia/VoiceInk` with base `personal`. Integrate it with a merge commit so the upstream and retained PR heads remain ancestors of `personal`; do not squash or rebase-merge this PR. Do not rebase or rewrite `personal` to synchronize it. If the base advances, rebuild the synchronization branch from the latest `origin/personal` and repeat the integration and checks, rather than rebasing the original upstream commits.
-6. After an authorized PR merge, update the `personal` checkout without discarding local work and run `./scripts/check-personal-sync.sh`. This script requires the current branch to be exactly `personal`; it checks the live remote main, unmerged retained PR heads, and the full `VoiceInkTests` suite. Do not claim final synchronization verification until it passes on the integrated branch. If upstream or a retained head moved in the meantime, prepare another integration and repeat the checks.
+5. Open a synchronization PR in `LuisUrrutia/VoiceInk` with base `main`. Integrate it with a merge commit so the upstream and retained PR heads remain ancestors of `main`; do not squash or rebase-merge this PR. Do not rebase or rewrite `main` to synchronize it. If the base advances, rebuild the synchronization branch from the latest `origin/main` and repeat the integration and checks, rather than rebasing the original upstream commits.
+6. After an authorized PR merge, update the `main` checkout without discarding local work and run `./scripts/check-personal-sync.sh`. This script requires the current branch to be exactly `main`; it checks the live `upstream/main`, unmerged retained PR heads, and the full `VoiceInkTests` suite. Do not claim final synchronization verification until it passes on the integrated branch. If upstream or a retained head moved in the meantime, prepare another integration and repeat the checks.
 
 The check is a snapshot, not a background updater. Recheck live upstream and retained PR state on each synchronization task. Installation, signing, and releases are separate requested operations.
 
@@ -86,7 +88,7 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 
 ### Closed-lid microphone routing
 
-- Source: Independently implement the behavior discussed in https://github.com/Beingpax/VoiceInk/pull/567 on `personal`; maintain it as a local overlay.
+- Source: Independently implement the behavior discussed in https://github.com/Beingpax/VoiceInk/pull/567 on `main`; maintain it as a local overlay.
 - Read the actual lid state through IOKit. Keep the internal microphone ineligible while the lid is closed in System Default, Custom, and Prioritized modes, while preserving external and headset inputs. Keep temporary fallback separate from the saved custom preference, restore the effective selection when the lid reopens while idle or after an active recording stops, and report no usable microphone when no alternative exists.
 - Preserve a recording on an external input when the lid changes. When the active internal microphone becomes blocked, request one switch to a usable alternative without replacing the recording file. Reconcile the effective selection after recording stops.
 - Regression: `RecordingDeviceRoutingTests`, included in `VoiceInkTests` by `./scripts/check-personal-sync.sh`, covers startup, all input modes, priority order, custom preference restoration, no-input fallback, headset eligibility, and recording-change requests. Verify physical close/open cycles and audio continuity in `VoiceInk Dev.app` when changing lid monitoring or recorder switching; fixture tests do not establish hardware transition timing.
