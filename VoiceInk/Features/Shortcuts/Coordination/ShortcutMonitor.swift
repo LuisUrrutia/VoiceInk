@@ -109,6 +109,12 @@ final class ShortcutMonitor {
         standaloneModifierActions = actions
     }
 
+    func isMonitoring(_ action: ShortcutAction) -> Bool {
+        guard shortcuts[action] != nil else { return false }
+        if systemHotKeys[action] != nil { return true }
+        return eventTap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
+    }
+
     func stop() {
         systemHotKeys = [:]
         if let eventTapRunLoopSource {

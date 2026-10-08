@@ -183,6 +183,7 @@ struct RecorderCloseButton: View {
 // MARK: - Processing Indicator
 
 struct ProcessingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var rotation: Double = 0
     let color: Color
 
@@ -193,6 +194,7 @@ struct ProcessingIndicator: View {
             .frame(width: 12, height: 12)
             .rotationEffect(.degrees(rotation))
             .onAppear {
+                guard !reduceMotion else { return }
                 withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
                     rotation = 360
                 }
@@ -203,6 +205,7 @@ struct ProcessingIndicator: View {
 // MARK: - Progress Dot Animation
 
 struct ProgressAnimation: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let color: Color
     let animationSpeed: Double
 
@@ -226,7 +229,10 @@ struct ProgressAnimation: View {
                     .frame(width: dotSize, height: dotSize)
             }
         }
-        .onAppear { startAnimation() }
+        .onAppear { if !reduceMotion { startAnimation() } }
+        .onChange(of: reduceMotion) { _, reduced in
+            if reduced { timer?.invalidate(); timer = nil } else { startAnimation() }
+        }
         .onDisappear {
             timer?.invalidate()
             timer = nil
@@ -339,16 +345,20 @@ struct LiveTranscriptView: View {
 // MARK: - Recorder Status Display
 
 struct RecorderStatusDisplay: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let currentState: RecordingState
+    let statusText: String?
     let audioMeterProvider: () -> AudioMeter
     let menuBarHeight: CGFloat?
 
     init(
         currentState: RecordingState,
+        statusText: String? = nil,
         audioMeterProvider: @escaping () -> AudioMeter,
         menuBarHeight: CGFloat? = nil
     ) {
         self.currentState = currentState
+        self.statusText = statusText
         self.audioMeterProvider = audioMeterProvider
         self.menuBarHeight = menuBarHeight
     }
@@ -360,20 +370,30 @@ struct RecorderStatusDisplay: View {
             } else if currentState == .transcribing {
                 ProcessingStatusDisplay(mode: .transcribing, color: .white).transition(.opacity)
             } else if currentState == .recording {
-                AudioVisualizer(
-                    audioMeterProvider: audioMeterProvider,
-                    color: .white,
-                    isActive: true
-                )
-                    .scaleEffect(y: menuBarHeight != nil ? min(1.0, (menuBarHeight! - 8) / 25) : 1.0, anchor: .center)
-                    .transition(.opacity)
+                VStack(spacing: 2) {
+                    HStack(spacing: 4) {
+                        ActiveCaptureIndicator()
+                        Text("Recording").font(.system(size: 9, weight: .medium)).foregroundStyle(.white)
+                    }
+                    AudioVisualizer(audioMeterProvider: audioMeterProvider, color: .white, isActive: true)
+                        .scaleEffect(y: 0.45)
+                        .frame(height: 13)
+                        .accessibilityHidden(true)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Recording · microphone active")
+                .transition(.opacity)
             } else {
-                StaticVisualizer(color: .white)
-                    .scaleEffect(y: menuBarHeight != nil ? min(1.0, (menuBarHeight! - 8) / 25) : 1.0, anchor: .center)
+                Text(statusText ?? CaptureFeedback.resolve(state: currentState, hasSetupIssues: false, hasError: false).title)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 95)
                     .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: currentState)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: currentState)
     }
 }
 

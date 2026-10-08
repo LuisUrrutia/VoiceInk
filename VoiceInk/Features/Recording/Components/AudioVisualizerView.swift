@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AudioVisualizer: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let audioMeterProvider: () -> AudioMeter
     let color: Color
     let isActive: Bool
@@ -21,7 +22,7 @@ struct AudioVisualizer: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.016)) { context in
+        TimelineView(.animation(minimumInterval: reduceMotion ? 0.1 : 0.016)) { context in
             let audioMeter = audioMeterProvider()
 
             HStack(spacing: barSpacing) {
@@ -46,7 +47,7 @@ struct AudioVisualizer: View {
 
         let time = date.timeIntervalSince1970
         let amplitude = max(0, min(1, pow(audioMeter.averagePower, 0.7)))  // boosted for visibility
-        let wave = sin(time * 8 + phases[index]) * 0.5 + 0.5
+        let wave = reduceMotion ? 0.75 : sin(time * 8 + phases[index]) * 0.5 + 0.5
         let centerDistance = abs(Double(index) - Double(barCount) / 2) / Double(barCount / 2)
         let centerBoost = 1.0 - (centerDistance * 0.4)
 

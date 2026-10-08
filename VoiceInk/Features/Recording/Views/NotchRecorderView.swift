@@ -8,6 +8,7 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onCloseTapped: () -> Void
     let onAssistantFollowUp: (String) -> Void
     @AppStorage(RecorderDisplaySettingsKeys.showLiveTranscript) private var showLiveTranscript = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Bumped on every screen reconfiguration to invalidate the view. The notch metrics below
     /// come from AppKit, which SwiftUI cannot observe on its own, so without this the view keeps
     /// whatever sizes it happened to compute the last time it was rendered.
@@ -31,7 +32,7 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         case .recording:
             let shouldShowLive = showLiveTranscript && !stateProvider.partialTranscript.isEmpty
             return shouldShowLive ? .liveText : .active
-        case .transcribing, .enhancing:
+        case .starting, .transcribing, .enhancing:
             return .active
         default:
             return .collapsed
@@ -130,7 +131,7 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     private let collapseAnimation = Animation.spring(response: 0.45, dampingFraction: 1.0)
 
     private var pillAnimation: Animation {
-        displayState == .collapsed ? collapseAnimation : expandAnimation
+        reduceMotion ? .easeInOut(duration: 0.12) : (displayState == .collapsed ? collapseAnimation : expandAnimation)
     }
 
     // MARK: - Body
@@ -188,7 +189,8 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .opacity(displayState != .collapsed ? 1 : 0)
             .animation(
-                displayState != .collapsed ? expandAnimation.delay(0.09) : collapseAnimation,
+                reduceMotion ? .easeInOut(duration: 0.12)
+                    : (displayState != .collapsed ? expandAnimation.delay(0.09) : collapseAnimation),
                 value: displayState
             )
 
@@ -196,6 +198,7 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 Spacer(minLength: 0)
                 RecorderStatusDisplay(
                     currentState: stateProvider.recordingState,
+                    statusText: stateProvider.recordingStatusText,
                     audioMeterProvider: recorder.audioMeterSnapshot,
                     menuBarHeight: notchHeight
                 )
@@ -205,7 +208,8 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .opacity(displayState != .collapsed ? 1 : 0)
             .animation(
-                displayState != .collapsed ? expandAnimation.delay(0.09) : collapseAnimation,
+                reduceMotion ? .easeInOut(duration: 0.12)
+                    : (displayState != .collapsed ? expandAnimation.delay(0.09) : collapseAnimation),
                 value: displayState
             )
         }

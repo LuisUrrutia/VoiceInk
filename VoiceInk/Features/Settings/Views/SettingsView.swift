@@ -12,6 +12,7 @@ struct SettingsView: View {
     @EnvironmentObject private var recorderUIManager: RecorderUIManager
     @EnvironmentObject private var transcriptionModelManager: TranscriptionModelManager
     @EnvironmentObject private var enhancementService: AIEnhancementService
+    @EnvironmentObject private var engine: VoiceInkEngine
     @ObservedObject private var launchAtLoginManager = LaunchAtLoginManager.shared
     @ObservedObject private var mediaController = MediaController.shared
     @ObservedObject private var playbackController = PlaybackController.shared
@@ -36,6 +37,12 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
+                Section("Recording setup") {
+                    CaptureReadinessView(engine: engine, shortcuts: recordingShortcutManager) {
+                        Task { await recorderUIManager.toggleRecordingFromSetup() }
+                    }
+                    Button("Refresh recording shortcut") { recordingShortcutManager.updateShortcutStatus() }
+                }
                 Section("Appearance") {
                     AppearancePicker(selection: $appAppearancePreference)
                         .onChange(of: appAppearancePreference) {
@@ -326,6 +333,7 @@ struct SettingsView: View {
                 }
 
                 Section("Diagnostics") {
+                    MicrophoneDiagnosticView(engine: engine)
                     DiagnosticsSettingsView()
                 }
             }

@@ -7,7 +7,9 @@ class TranscriptionModelManager: ObservableObject {
     @Published var currentTranscriptionModel: (any TranscriptionModel)?
     @Published var allAvailableModels: [any TranscriptionModel] = TranscriptionModelRegistry.models
     @Published private(set) var installedLocalModelNames: Set<String> = ["apple-speech"]
+    @Published private(set) var hasLoadedInstallationSnapshot = false
     @Published private(set) var configuredCloudProviderKeys: Set<String>?
+    @Published private(set) var configuredCustomModelIDs: Set<UUID>?
 
     private var installationRefreshTask: Task<Void, Never>?
     private var providerConfigurationRefreshTask: Task<Void, Never>?
@@ -146,6 +148,7 @@ class TranscriptionModelManager: ObservableObject {
 
         allAvailableModels = models
         refreshLocalModelInstallation()
+        refreshCloudProviderConfiguration()
 
         if let currentSelection,
             let updatedModel = TranscriptionModelRegistry.model(forSelectionKey: currentSelection, in: allAvailableModels)
@@ -191,6 +194,7 @@ class TranscriptionModelManager: ObservableObject {
             }
             guard !Task.isCancelled else { return }
             self?.installedLocalModelNames = installedNames
+            self?.hasLoadedInstallationSnapshot = true
         }
     }
 
@@ -198,19 +202,23 @@ class TranscriptionModelManager: ObservableObject {
         providerConfigurationRefreshTask?.cancel()
         let providerKeys = Set(CloudProviderRegistry.allProviders.map { $0.providerKey.lowercased() })
             .union(AIProvider.allCases.filter { $0.requiresAPIKey && $0 != .custom }.map { $0.rawValue.lowercased() })
+        let customIDs = allAvailableModels.compactMap { ($0 as? CustomCloudModel)?.id }
 
         providerConfigurationRefreshTask = Task { [weak self] in
             let scan = Task.detached(priority: .utility) {
                 var configuredKeys = Set<String>()
                 for providerKey in providerKeys {
-                    guard !Task.isCancelled else { return configuredKeys }
+                    guard !Task.isCancelled else { return (configuredKeys, Set<UUID>()) }
                     if APIKeyManager.shared.hasAPIKey(forProvider: providerKey) {
                         configuredKeys.insert(providerKey)
                     }
                 }
-                return configuredKeys
+                let configuredCustomIDs = Set(customIDs.filter { id in
+                    !Task.isCancelled && APIKeyManager.shared.hasCustomModelAPIKey(forModelId: id)
+                })
+                return (configuredKeys, configuredCustomIDs)
             }
-            let configuredKeys = await withTaskCancellationHandler {
+            let (configuredKeys, configuredCustomIDs) = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
@@ -219,6 +227,7 @@ class TranscriptionModelManager: ObservableObject {
             if self.configuredCloudProviderKeys != configuredKeys {
                 self.configuredCloudProviderKeys = configuredKeys
             }
+            self.configuredCustomModelIDs = configuredCustomIDs
         }
     }
 

@@ -1,8 +1,12 @@
 import AppKit
+import Combine
 import Foundation
 
 @MainActor
 class RecordingShortcutManager: ObservableObject {
+    @Published private(set) var hotkeyAvailability: RecordingHotkeyAvailability = .unconfigured
+    private var activationSubscription: AnyCancellable?
+    private var accessibilityGranted = AXIsProcessTrusted()
     @Published var primaryRecordingShortcut: ShortcutSelection {
         didSet {
             UserDefaults.standard.set(primaryRecordingShortcut.rawValue, forKey: "primaryRecordingShortcut")
@@ -141,6 +145,16 @@ class RecordingShortcutManager: ObservableObject {
         }
 
         refreshShortcutMonitoring()
+        activationSubscription = LifecycleObserver.shared.publisher(for: .applicationDidBecomeActive).sink { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let granted = AXIsProcessTrusted()
+                if self.accessibilityGranted != granted {
+                    self.accessibilityGranted = granted
+                    self.refreshShortcutMonitoring()
+                }
+            }
+        }
     }
 
     private func refreshShortcutMonitoring() {
@@ -209,6 +223,14 @@ class RecordingShortcutManager: ObservableObject {
                 }
             }
         )
+        let recordingActions: [ShortcutAction] = [.primaryRecording, .secondaryRecording]
+        if recordingActions.contains(where: shortcutMonitor.isMonitoring) {
+            hotkeyAvailability = .available
+        } else if primaryShortcut == nil && secondaryShortcut == nil {
+            hotkeyAvailability = .unconfigured
+        } else {
+            hotkeyAvailability = AXIsProcessTrusted() ? .unavailable : .needsAccessibility
+        }
     }
 
     private var standaloneModifierActions: Set<ShortcutAction> {
