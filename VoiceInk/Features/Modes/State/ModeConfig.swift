@@ -52,6 +52,13 @@ struct ModeConfig: Codable, Identifiable, Equatable {
     var selectedTranscriptionModelName: String?
     var isRealtimeTranscriptionEnabled: Bool = true
     var selectedLanguage: String?
+    var selectedLanguages: [String]?
+
+    var transcriptionLanguages: [String] {
+        TranscriptionLanguageSupport.normalizedSelection(
+            selectedLanguages ?? selectedLanguage.map { [$0] } ?? UserDefaults.standard.selectedTranscriptionLanguages
+        )
+    }
     var isTextFormattingEnabled: Bool = false
     var useClipboardContext: Bool
     var useSelectedTextContext: Bool
@@ -65,7 +72,7 @@ struct ModeConfig: Codable, Identifiable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, icon, appConfigs, urlConfigs, triggerGroups, triggerWords, isAIEnhancementEnabled,
-            selectedPrompt, isRealtimeTranscriptionEnabled, selectedLanguage, isTextFormattingEnabled,
+            selectedPrompt, isRealtimeTranscriptionEnabled, selectedLanguage, selectedLanguages, isTextFormattingEnabled,
             useClipboardContext, useSelectedTextContext, useScreenCapture, selectedAIProvider, selectedAIModel,
             outputMode, customCommand, isEnabled, isDefault
         case legacyEmoji = "emoji"
@@ -78,7 +85,8 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         urlConfigs: [URLConfig]? = nil, triggerGroups: [ModeTriggerGroup]? = nil, triggerWords: [String] = [],
         isAIEnhancementEnabled: Bool, selectedPrompt: String? = nil,
         selectedTranscriptionModelName: String? = nil, isRealtimeTranscriptionEnabled: Bool = true,
-        selectedLanguage: String? = nil, useClipboardContext: Bool = false, useSelectedTextContext: Bool = true,
+        selectedLanguage: String? = nil, selectedLanguages: [String]? = nil,
+        useClipboardContext: Bool = false, useSelectedTextContext: Bool = true,
         useScreenCapture: Bool = false,
         isTextFormattingEnabled: Bool = false, selectedAIProvider: String? = nil, selectedAIModel: String? = nil,
         outputMode: ModeOutputMode = .paste, customCommand: ModeCustomCommand? = nil,
@@ -102,7 +110,9 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         self.selectedAIModel = selectedAIModel
         self.selectedTranscriptionModelName = selectedTranscriptionModelName
         self.isRealtimeTranscriptionEnabled = isRealtimeTranscriptionEnabled
-        self.selectedLanguage = selectedLanguage ?? "en"
+        self.selectedLanguages = selectedLanguages.map { TranscriptionLanguageSupport.normalizedSelection($0) }
+        self.selectedLanguage = self.selectedLanguages.map { TranscriptionLanguageSupport.recognitionLanguage(for: $0) }
+            ?? selectedLanguage ?? "en"
         self.isTextFormattingEnabled = isTextFormattingEnabled
         self.isEnabled = isEnabled
         self.isDefault = isDefault
@@ -142,6 +152,10 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         isRealtimeTranscriptionEnabled =
             try container.decodeIfPresent(Bool.self, forKey: .isRealtimeTranscriptionEnabled) ?? true
         selectedLanguage = try container.decodeIfPresent(String.self, forKey: .selectedLanguage)
+        selectedLanguages = try container.decodeIfPresent([String].self, forKey: .selectedLanguages)
+        if let selectedLanguages {
+            selectedLanguage = TranscriptionLanguageSupport.recognitionLanguage(for: selectedLanguages)
+        }
         isTextFormattingEnabled = try container.decodeIfPresent(Bool.self, forKey: .isTextFormattingEnabled) ?? false
         useClipboardContext =
             try container.decodeIfPresent(Bool.self, forKey: .useClipboardContext)
@@ -185,6 +199,7 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(selectedPrompt, forKey: .selectedPrompt)
         try container.encode(isRealtimeTranscriptionEnabled, forKey: .isRealtimeTranscriptionEnabled)
         try container.encodeIfPresent(selectedLanguage, forKey: .selectedLanguage)
+        try container.encodeIfPresent(selectedLanguages, forKey: .selectedLanguages)
         try container.encode(isTextFormattingEnabled, forKey: .isTextFormattingEnabled)
         try container.encode(useClipboardContext, forKey: .useClipboardContext)
         try container.encode(useSelectedTextContext, forKey: .useSelectedTextContext)

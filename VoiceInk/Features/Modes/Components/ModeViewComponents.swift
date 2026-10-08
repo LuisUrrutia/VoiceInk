@@ -200,20 +200,21 @@ struct ConfigurationRow: View {
     }
 
     private var selectedLanguage: String? {
+        if let modelName = config.selectedTranscriptionModelName,
+            let model = TranscriptionModelRegistry.model(
+                forSelectionKey: modelName,
+                in: transcriptionModelManager.allAvailableModels
+            )
+        {
+            let languages = TranscriptionLanguageSupport.languages(for: model)
+            return TranscriptionLanguageSupport.validLanguagesOrFallback(config.transcriptionLanguages, for: model)
+                .map { languages[$0] ?? $0.uppercased() }
+                .joined(separator: " + ")
+        }
         if let langCode = config.selectedLanguage {
             if langCode == "auto" { return String(localized: "Auto") }
             if langCode == "en" { return String(localized: "English") }
 
-            if let modelName = config.selectedTranscriptionModelName,
-                let model = TranscriptionModelRegistry.model(
-                    forSelectionKey: modelName,
-                    in: transcriptionModelManager.allAvailableModels
-                ),
-                let langName = TranscriptionLanguageSupport.languages(
-                    for: model, realtimeEnabled: config.isRealtimeTranscriptionEnabled)[langCode]
-            {
-                return langName
-            }
             return langCode.uppercased()
         }
         return "Default"

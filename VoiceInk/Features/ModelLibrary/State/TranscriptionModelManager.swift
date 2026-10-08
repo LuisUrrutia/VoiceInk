@@ -121,11 +121,11 @@ class TranscriptionModelManager: ObservableObject {
     }
 
     private func ensureSelectedLanguageIsSupported(by model: any TranscriptionModel) {
-        let currentLanguage = UserDefaults.standard.string(forKey: "SelectedLanguage")
-        let compatibleLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(currentLanguage, for: model)
+        let currentLanguages = UserDefaults.standard.selectedTranscriptionLanguages
+        let compatibleLanguages = TranscriptionLanguageSupport.validLanguagesOrFallback(currentLanguages, for: model)
 
-        if currentLanguage != compatibleLanguage {
-            UserDefaults.standard.set(compatibleLanguage, forKey: "SelectedLanguage")
+        if currentLanguages != compatibleLanguages {
+            UserDefaults.standard.selectedTranscriptionLanguages = compatibleLanguages
             NotificationCenter.default.post(name: .languageDidChange, object: nil)
         }
     }

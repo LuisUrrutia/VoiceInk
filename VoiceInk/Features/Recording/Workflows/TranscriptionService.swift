@@ -1,23 +1,33 @@
 import Foundation
 
 struct TranscriptionRequestContext {
+    let languages: [String]
     let language: String?
     let prompt: String?
 
+    init(languages: [String], model: (any TranscriptionModel)? = nil) {
+        let selection = model.map { TranscriptionLanguageSupport.validLanguagesOrFallback(languages, for: $0) }
+            ?? TranscriptionLanguageSupport.normalizedSelection(languages)
+        self.languages = selection
+        language = TranscriptionLanguageSupport.recognitionLanguage(for: selection)
+        prompt = model == nil || model?.provider == .whisper ? WhisperPrompt.resolvedPrompt(for: selection) : nil
+    }
+
     static var currentDefaults: TranscriptionRequestContext {
-        let language = UserDefaults.standard.string(forKey: "SelectedLanguage") ?? "auto"
-        return TranscriptionRequestContext(
-            language: language,
-            prompt: WhisperPrompt.resolvedPrompt(for: language)
-        )
+        TranscriptionRequestContext(languages: UserDefaults.standard.selectedTranscriptionLanguages)
     }
 
     func scoped(to model: any TranscriptionModel) -> TranscriptionRequestContext {
-        guard model.provider == .whisper else {
-            return TranscriptionRequestContext(language: language, prompt: nil)
-        }
+        let selection = TranscriptionLanguageSupport.validLanguagesOrFallback(languages, for: model)
+        let scopedPrompt = model.provider == .whisper
+            ? (selection == languages ? prompt : WhisperPrompt.resolvedPrompt(for: selection)) : nil
+        return TranscriptionRequestContext(languages: selection, prompt: scopedPrompt)
+    }
 
-        return self
+    private init(languages: [String], prompt: String?) {
+        self.languages = languages
+        language = TranscriptionLanguageSupport.recognitionLanguage(for: languages)
+        self.prompt = prompt
     }
 }
 

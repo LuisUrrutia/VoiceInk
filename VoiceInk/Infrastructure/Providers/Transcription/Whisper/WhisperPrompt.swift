@@ -84,12 +84,7 @@ class WhisperPrompt: ObservableObject {
     }
 
     func updateTranscriptionPrompt() {
-        // Get the currently selected language from UserDefaults
-        let selectedLanguage = UserDefaults.standard.string(forKey: "SelectedLanguage") ?? "en"
-
-        // Get the prompt for the selected language (custom if available, otherwise default)
-        let basePrompt = getLanguagePrompt(for: selectedLanguage)
-        let prompt = basePrompt.isEmpty ? "" : basePrompt
+        let prompt = Self.resolvedPrompt(for: UserDefaults.standard.selectedTranscriptionLanguages)
 
         transcriptionPrompt = prompt
         UserDefaults.standard.set(prompt, forKey: "TranscriptionPrompt")
@@ -110,10 +105,10 @@ class WhisperPrompt: ObservableObject {
     }
 
     /// Returns the saved prompt for a language.
-    nonisolated static func resolvedPrompt(for language: String?) -> String {
-        guard let language, !language.isEmpty else { return "" }
+    nonisolated static func resolvedPrompt(for language: String?, defaults: UserDefaults = .standard) -> String {
+        guard let language, !language.isEmpty, language != "auto" else { return "" }
 
-        if let savedPrompts = UserDefaults.standard.dictionary(forKey: customPromptsKey) as? [String: String],
+        if let savedPrompts = defaults.dictionary(forKey: customPromptsKey) as? [String: String],
             let customPrompt = savedPrompts[language],
             !customPrompt.isEmpty
         {
@@ -121,6 +116,13 @@ class WhisperPrompt: ObservableObject {
         }
 
         return languagePrompts[language] ?? languagePrompts["default"] ?? ""
+    }
+
+    nonisolated static func resolvedPrompt(for languages: [String], defaults: UserDefaults = .standard) -> String {
+        TranscriptionLanguageSupport.normalizedSelection(languages)
+            .map { resolvedPrompt(for: $0, defaults: defaults) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     func setCustomPrompt(_ prompt: String, for language: String) {

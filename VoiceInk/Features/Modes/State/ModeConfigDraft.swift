@@ -13,6 +13,19 @@ struct ModeConfigDraft {
     var selectedTranscriptionModelName: String?
     var isRealtimeTranscriptionEnabled: Bool
     var selectedLanguage: String?
+    var selectedLanguages: [String]?
+
+    var transcriptionLanguages: [String] {
+        TranscriptionLanguageSupport.normalizedSelection(
+            selectedLanguages ?? selectedLanguage.map { [$0] } ?? UserDefaults.standard.selectedTranscriptionLanguages
+        )
+    }
+
+    mutating func setTranscriptionLanguages(_ languages: [String]) {
+        let selection = TranscriptionLanguageSupport.normalizedSelection(languages)
+        selectedLanguages = selection
+        selectedLanguage = TranscriptionLanguageSupport.recognitionLanguage(for: selection)
+    }
     var isTextFormattingEnabled: Bool
     var useClipboardContext: Bool
     var useSelectedTextContext: Bool
@@ -43,6 +56,7 @@ struct ModeConfigDraft {
             selectedTranscriptionModelName = inheritedConfig?.selectedTranscriptionModelName
             isRealtimeTranscriptionEnabled = true
             selectedLanguage = inheritedConfig?.selectedLanguage
+            selectedLanguages = inheritedConfig?.selectedLanguages
             isTextFormattingEnabled = true
             useClipboardContext = false
             useSelectedTextContext = false
@@ -69,6 +83,7 @@ struct ModeConfigDraft {
             selectedTranscriptionModelName = latestConfig.selectedTranscriptionModelName
             isRealtimeTranscriptionEnabled = latestConfig.isRealtimeTranscriptionEnabled
             selectedLanguage = latestConfig.selectedLanguage
+            selectedLanguages = latestConfig.selectedLanguages
             isTextFormattingEnabled = latestConfig.isTextFormattingEnabled
             useClipboardContext = latestConfig.useClipboardContext
             useSelectedTextContext = latestConfig.useSelectedTextContext
@@ -138,11 +153,7 @@ struct ModeConfigDraft {
     }
 
     mutating func useCompatibleLanguage(for model: any TranscriptionModel) {
-        selectedLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(
-            selectedLanguage ?? "en",
-            for: model,
-            realtimeEnabled: isRealtimeTranscriptionEnabled
-        )
+        setTranscriptionLanguages(TranscriptionLanguageSupport.validLanguagesOrFallback(transcriptionLanguages, for: model))
     }
 
     mutating func applyOutputRules(canRespond: Bool) {
@@ -174,6 +185,7 @@ struct ModeConfigDraft {
                 selectedTranscriptionModelName: selectedTranscriptionModelName,
                 isRealtimeTranscriptionEnabled: isRealtimeTranscriptionEnabled,
                 selectedLanguage: selectedLanguage,
+                selectedLanguages: selectedLanguages,
                 useClipboardContext: useClipboardContext,
                 useSelectedTextContext: useSelectedTextContext,
                 useScreenCapture: useScreenCapture,
@@ -198,6 +210,7 @@ struct ModeConfigDraft {
             updatedConfig.selectedTranscriptionModelName = selectedTranscriptionModelName
             updatedConfig.isRealtimeTranscriptionEnabled = isRealtimeTranscriptionEnabled
             updatedConfig.selectedLanguage = selectedLanguage
+            updatedConfig.selectedLanguages = selectedLanguages
             updatedConfig.isTextFormattingEnabled = isTextFormattingEnabled
             updatedConfig.useClipboardContext = useClipboardContext
             updatedConfig.useSelectedTextContext = useSelectedTextContext
