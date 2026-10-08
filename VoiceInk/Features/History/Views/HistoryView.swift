@@ -12,14 +12,14 @@ struct HistoryView: View {
     @State private var showDeleteConfirmation = false
     @State private var isShowingInfo = false
     @State private var activePanel: HistoryPanel?
-    @State private var pagination = HistoryPagination()
-    @State private var isLoading = false
+    @State private var pagination: HistoryPagination?
     @State private var isViewCurrentlyVisible = false
 
     private let exportService = VoiceInkCSVExportService()
 
-    private var displayedTranscriptions: [Transcription] { pagination.transcriptions }
-    private var hasMoreContent: Bool { pagination.hasMoreContent }
+    private var displayedTranscriptions: [Transcription] { pagination?.transcriptions ?? [] }
+    private var hasMoreContent: Bool { pagination?.hasMoreContent ?? false }
+    private var isLoading: Bool { pagination?.isLoading ?? true }
 
     @Query(Self.createLatestTranscriptionIndicatorDescriptor()) private var latestTranscriptionIndicator:
         [Transcription]
@@ -108,30 +108,29 @@ struct HistoryView: View {
         .onAppear {
             isViewCurrentlyVisible = true
             isSearchFocused = true
-            Task { await loadInitialContent() }
+            if pagination == nil { pagination = HistoryPagination(context: modelContext) }
+            pagination?.activate(searchText: searchText)
         }
         .onDisappear {
             isViewCurrentlyVisible = false
+            pagination?.suspend()
         }
         .onChange(of: searchText) { _, _ in
-            Task {
-                await loadInitialContent()
-            }
+            loadInitialContent()
         }
         .onChange(of: latestTranscriptionIndicator.first?.id) { oldId, newId in
             guard isViewCurrentlyVisible else { return }
             if newId != oldId {
-                Task {
-                    await loadInitialContent()
-                }
+                loadInitialContent()
             }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .transcriptionCreated)
                 .merge(with: NotificationCenter.default.publisher(for: .transcriptionDeleted))
+                .merge(with: NotificationCenter.default.publisher(for: .transcriptionCompleted))
         ) { _ in
             guard isViewCurrentlyVisible else { return }
-            Task { await loadInitialContent() }
+            loadInitialContent()
         }
     }
 
@@ -265,7 +264,7 @@ struct HistoryView: View {
 
             if hasMoreContent {
                 HistoryCommandButton("Load More") {
-                    Task { await loadMoreContent() }
+                    pagination?.loadMore()
                 }
                 .disabled(isLoading)
                 .padding(.vertical, 8)
@@ -294,29 +293,8 @@ struct HistoryView: View {
     // MARK: - Data Loading
 
     @MainActor
-    private func loadInitialContent() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            try pagination.reload(in: modelContext, searchText: searchText)
-        } catch {
-            print("Error loading transcriptions: \(error)")
-        }
-    }
-
-    @MainActor
-    private func loadMoreContent() async {
-        guard !isLoading, hasMoreContent else { return }
-
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            try pagination.loadMore(in: modelContext)
-        } catch {
-            print("Error loading more transcriptions: \(error)")
-        }
+    private func loadInitialContent() {
+        pagination?.reload(searchText: searchText)
     }
 
     // MARK: - Selection & Deletion
@@ -357,10 +335,10 @@ struct HistoryView: View {
             do {
                 try modelContext.save()
                 NotificationCenter.default.post(name: .transcriptionDeleted, object: nil)
-                await loadInitialContent()
+                loadInitialContent()
             } catch {
                 print("Error saving deletion: \(error.localizedDescription)")
-                await loadInitialContent()
+                loadInitialContent()
             }
         }
     }
