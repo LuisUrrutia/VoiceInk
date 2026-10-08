@@ -2,11 +2,6 @@ import SwiftData
 import SwiftUI
 
 struct HistoryView: View {
-    private struct PaginationCursor {
-        let timestamp: Date
-        let id: UUID
-    }
-
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var searchText = ""
@@ -17,14 +12,14 @@ struct HistoryView: View {
     @State private var showDeleteConfirmation = false
     @State private var isShowingInfo = false
     @State private var activePanel: HistoryPanel?
-    @State private var displayedTranscriptions: [Transcription] = []
+    @State private var pagination = HistoryPagination()
     @State private var isLoading = false
-    @State private var hasMoreContent = true
-    @State private var paginationCursor: PaginationCursor?
     @State private var isViewCurrentlyVisible = false
 
     private let exportService = VoiceInkCSVExportService()
-    private let pageSize = 20
+
+    private var displayedTranscriptions: [Transcription] { pagination.transcriptions }
+    private var hasMoreContent: Bool { pagination.hasMoreContent }
 
     @Query(Self.createLatestTranscriptionIndicatorDescriptor()) private var latestTranscriptionIndicator:
         [Transcription]
@@ -34,46 +29,6 @@ struct HistoryView: View {
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         descriptor.fetchLimit = 1
-        return descriptor
-    }
-
-    private func cursorQueryDescriptor(after cursor: PaginationCursor? = nil) -> FetchDescriptor<Transcription> {
-        var descriptor = FetchDescriptor<Transcription>(
-            sortBy: [
-                SortDescriptor(\Transcription.timestamp, order: .reverse),
-                SortDescriptor(\Transcription.id, order: .reverse)
-            ]
-        )
-
-        if !searchText.isEmpty {
-            let query = searchText
-            if let cursor {
-                let cursorTimestamp = cursor.timestamp
-                let cursorID = cursor.id
-                descriptor.predicate = #Predicate<Transcription> { transcription in
-                    (transcription.text.localizedStandardContains(query)
-                        || (transcription.enhancedText?.localizedStandardContains(query) ?? false))
-                        && (transcription.timestamp < cursorTimestamp
-                            || (transcription.timestamp == cursorTimestamp && transcription.id < cursorID))
-                }
-            } else {
-                descriptor.predicate = #Predicate<Transcription> { transcription in
-                    transcription.text.localizedStandardContains(query)
-                        || (transcription.enhancedText?.localizedStandardContains(query) ?? false)
-                }
-            }
-        } else if let cursor {
-            let cursorTimestamp = cursor.timestamp
-            let cursorID = cursor.id
-            descriptor.predicate = #Predicate<Transcription> { transcription in
-                transcription.timestamp < cursorTimestamp
-                    || (transcription.timestamp == cursorTimestamp && transcription.id < cursorID)
-            }
-        }
-
-        // Fetch one extra row so the UI can determine whether another page exists.
-        descriptor.fetchLimit = pageSize + 1
-
         return descriptor
     }
 
@@ -160,7 +115,6 @@ struct HistoryView: View {
         }
         .onChange(of: searchText) { _, _ in
             Task {
-                resetPagination()
                 await loadInitialContent()
             }
         }
@@ -168,10 +122,16 @@ struct HistoryView: View {
             guard isViewCurrentlyVisible else { return }
             if newId != oldId {
                 Task {
-                    resetPagination()
                     await loadInitialContent()
                 }
             }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .transcriptionCreated)
+                .merge(with: NotificationCenter.default.publisher(for: .transcriptionDeleted))
+        ) { _ in
+            guard isViewCurrentlyVisible else { return }
+            Task { await loadInitialContent() }
         }
     }
 
@@ -339,12 +299,7 @@ struct HistoryView: View {
         defer { isLoading = false }
 
         do {
-            paginationCursor = nil
-            let items = try modelContext.fetch(cursorQueryDescriptor())
-            let page = Array(items.prefix(pageSize))
-            displayedTranscriptions = page
-            paginationCursor = page.last.map { PaginationCursor(timestamp: $0.timestamp, id: $0.id) }
-            hasMoreContent = items.count > pageSize
+            try pagination.reload(in: modelContext, searchText: searchText)
         } catch {
             print("Error loading transcriptions: \(error)")
         }
@@ -352,28 +307,16 @@ struct HistoryView: View {
 
     @MainActor
     private func loadMoreContent() async {
-        guard !isLoading, hasMoreContent, let paginationCursor else { return }
+        guard !isLoading, hasMoreContent else { return }
 
         isLoading = true
         defer { isLoading = false }
 
         do {
-            let items = try modelContext.fetch(cursorQueryDescriptor(after: paginationCursor))
-            let page = Array(items.prefix(pageSize))
-            displayedTranscriptions.append(contentsOf: page)
-            self.paginationCursor = page.last.map { PaginationCursor(timestamp: $0.timestamp, id: $0.id) }
-            hasMoreContent = items.count > pageSize
+            try pagination.loadMore(in: modelContext)
         } catch {
             print("Error loading more transcriptions: \(error)")
         }
-    }
-
-    @MainActor
-    private func resetPagination() {
-        displayedTranscriptions = []
-        paginationCursor = nil
-        hasMoreContent = true
-        isLoading = false
     }
 
     // MARK: - Selection & Deletion
