@@ -18,6 +18,8 @@ struct SettingsView: View {
     @ObservedObject private var playbackController = PlaybackController.shared
     @AppStorage(OnboardingSettings.completedV2Key) private var hasCompletedOnboardingV2 = true
     @AppStorage("enableAnnouncements") private var enableAnnouncements = true
+    @AppStorage(PasteTargetSettings.key) private var pinPasteTargetToRecordStart = true
+    @AppStorage(PasteTargetSettings.remoteClipboardPushCommandKey) private var remoteClipboardPushCommand = ""
     @AppStorage("restoreClipboardAfterPaste") private var restoreClipboardAfterPaste = true
     @AppStorage("clipboardRestoreDelay") private var clipboardRestoreDelay = 2.0
     @AppStorage(PasteMethod.userDefaultsKey) private var pasteMethodRawValue = PasteMethod.standard.rawValue
@@ -179,6 +181,22 @@ struct SettingsView: View {
                 }
 
                 Section("Pasting") {
+                    Toggle(isOn: $pinPasteTargetToRecordStart) {
+                        HStack(spacing: 4) {
+                            Text("Paste Into Original Application")
+                            InfoTip(
+                                "Returns to the application focused when recording began. The original window or text field is not guaranteed. If activation fails, the transcription stays on the clipboard. Turn off to use the application focused when delivery begins."
+                            )
+                        }
+                    }
+                    .accessibilityLabel("Paste Into Original Application")
+
+                    LabeledContent("Screen Sharing Clipboard Push") {
+                        TextField("Optional shell command", text: $remoteClipboardPushCommand)
+                            .textFieldStyle(.roundedBorder)
+                            .help("Runs only for Apple's Screen Sharing. Receives transcription on standard input, with a 3-second timeout. Leave blank to use shared clipboard synchronization. Configure access separately; use noninteractive commands.")
+                    }
+
                     LabeledContent {
                         Picker("Auto Send", selection: $finishAndSendKey) {
                             ForEach(FinishAndSendKey.allCases, id: \.self) { key in

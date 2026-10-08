@@ -163,3 +163,31 @@ VoiceInk app and menu-bar branding, bundled provider logo assets, installed appl
 - Run `make whisper` if the framework is missing.
 - If signing identities are ambiguous, set `LOCAL_CODESIGN_IDENTITY` to the certificate fingerprint shown by `security find-identity -v -p codesigning`.
 - For additional help with this fork, open an issue at https://github.com/LuisUrrutia/VoiceInk/issues.
+
+## Dictation delivery
+
+Settings > Pasting > Paste Into Original Application is on by default. VoiceInk
+captures the focused application before opening the recorder, including mode
+shortcuts, and returns to that process when dictation finishes. This does not
+restore a particular window or text field. If the process exits or does not regain
+focus within 0.6 seconds, VoiceInk keeps the transcription on the clipboard and
+shows a warning. Turn the preference off to choose the application focused when
+delivery begins. Paste Last Transcription and Quick History always use the current
+application. Auto Send only posts its key while the successful paste destination
+still has focus and the recording has not been canceled.
+
+Apple's Screen Sharing uses System Events for Command-V, independently of the
+local paste-method setting. It allows 0.8 seconds for shared clipboard
+synchronization. The optional Screen Sharing Clipboard Push setting runs a
+user-supplied shell command with the transcription on standard input. Configure
+remote access separately and use noninteractive authentication; VoiceInk does not
+configure a host or credentials. Execution has a 3-second timeout and cancellation
+terminates the process and its children. A zero exit status uses a 0.2-second
+settle delay; an absent, failed or timed-out command uses shared clipboard
+synchronization. Backups include both preferences; older backups preserve their
+current values.
+
+A posted paste command or successful clipboard-push command does not confirm
+insertion into a remote text field. Verify a disposable field on the connected Mac
+before relying on that setup. Clipboard restoration follows session ownership and
+leaves copied text available after a destination or paste failure.

@@ -59,6 +59,7 @@ class TranscriptionPipeline {
         recordingContextSnapshot: @escaping () async -> RecordingContextSnapshot? = { nil },
         outputConfiguration: @escaping () -> OutputRuntimeConfiguration,
         sendAfterPaste: Bool = false,
+        deliverySession: RecordingDeliverySession? = nil,
         onStateChange: @escaping (RecordingState) -> Void,
         shouldCancel: () -> Bool,
         onCancel: @escaping () async -> Void,
@@ -282,7 +283,8 @@ class TranscriptionPipeline {
                 responseConfig: responseConfig,
                 responseError: responseError,
                 isAssistantFollowUp: assistant.isFollowUp,
-                sendAfterPaste: sendAfterPaste
+                sendAfterPaste: sendAfterPaste,
+                deliverySession: deliverySession
             ),
             actions: TranscriptionDelivery.Actions(
                 setState: onStateChange,

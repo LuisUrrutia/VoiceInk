@@ -221,6 +221,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     func toggleRecorderPanel(modeId: UUID? = nil) async {
         guard let engine = engine else { return }
+        let deliverySession = RecordingDeliverySession.capture()
 
         if isRecorderPanelVisible {
             switch engine.recordingState {
@@ -233,7 +234,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                     SoundManager.shared.playStartSound()
                     await engine.toggleRecord(
                         modeId: modeId,
-                        isAssistantFollowUp: true
+                        isAssistantFollowUp: true,
+                        deliverySession: deliverySession
                     )
                 } else {
                     await dismissRecorderPanel()
@@ -244,17 +246,18 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         } else {
             SoundManager.shared.playStartSound()
             isRecorderPanelVisible = true
-            await engine.toggleRecord(modeId: modeId)
+            await engine.toggleRecord(modeId: modeId, deliverySession: deliverySession)
         }
     }
 
     func toggleRecordingFromSetup() async {
         guard let engine, !engine.microphoneDiagnostic.isBusy else { return }
+        let deliverySession = RecordingDeliverySession.capture()
         if engine.recordingState == .idle {
             SoundManager.shared.playStartSound()
             isRecorderPanelVisible = true
         }
-        await engine.toggleRecord()
+        await engine.toggleRecord(deliverySession: deliverySession)
     }
 
     func finishRecordingAndSend() async {

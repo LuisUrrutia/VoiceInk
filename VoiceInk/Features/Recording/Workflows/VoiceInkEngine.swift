@@ -112,6 +112,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     )
     var currentSession: TranscriptionSession?
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
+    private var activeRecordingDelivery: RecordingDeliverySession?
+    private var activePipelineDelivery: RecordingDeliverySession?
     private var activeRecordingStartID: UUID?
     private let recordingFinalization = RecordingFinalization()
     private var activePipelineTranscriptionID: UUID?
@@ -200,7 +202,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     // MARK: - Toggle Record
 
-    func toggleRecord(modeId: UUID? = nil, isAssistantFollowUp: Bool = false, sendAfterPaste: Bool = false) async {
+    func toggleRecord(
+        modeId: UUID? = nil, isAssistantFollowUp: Bool = false, sendAfterPaste: Bool = false,
+        deliverySession: RecordingDeliverySession? = nil
+    ) async {
+        let capturedDelivery = deliverySession ?? RecordingDeliverySession.capture()
         await recordingFinalization.waitUntilFinished()
         guard !Task.isCancelled else { return }
         guard !microphoneDiagnostic.isBusy else {
@@ -216,9 +222,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
             guard let finalizationID = recordingFinalization.begin() else { return }
             defer { recordingFinalization.finish(finalizationID) }
             let fileBeingStopped = recordedFile
+            let delivery = activeRecordingDelivery
+            activeRecordingDelivery = nil
+            activePipelineDelivery = delivery
             let context = recordingContextCapture.take()
             pipelineContextCapture = context
             defer {
+                delivery?.cancel()
+                if activePipelineDelivery === delivery { activePipelineDelivery = nil }
                 context?.cancel()
                 if pipelineContextCapture === context {
                     pipelineContextCapture = nil
@@ -263,6 +274,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         on: transcription,
                         audioURL: recordedFile,
                         contextStore: context?.store,
+                        deliverySession: delivery,
                         sendAfterPaste: sendAfterPaste
                     )
                 } else {
@@ -281,6 +293,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let canContinueAssistantSession = isAssistantFollowUp && assistantSession.canSendFollowUp
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
+            activePipelineDelivery?.cancel()
+            activePipelineDelivery = nil
+            activeRecordingDelivery?.cancel()
+            activeRecordingDelivery = nil
             activePipelineTranscriptionID = nil
             clearPipelineRecordingContext()
             shouldCancelRecording = false
@@ -299,6 +315,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
             let startID = UUID()
             self.activeRecordingStartID = startID
+            self.activeRecordingDelivery = capturedDelivery
             let activeModeTask = ActiveWindowService.shared.beginApplyingConfiguration(modeId: modeId) {
                 [weak self] in
                 guard let self else { return false }
@@ -617,6 +634,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         on transcription: Transcription,
         audioURL: URL,
         contextStore: RecordingContextSnapshotStore?,
+        deliverySession: RecordingDeliverySession?,
         sendAfterPaste: Bool
     ) async {
         guard
@@ -668,6 +686,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 ModeRuntimeResolver.outputConfiguration()
             },
             sendAfterPaste: sendAfterPaste,
+            deliverySession: deliverySession,
             onStateChange: { [weak self] state in
                 guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
                 self.recordingState = state
@@ -794,6 +813,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
         guard let finalizationID = recordingFinalization.begin() else { return }
         defer { recordingFinalization.finish(finalizationID) }
         cancelCurrentSession()
+        activeRecordingDelivery?.cancel()
+        activeRecordingDelivery = nil
+        activePipelineDelivery?.cancel()
+        activePipelineDelivery = nil
         activeRecordingStartID = nil
         activePipelineTranscriptionID = nil
         canceledPipelineTranscriptionIDs.removeAll()
@@ -811,6 +834,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     private func requestRecordingCancellation() {
+        activeRecordingDelivery?.cancel()
+        activePipelineDelivery?.cancel()
         shouldCancelRecording = true
 
         if recordingState == .transcribing || recordingState == .enhancing {
@@ -825,6 +850,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     private func finishActiveRecorderCancellation() async {
         let fileBeingCancelled = recordedFile
+        activeRecordingDelivery?.cancel()
+        activeRecordingDelivery = nil
         activeRecordingStartID = nil
         clearActiveRecordingContext()
         await recorder.stopRecording()

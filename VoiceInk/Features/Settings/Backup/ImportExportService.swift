@@ -194,6 +194,8 @@ class ImportExportService {
             restoreClipboardAfterPaste: UserDefaults.standard.bool(forKey: "restoreClipboardAfterPaste"),
             clipboardRestoreDelay: UserDefaults.standard.double(forKey: "clipboardRestoreDelay"),
             finishAndSendKey: FinishAndSendSettings.selectedKey.rawValue,
+            pinPasteTargetToRecordStart: PasteTargetSettings.isEnabled(),
+            remoteClipboardPushCommand: UserDefaults.standard.string(forKey: PasteTargetSettings.remoteClipboardPushCommandKey),
             isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
             autoLearnReviewSchedule: AutoLearnSettings.reviewSchedule.rawValue,
             autoLearnProvider: AutoLearnSettings.selectedProvider?.rawValue,

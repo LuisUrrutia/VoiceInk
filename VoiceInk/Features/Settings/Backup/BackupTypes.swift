@@ -98,10 +98,21 @@ struct GeneralBackup: Codable {
     let restoreClipboardAfterPaste: Bool?
     let clipboardRestoreDelay: Double?
     let finishAndSendKey: String?
+    var pinPasteTargetToRecordStart: Bool? = nil
+    var remoteClipboardPushCommand: String? = nil
     let isAutoLearnDictionaryEnabled: Bool?
     let autoLearnReviewSchedule: String?
     let autoLearnProvider: String?
     let autoLearnModel: String?
+
+    func restorePastePreferences(in defaults: UserDefaults = .standard) {
+        if let pinPasteTargetToRecordStart {
+            defaults.set(pinPasteTargetToRecordStart, forKey: PasteTargetSettings.key)
+        }
+        if let remoteClipboardPushCommand {
+            defaults.set(remoteClipboardPushCommand, forKey: PasteTargetSettings.remoteClipboardPushCommandKey)
+        }
+    }
 
     func iconVisibility(restoring current: AppIconVisibility) -> AppIconVisibility {
         AppIconVisibility(
