@@ -23,6 +23,7 @@ class Recorder: NSObject, ObservableObject {
     private var recordingStartID: UUID?
     private var hasStoppedRecording = false
     private let recordingFinalization = RecordingFinalization()
+    private(set) var recordingError: Error?
     private let smoothedValuesLock = NSLock()
     private var smoothedAverage: Float = 0
     private var smoothedPeak: Float = 0
@@ -55,6 +56,7 @@ class Recorder: NSObject, ObservableObject {
     func startRecording(toOutputFile url: URL) async throws {
         await recordingFinalization.waitUntilFinished()
         try Task.checkCancellation()
+        recordingError = nil
         var resolution = deviceManager.resolveCurrentRecordingDevice()
         guard var deviceID = resolution.deviceID else {
             onAudioChunk = nil
@@ -109,7 +111,7 @@ class Recorder: NSObject, ObservableObject {
                 "Failed to start recording deviceID=\(deviceID, privacy: .public) file=\(url.lastPathComponent, privacy: .public) error=\(error, privacy: .public)"
             )
             await stopRecording()
-            throw RecorderError.couldNotStartRecording
+            throw error
         }
     }
 
@@ -131,13 +133,14 @@ class Recorder: NSObject, ObservableObject {
         // Capture current recorder to stop it on the serial hardware queue.
         let currentRecorder = self.recorder
 
-        await withCheckedContinuation { continuation in
+        let failure = await withCheckedContinuation { continuation in
             audioSetupQueue.async {
                 currentRecorder?.stopRecording()
-                continuation.resume()
+                continuation.resume(returning: currentRecorder?.recordingError)
             }
         }
         guard self.playbackSessionID == playbackSessionID else { return }
+        recordingError = failure
         onAudioChunk = nil
 
         resetAudioMeter()

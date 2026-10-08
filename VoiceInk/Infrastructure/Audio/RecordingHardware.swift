@@ -5,6 +5,7 @@ protocol RecordingHardware: AnyObject, Sendable {
     var onAudioChunk: ((Data) -> Void)? { get set }
     var averagePower: Float { get }
     var peakPower: Float { get }
+    var recordingError: Error? { get }
 
     func prepare(deviceID: AudioDeviceID) throws
     func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID) throws
@@ -12,4 +13,8 @@ protocol RecordingHardware: AnyObject, Sendable {
     func switchDevice(to deviceID: AudioDeviceID) throws
     func invalidatePreparation()
     func teardown()
+}
+
+extension RecordingHardware {
+    var recordingError: Error? { nil }
 }
