@@ -2,12 +2,13 @@
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
-test "$(git branch --show-current)" = personal
-
 fail() {
     printf '%s\n' "$*" >&2
     exit 1
 }
+
+test "$(git branch --show-current)" = main ||
+    fail "run this check from the fork's main branch"
 
 case "$(git remote get-url upstream)" in
     git@github.com:Beingpax/VoiceInk.git|ssh://git@github.com/Beingpax/VoiceInk.git) ;;
@@ -23,7 +24,7 @@ test "$remote_main_oid" = "$(git rev-parse upstream/main)" ||
 merge_head=$(git rev-parse --verify -q MERGE_HEAD || true)
 if ! git merge-base --is-ancestor upstream/main HEAD; then
     test "$merge_head" = "$remote_main_oid" ||
-        fail "personal does not contain the latest upstream/main"
+        fail "main does not contain the latest upstream/main"
 fi
 
 while IFS=$'\t' read -r pr_url reason; do
