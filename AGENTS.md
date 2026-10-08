@@ -72,6 +72,12 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 
 ## Tracked local overlays
 
+### Reliable History pagination
+
+- Request: Preserve the intent of https://github.com/ivolkoff/VoiceInk/commit/1de47aae86e0d5aacd807f98d59a09b5f07217ce in the current History architecture.
+- Keep main-window History ordered by timestamp and UUID descending, with the matching exclusive composite cursor and a bounded 21-row fetch for 20 displayed rows. Return every matching timestamp tie exactly once, including original-text and enhanced-text search matches, and determine exhaustion from the extra row. Reset displayed results and the cursor together on search changes and reloads; refresh visible History after transcription creation and deletion, including changes that do not replace the newest row. Keep cursor values usable after the boundary record is deleted. Preserve Quick History's newest-30 matching-result limit, selection, and double-click paste, plus main-window details, bulk selection, Copy actions, and adaptive row surfaces.
+- Regression: `HistoryPaginationTests` runs in `VoiceInkTests` through `./scripts/check-personal-sync.sh`, using isolated on-disk SwiftData stores for timestamp ties across more than two pages, mixed boundaries, exhaustion, searches, cursor resets, deletions, arriving records, and Quick History's recent-result and paste-selection behavior. In `VoiceInk Dev.app`, check Load More, changing and clearing search, deletion and arrival refresh when the newest row does not change, details, circle selection, Copy, and unrelated navigation. Check Quick History search, keyboard selection, and double-click paste when changing its query or presentation.
+
 ### Multiple Whisper transcription languages
 
 - Request: Independently adapt https://github.com/servitola/VoiceInk/commit/19ea75024adfe10a236293c54a2f84c4d1b4c6d6 to this fork's current architecture.
