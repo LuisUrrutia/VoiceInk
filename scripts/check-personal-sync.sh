@@ -62,6 +62,7 @@ done < scripts/personal-prs.tsv
 
 make test-local-signing
 make test-local-workflow
+make test-cli
 
 GIT_TERMINAL_PROMPT=0 \
 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \

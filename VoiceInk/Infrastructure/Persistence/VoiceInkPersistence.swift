@@ -1,9 +1,9 @@
 import Foundation
 
-enum VoiceInkPersistence {
-    static let productionDirectoryName = "com.prakashjoshipax.VoiceInk"
+public enum VoiceInkPersistence {
+    public static let productionDirectoryName = "com.prakashjoshipax.VoiceInk"
 
-    static func directoryName(bundleIdentifier: String?, isLocalBuild: Bool) -> String {
+    public static func directoryName(bundleIdentifier: String?, isLocalBuild: Bool) -> String {
         if isLocalBuild {
             return "\(productionDirectoryName).local"
         }

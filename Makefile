@@ -117,6 +117,19 @@ test-local-signing:
 test-local-workflow:
 	python3 -B -m unittest discover -s Tests/BuildTests -p test_local_workflow.py -v
 
+.PHONY: cli test-cli
+cli:
+	env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+		GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0='url.git@github.com:.insteadOf' \
+		GIT_CONFIG_VALUE_0='https://github.com/' \
+		swift build --package-path cli/parakeet -c release --product voiceink-cli
+
+test-cli:
+	env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+		GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0='url.git@github.com:.insteadOf' \
+		GIT_CONFIG_VALUE_0='https://github.com/' \
+		swift test --package-path cli/parakeet
+
 # Run application
 run:
 	@if [ -d "$$HOME/Downloads/$(RUN_APP_NAME).app" ]; then \
@@ -164,6 +177,8 @@ help:
 	@echo "    LOCAL_CODESIGN_IDENTITY=<SHA or name> overrides automatic signing identity detection"
 	@echo "  test-local-signing Check local signing selection without accessing Keychain or building"
 	@echo "  test-local-workflow Check toolchain, topic update and isolated installation fixtures"
+	@echo "  cli                Build the headless local Parakeet transcriber"
+	@echo "  test-cli           Test the Parakeet command contract and audio decoder"
 	@echo "  run                Launch the built VoiceInk app"
 	@echo "  dev                Build and run the app (for development)"
 	@echo "  release            Build DMG and Appcast using release-notes/<version>.html"
