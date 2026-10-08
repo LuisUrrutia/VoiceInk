@@ -10,11 +10,15 @@ enum TranscriptionStatus: String, Codable {
 
 @Model
 final class Transcription {
+    #Index<Transcription>([\.timestamp, \.id])
+
     static let canceledTranscriptionText = "The transcription was canceled."
 
     var id: UUID = UUID()
     var text: String = ""
     var enhancedText: String?
+    // Index declarations alone do not trigger migration of existing SwiftData stores.
+    @Attribute(hashModifier: "historyCompositeIndex")
     var timestamp: Date = Date()
     var duration: TimeInterval = 0
     var audioFileURL: String?
