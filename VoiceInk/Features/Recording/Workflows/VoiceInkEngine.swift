@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Combine
 import Foundation
 import SwiftData
 import SwiftUI
@@ -95,6 +96,20 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published var recordingState: RecordingState = .idle
     @Published var shouldCancelRecording = false
     @Published var partialTranscript: String = ""
+    @Published private(set) var recordingError: String?
+    let captureReadiness: CaptureReadinessController
+    private var readinessSubscription: AnyCancellable?
+    lazy var microphoneDiagnostic = MicrophoneDiagnostic(
+        recorder: recorder,
+        canStart: { [weak self] in
+            guard let self else { return false }
+            return self.recordingState == .idle && !self.recordingFinalization.isRunning
+        },
+        captureIssue: { [weak self] in
+            self?.captureReadiness.refreshSnapshot()
+            return self?.captureReadiness.snapshot.issues(for: .microphoneTest).first
+        }
+    )
     var currentSession: TranscriptionSession?
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
     private var activeRecordingStartID: UUID?
@@ -130,13 +145,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
         whisperModelManager: WhisperModelManager,
         transcriptionModelManager: TranscriptionModelManager,
         enhancementService: AIEnhancementService? = nil,
-        recorder: Recorder? = nil
+        recorder: Recorder? = nil,
+        captureReadiness: CaptureReadinessController? = nil
     ) {
         self.modelContext = modelContext
         self.whisperModelManager = whisperModelManager
         self.transcriptionModelManager = transcriptionModelManager
         self.enhancementService = enhancementService
         self.recorder = recorder ?? Recorder()
+        self.captureReadiness = captureReadiness ?? CaptureReadinessController(
+            models: transcriptionModelManager, devices: self.recorder.deviceManager
+        )
         if let aiService = enhancementService?.getAIService() {
             self.assistantChat = AssistantChatService(
                 modelContext: modelContext,
@@ -163,6 +182,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
         super.init()
 
+        readinessSubscription = self.captureReadiness.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         setupNotifications()
         createRecordingsDirectoryIfNeeded()
     }
@@ -181,6 +203,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
     func toggleRecord(modeId: UUID? = nil, isAssistantFollowUp: Bool = false, sendAfterPaste: Bool = false) async {
         await recordingFinalization.waitUntilFinished()
         guard !Task.isCancelled else { return }
+        guard !microphoneDiagnostic.isBusy else {
+            await recorderUIManager?.dismissRecorderPanel()
+            return
+        }
         if recordingState == .starting {
             await cancelRecording()
             return
@@ -218,6 +244,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     NotificationCenter.default.post(name: .transcriptionCreated, object: transcription)
 
                     if let error = recorder.recordingError {
+                        recordingError = String(localized: "Recording failed. Check the microphone and try again.")
                         transcription.text = error.localizedDescription
                         transcription.transcriptionStatus = TranscriptionStatus.failed.rawValue
                         try? modelContext.save()
@@ -250,12 +277,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 await cleanupResources()
             }
         } else {
+            guard recordingState == .idle else { return }
             let canContinueAssistantSession = isAssistantFollowUp && assistantSession.canSendFollowUp
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
             activePipelineTranscriptionID = nil
             clearPipelineRecordingContext()
             shouldCancelRecording = false
+            recordingError = nil
             partialTranscript = ""
             activeRecordingUseCase = recordingUseCase
             clearActiveRecordingContext()
@@ -264,238 +293,223 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 assistantSession.reset()
             }
 
-            requestRecordPermission { [self] granted in
-                if granted {
-                    Task { @MainActor [self] in
-                        await self.recordingFinalization.waitUntilFinished()
-                        guard !Task.isCancelled,
-                            self.recordingState != .starting,
-                            self.recordingState != .recording
-                        else { return }
-                        guard await self.passesRecordingPreflight() else {
-                            return
-                        }
+            guard await passesRecordingPreflight(), !microphoneDiagnostic.isBusy,
+                recordingState == .idle, !Task.isCancelled
+            else { return }
 
-                        let startID = UUID()
-                        self.activeRecordingStartID = startID
-                        let activeModeTask = ActiveWindowService.shared.beginApplyingConfiguration(modeId: modeId) {
-                            [weak self] in
-                            guard let self else { return false }
-                            return self.activeRecordingStartID == startID && !self.shouldCancelRecording
-                        }
+            let startID = UUID()
+            self.activeRecordingStartID = startID
+            let activeModeTask = ActiveWindowService.shared.beginApplyingConfiguration(modeId: modeId) {
+                [weak self] in
+                guard let self else { return false }
+                return self.activeRecordingStartID == startID && !self.shouldCancelRecording
+            }
 
-                        do {
-                            let fileName = "\(UUID().uuidString).wav"
-                            let permanentURL = self.recordingsDirectory.appendingPathComponent(fileName)
-                            self.recordedFile = permanentURL
+            do {
+                let fileName = "\(UUID().uuidString).wav"
+                let permanentURL = self.recordingsDirectory.appendingPathComponent(fileName)
+                self.recordedFile = permanentURL
 
-                            let realtimeAudioGate = RealtimeAudioChunkGate()
-                            self.recorder.onAudioChunk = realtimeAudioGate.receive
+                let realtimeAudioGate = RealtimeAudioChunkGate()
+                self.recorder.onAudioChunk = realtimeAudioGate.receive
 
-                            self.recordingState = .starting
+                self.recordingState = .starting
 
-                            try await self.recorder.startRecording(toOutputFile: permanentURL)
+                try await self.recorder.startRecording(toOutputFile: permanentURL)
 
-                            guard self.activeRecordingStartID == startID,
-                                self.recorderUIManager?.isRecorderPanelVisible ?? false,
-                                !self.shouldCancelRecording
-                            else {
-                                activeModeTask.cancel()
-                                if self.activeRecordingStartID == startID {
-                                    guard let finalizationID = self.recordingFinalization.begin() else { return }
-                                    defer { self.recordingFinalization.finish(finalizationID) }
-                                    await self.recorder.stopRecording()
-                                    if self.shouldCancelRecording {
-                                        await self.finishActiveRecorderCancellation()
-                                    } else {
-                                        self.recordedFile = nil
-                                        self.recordingState = .idle
-                                        self.activeRecordingStartID = nil
-                                    }
-                                }
-                                return
-                            }
-
-                            self.recordingState = .recording
-                            self.startRecordingContextCapture(recordingID: startID)
-
-                            // Only retire the previous paste session once recording
-                            // has actually started. Preflight/permission failures
-                            // must leave it available for Auto Learn capture.
-                            if AutoLearnSettings.isEnabled {
-                                await AutoLearnService.shared.recordingDidStart()
-                            }
-
-                            await activeModeTask.value
-
-                            guard self.recordingState == .recording,
-                                self.activeRecordingStartID == startID,
-                                !self.shouldCancelRecording
-                            else {
-                                self.clearActiveRecordingContext(recordingID: startID)
-                                return
-                            }
-
-                            let modelResolution = ModeRuntimeResolver.transcriptionModelResolution(
-                                transcriptionModelManager: self.transcriptionModelManager
-                            )
-                            guard
-                                let transcriptionConfiguration = ModeRuntimeResolver.transcriptionConfiguration(
-                                    from: modelResolution
-                                )
-                            else {
-                                let failure = self.recordingModelFailure(for: modelResolution)
-                                NotificationManager.shared.showNotification(
-                                    title: failure.title,
-                                    type: .error,
-                                    duration: 7.0,
-                                    actionButton: (failure.actionLabel, failure.action)
-                                )
-                                guard let finalizationID = self.recordingFinalization.begin() else { return }
-                                defer { self.recordingFinalization.finish(finalizationID) }
-                                await self.recorder.stopRecording()
-                                if self.shouldCancelRecording {
-                                    await self.finishActiveRecorderCancellation()
-                                    await self.recorderUIManager?.dismissRecorderPanel()
-                                    return
-                                }
-                                try? FileManager.default.removeItem(at: permanentURL)
-                                self.recordedFile = nil
-                                self.recordingState = .idle
-                                self.activeRecordingStartID = nil
-                                self.clearActiveRecordingContext(recordingID: startID)
-                                await self.cleanupResources()
-                                await self.recorderUIManager?.dismissRecorderPanel()
-                                return
-                            }
-
-                            if self.serviceRegistry.shouldUseRealtimeTranscription(for: transcriptionConfiguration) {
-                                let session = self.serviceRegistry.createSession(
-                                    for: transcriptionConfiguration,
-                                    onPartialTranscript: { [weak self] partial in
-                                        Task { @MainActor in
-                                            guard let self,
-                                                self.activeRecordingStartID == startID,
-                                                self.recordingState == .recording
-                                            else {
-                                                return
-                                            }
-                                            self.partialTranscript = partial
-                                        }
-                                    }
-                                )
-                                self.currentSession = session
-                                self.currentSessionTranscriptionConfiguration = transcriptionConfiguration
-                                let realCallback = try await session.prepare(
-                                    configuration: transcriptionConfiguration
-                                )
-
-                                guard self.activeRecordingStartID == startID,
-                                    self.recordingState == .recording,
-                                    !self.shouldCancelRecording
-                                else {
-                                    session.cancel()
-                                    return
-                                }
-
-                                if let realCallback {
-                                    let droppedStartupChunks = realtimeAudioGate.activate(realCallback)
-                                    if droppedStartupChunks > 0 {
-                                        self.logger.warning(
-                                            "Realtime startup audio gate dropped \(droppedStartupChunks, privacy: .public) chunks before streaming became active"
-                                        )
-                                    }
-                                } else {
-                                    _ = realtimeAudioGate.reset()
-                                    self.recorder.onAudioChunk = nil
-                                }
-                            } else {
-                                self.currentSession = nil
-                                self.currentSessionTranscriptionConfiguration = nil
-                                self.recorder.onAudioChunk = nil
-                                _ = realtimeAudioGate.reset()
-                            }
-
-                            self.scheduleVoiceInkRefinePreparation(for: startID)
-
-                            Task { @MainActor [weak self] in
-                                guard let self else { return }
-
-                                let currentModel = ModeRuntimeResolver.transcriptionConfiguration(
-                                    transcriptionModelManager: self.transcriptionModelManager
-                                )?.model
-
-                                if let model = currentModel,
-                                    model.provider == .whisper
-                                {
-                                    if let localWhisperModel = self.whisperModelManager.availableModels.first(where: {
-                                        $0.name == model.name
-                                    }),
-                                        self.whisperModelManager.whisperContext == nil
-                                    {
-                                        do {
-                                            try await self.whisperModelManager.loadModel(localWhisperModel)
-                                        } catch {
-                                            self.logger.error("❌ Model loading failed: \(error, privacy: .public)")
-                                        }
-                                    }
-                                } else if let fluidAudioModel = currentModel as? FluidAudioModel {
-                                    try? await self.serviceRegistry.fluidAudioTranscriptionService.loadModel(
-                                        for: fluidAudioModel)
-                                } else if let transcribeCppModel = currentModel as? TranscribeCppModel {
-                                    try? await self.serviceRegistry.transcribeCppTranscriptionService.loadModel(
-                                        for: transcribeCppModel)
-                                }
-
-                            }
-
-                        } catch {
-                            activeModeTask.cancel()
-                            guard self.activeRecordingStartID == startID,
-                                let finalizationID = self.recordingFinalization.begin()
-                            else { return }
-                            defer { self.recordingFinalization.finish(finalizationID) }
-                            self.logger.error("Recording failed to start: \(error, privacy: .public)")
-                            let audioFailure = self.recordingAudioFailure(for: error)
-                            if audioFailure == nil {
-                                await self.recorder.stopRecording()
-                            }
-                            if self.shouldCancelRecording {
-                                await self.finishActiveRecorderCancellation()
-                                return
-                            }
-                            self.cancelCurrentSession()
-                            if let recordedFile = self.recordedFile {
-                                try? FileManager.default.removeItem(at: recordedFile)
-                            }
-                            self.recordingState = .idle
+                guard self.activeRecordingStartID == startID,
+                    self.recorderUIManager?.isRecorderPanelVisible ?? false,
+                    !self.shouldCancelRecording
+                else {
+                    activeModeTask.cancel()
+                    if self.activeRecordingStartID == startID {
+                        guard let finalizationID = self.recordingFinalization.begin() else { return }
+                        defer { self.recordingFinalization.finish(finalizationID) }
+                        await self.recorder.stopRecording()
+                        if self.shouldCancelRecording {
+                            await self.finishActiveRecorderCancellation()
+                        } else {
                             self.recordedFile = nil
+                            self.recordingState = .idle
                             self.activeRecordingStartID = nil
-                            self.clearActiveRecordingContext(recordingID: startID)
-                            await self.cleanupResources()
-                            if let failure = audioFailure {
-                                NotificationManager.shared.showNotification(
-                                    title: failure.title,
-                                    type: .error,
-                                    duration: 7.0,
-                                    actionButton: (failure.actionLabel, failure.action)
-                                )
-                            } else {
-                                NotificationManager.shared.showNotification(
-                                    title: String(localized: "Recording failed to start"), type: .error)
-                            }
-                            await self.recorderUIManager?.dismissRecorderPanel()
                         }
                     }
-                } else {
-                    logger.error("Recording permission denied")
+                    return
                 }
+
+                self.recordingState = .recording
+                self.startRecordingContextCapture(recordingID: startID)
+
+                // Only retire the previous paste session once recording
+                // has actually started. Preflight/permission failures
+                // must leave it available for Auto Learn capture.
+                if AutoLearnSettings.isEnabled {
+                    await AutoLearnService.shared.recordingDidStart()
+                }
+
+                await activeModeTask.value
+
+                guard self.recordingState == .recording,
+                    self.activeRecordingStartID == startID,
+                    !self.shouldCancelRecording
+                else {
+                    self.clearActiveRecordingContext(recordingID: startID)
+                    return
+                }
+
+                let modelResolution = ModeRuntimeResolver.transcriptionModelResolution(
+                    transcriptionModelManager: self.transcriptionModelManager
+                )
+                guard
+                    let transcriptionConfiguration = ModeRuntimeResolver.transcriptionConfiguration(
+                        from: modelResolution
+                    )
+                else {
+                    let failure = self.recordingModelFailure(for: modelResolution)
+                    self.recordingError = failure.title
+                    NotificationManager.shared.showNotification(
+                        title: failure.title,
+                        type: .error,
+                        duration: 7.0,
+                        actionButton: (failure.actionLabel, failure.action)
+                    )
+                    guard let finalizationID = self.recordingFinalization.begin() else { return }
+                    defer { self.recordingFinalization.finish(finalizationID) }
+                    await self.recorder.stopRecording()
+                    if self.shouldCancelRecording {
+                        await self.finishActiveRecorderCancellation()
+                        await self.recorderUIManager?.dismissRecorderPanel()
+                        return
+                    }
+                    try? FileManager.default.removeItem(at: permanentURL)
+                    self.recordedFile = nil
+                    self.recordingState = .idle
+                    self.activeRecordingStartID = nil
+                    self.clearActiveRecordingContext(recordingID: startID)
+                    await self.cleanupResources()
+                    await self.recorderUIManager?.dismissRecorderPanel()
+                    return
+                }
+
+                if self.serviceRegistry.shouldUseRealtimeTranscription(for: transcriptionConfiguration) {
+                    let session = self.serviceRegistry.createSession(
+                        for: transcriptionConfiguration,
+                        onPartialTranscript: { [weak self] partial in
+                            Task { @MainActor in
+                                guard let self,
+                                    self.activeRecordingStartID == startID,
+                                    self.recordingState == .recording
+                                else {
+                                    return
+                                }
+                                self.partialTranscript = partial
+                            }
+                        }
+                    )
+                    self.currentSession = session
+                    self.currentSessionTranscriptionConfiguration = transcriptionConfiguration
+                    let realCallback = try await session.prepare(
+                        configuration: transcriptionConfiguration
+                    )
+
+                    guard self.activeRecordingStartID == startID,
+                        self.recordingState == .recording,
+                        !self.shouldCancelRecording
+                    else {
+                        session.cancel()
+                        return
+                    }
+
+                    if let realCallback {
+                        let droppedStartupChunks = realtimeAudioGate.activate(realCallback)
+                        if droppedStartupChunks > 0 {
+                            self.logger.warning(
+                                "Realtime startup audio gate dropped \(droppedStartupChunks, privacy: .public) chunks before streaming became active"
+                            )
+                        }
+                    } else {
+                        _ = realtimeAudioGate.reset()
+                        self.recorder.onAudioChunk = nil
+                    }
+                } else {
+                    self.currentSession = nil
+                    self.currentSessionTranscriptionConfiguration = nil
+                    self.recorder.onAudioChunk = nil
+                    _ = realtimeAudioGate.reset()
+                }
+
+                self.scheduleVoiceInkRefinePreparation(for: startID)
+
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+
+                    let currentModel = ModeRuntimeResolver.transcriptionConfiguration(
+                        transcriptionModelManager: self.transcriptionModelManager
+                    )?.model
+
+                    if let model = currentModel,
+                        model.provider == .whisper
+                    {
+                        if let localWhisperModel = self.whisperModelManager.availableModels.first(where: {
+                            $0.name == model.name
+                        }),
+                            self.whisperModelManager.whisperContext == nil
+                        {
+                            do {
+                                try await self.whisperModelManager.loadModel(localWhisperModel)
+                            } catch {
+                                self.logger.error("❌ Model loading failed: \(error, privacy: .public)")
+                            }
+                        }
+                    } else if let fluidAudioModel = currentModel as? FluidAudioModel {
+                        try? await self.serviceRegistry.fluidAudioTranscriptionService.loadModel(
+                            for: fluidAudioModel)
+                    } else if let transcribeCppModel = currentModel as? TranscribeCppModel {
+                        try? await self.serviceRegistry.transcribeCppTranscriptionService.loadModel(
+                            for: transcribeCppModel)
+                    }
+
+                }
+
+            } catch {
+                activeModeTask.cancel()
+                guard self.activeRecordingStartID == startID,
+                    let finalizationID = self.recordingFinalization.begin()
+                else { return }
+                defer { self.recordingFinalization.finish(finalizationID) }
+                self.logger.error("Recording failed to start: \(error, privacy: .public)")
+                let audioFailure = self.recordingAudioFailure(for: error)
+                if audioFailure == nil {
+                    await self.recorder.stopRecording()
+                }
+                if self.shouldCancelRecording {
+                    await self.finishActiveRecorderCancellation()
+                    return
+                }
+                self.cancelCurrentSession()
+                if let recordedFile = self.recordedFile {
+                    try? FileManager.default.removeItem(at: recordedFile)
+                }
+                self.recordingState = .idle
+                self.recordingError = audioFailure?.title ?? String(localized: "Recording failed to start")
+                self.recordedFile = nil
+                self.activeRecordingStartID = nil
+                self.clearActiveRecordingContext(recordingID: startID)
+                await self.cleanupResources()
+                if let failure = audioFailure {
+                    NotificationManager.shared.showNotification(
+                        title: failure.title,
+                        type: .error,
+                        duration: 7.0,
+                        actionButton: (failure.actionLabel, failure.action)
+                    )
+                } else {
+                    NotificationManager.shared.showNotification(
+                        title: String(localized: "Recording failed to start"), type: .error)
+                }
+                await self.recorderUIManager?.dismissRecorderPanel()
             }
         }
-    }
-
-    private func requestRecordPermission(response: @escaping (Bool) -> Void) {
-        response(true)
     }
 
     @MainActor
@@ -543,6 +557,15 @@ class VoiceInkEngine: NSObject, ObservableObject {
     /// Checks requirements that do not depend on asynchronous app and URL mode resolution.
     @MainActor
     private func passesRecordingPreflight() async -> Bool {
+        captureReadiness.refreshSnapshot()
+        if let issue = captureReadiness.snapshot.issues(for: .microphoneTest).first {
+            await failRecordingPreflight(
+                title: issue.message,
+                actionLabel: String(localized: "Audio Settings"),
+                action: AudioSetupNavigator.openAudioSettings
+            )
+            return false
+        }
         if !ModeManager.shared.hasEnabledConfiguration {
             await failRecordingPreflight(
                 title: String(localized: "No mode configured"),
@@ -563,6 +586,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     ) async {
         logger.error("❌ Recording preflight failed: \(title, privacy: .public)")
         recordingState = .idle
+        recordingError = title
         NotificationManager.shared.showNotification(
             title: title,
             type: .error,
@@ -599,6 +623,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let transcriptionConfiguration = currentSessionTranscriptionConfiguration
                 ?? ModeRuntimeResolver.transcriptionConfiguration(transcriptionModelManager: transcriptionModelManager)
         else {
+            recordingError = String(localized: "Transcription failed. Select a model for this mode.")
             transcription.text = String(localized: "Transcription Failed: No model selected")
             transcription.transcriptionStatus = TranscriptionStatus.failed.rawValue
             try? modelContext.save()
@@ -691,6 +716,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         await recordingFinalization.waitUntilFinished()
         let didFinishActivePipeline = activePipelineTranscriptionID == transcriptionID
         if didFinishActivePipeline {
+            if transcription.transcriptionStatus == TranscriptionStatus.failed.rawValue {
+                recordingError = String(localized: "Transcription failed. Check the model or provider in Models.")
+            }
             guard let finalizationID = recordingFinalization.begin() else { return }
             defer { recordingFinalization.finish(finalizationID) }
             await cleanupResources()
@@ -722,6 +750,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
     // MARK: - Cancellation
 
     func cancelRecording() async {
+        recordingError = nil
+        if microphoneDiagnostic.isBusy {
+            await microphoneDiagnostic.cancel()
+            return
+        }
         if recordingFinalization.isRunning {
             requestRecordingCancellation()
             await recordingFinalization.waitUntilFinished()
@@ -755,6 +788,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     func resetRecordingSession() async {
+        await microphoneDiagnostic.cancel()
+        recordingError = nil
         await recordingFinalization.waitUntilFinished()
         guard let finalizationID = recordingFinalization.begin() else { return }
         defer { recordingFinalization.finish(finalizationID) }

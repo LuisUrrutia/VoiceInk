@@ -8,7 +8,7 @@ import os
 class Recorder: NSObject, ObservableObject {
     var recorder: (any RecordingHardware)?
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "Recorder")
-    let deviceManager = AudioDeviceManager.shared
+    let deviceManager: AudioDeviceManager
     private var lifecycleCancellable: AnyCancellable?
     var recordingDeviceChangeObserver: NSObjectProtocol?
     private let mediaController = MediaController.shared
@@ -39,7 +39,8 @@ class Recorder: NSObject, ObservableObject {
         case noUsableMicrophone(internalMicrophoneBlockedByClosedLid: Bool)
     }
 
-    init(hardware: (any RecordingHardware)? = nil) {
+    init(hardware: (any RecordingHardware)? = nil, deviceManager: AudioDeviceManager = .shared) {
+        self.deviceManager = deviceManager
         recorder = hardware
         super.init()
         lifecycleCancellable = LifecycleObserver.shared.publisher(
@@ -53,7 +54,11 @@ class Recorder: NSObject, ObservableObject {
         schedulePrepareForCurrentDevice(reason: "init")
     }
 
-    func startRecording(toOutputFile url: URL) async throws {
+    func startMicrophoneTest(toOutputFile url: URL) async throws {
+        try await startRecording(toOutputFile: url, applyRecordingEffects: false)
+    }
+
+    func startRecording(toOutputFile url: URL, applyRecordingEffects: Bool = true) async throws {
         await recordingFinalization.waitUntilFinished()
         try Task.checkCancellation()
         recordingError = nil
@@ -74,8 +79,10 @@ class Recorder: NSObject, ObservableObject {
         mediaController.beginRecordingSession(sessionID: playbackSessionID)
         audioRestorationTask?.cancel()
         audioRestorationTask = nil
-        pauseMedia(sessionID: playbackSessionID)
-        muteSystemAudio(sessionID: playbackSessionID)
+        if applyRecordingEffects {
+            pauseMedia(sessionID: playbackSessionID)
+            muteSystemAudio(sessionID: playbackSessionID)
+        }
 
         let coreAudioRecorder = recorder ?? CoreAudioRecorder()
         coreAudioRecorder.onAudioChunk = onAudioChunk

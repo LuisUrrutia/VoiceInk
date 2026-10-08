@@ -8,6 +8,7 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onCloseTapped: () -> Void
     let onAssistantFollowUp: (String) -> Void
     @AppStorage(RecorderDisplaySettingsKeys.showLiveTranscript) private var showLiveTranscript = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: - Layout Constants
 
@@ -56,6 +57,7 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
             RecorderStatusDisplay(
                 currentState: stateProvider.recordingState,
+                statusText: stateProvider.recordingStatusText,
                 audioMeterProvider: recorder.audioMeterSnapshot
             )
 
@@ -100,8 +102,8 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 cornerRadius: hasLiveTranscript || hasAssistantResponse ? expandedCornerRadius : compactCornerRadius,
                 style: .continuous)
         )
-        .animation(.easeInOut(duration: 0.3), value: hasLiveTranscript)
-        .animation(.easeInOut(duration: 0.3), value: hasAssistantResponse)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: hasLiveTranscript)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: hasAssistantResponse)
         .gesture(WindowDragGesture())
         .allowsWindowActivationEvents()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)

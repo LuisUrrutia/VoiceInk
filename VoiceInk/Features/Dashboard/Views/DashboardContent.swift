@@ -31,6 +31,9 @@ struct DashboardContent: View {
     @State private var isAccessibilityEnabled = AXIsProcessTrusted()
     @EnvironmentObject private var navigation: MainWindowNavigation
     @EnvironmentObject private var updaterViewModel: UpdaterViewModel
+    @EnvironmentObject private var engine: VoiceInkEngine
+    @EnvironmentObject private var recordingShortcutManager: RecordingShortcutManager
+    @EnvironmentObject private var recorderUIManager: RecorderUIManager
     @ObservedObject private var modeManager = ModeManager.shared
     @ObservedObject private var starPrompt = GitHubStarPromptCoordinator.shared
     @State private var isSystemInfoCopied = false
@@ -217,6 +220,12 @@ struct DashboardContent: View {
     private func dashboardMainContent(availableWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 26) {
             summarySection
+
+            CaptureReadinessView(engine: engine, shortcuts: recordingShortcutManager) {
+                Task { await recorderUIManager.toggleRecordingFromSetup() }
+            }
+            .padding(20)
+            .background(AppTranslucentCardBackground(cornerRadius: 18))
 
             if !isAccessibilityEnabled {
                 accessibilityReminder
@@ -732,7 +741,7 @@ private struct DashboardAccessibilityReminder: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                Text("Required for VoiceInk shortcuts and app-wide controls to work properly.")
+                Text("Allows pasting into other apps and shortcuts that need global input monitoring.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

@@ -68,6 +68,10 @@ final class APIKeyManager {
 
     // MARK: - Custom Model API Keys
 
+    func hasCustomModelAPIKey(forModelId modelId: UUID) -> Bool {
+        keychain.exists(forKey: customModelKeyIdentifier(for: modelId))
+    }
+
     /// Saves an API key for a custom model.
     @discardableResult
     func saveCustomModelAPIKey(_ key: String, forModelId modelId: UUID) -> Bool {

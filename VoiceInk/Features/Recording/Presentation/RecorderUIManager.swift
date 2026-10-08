@@ -248,6 +248,15 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         }
     }
 
+    func toggleRecordingFromSetup() async {
+        guard let engine, !engine.microphoneDiagnostic.isBusy else { return }
+        if engine.recordingState == .idle {
+            SoundManager.shared.playStartSound()
+            isRecorderPanelVisible = true
+        }
+        await engine.toggleRecord()
+    }
+
     func finishRecordingAndSend() async {
         guard isRecorderPanelVisible, let engine, engine.recordingState == .recording else { return }
         await engine.toggleRecord(sendAfterPaste: true)

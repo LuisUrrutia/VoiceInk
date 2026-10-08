@@ -3,6 +3,7 @@ import SwiftUI
 
 @MainActor
 struct AudioSetupView: View {
+    @EnvironmentObject private var engine: VoiceInkEngine
     @ObservedObject private var audioDeviceManager = AudioDeviceManager.shared
     @ObservedObject private var mediaController = MediaController.shared
     @ObservedObject private var playbackController = PlaybackController.shared
@@ -24,6 +25,10 @@ struct AudioSetupView: View {
                     } header: {
                         Text("Priority Order")
                     }
+                }
+
+                Section("Local microphone test") {
+                    MicrophoneDiagnosticView(engine: engine)
                 }
 
                 Section {
