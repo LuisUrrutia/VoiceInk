@@ -19,7 +19,7 @@ For read-only requests, report drift without changing the checkout. Before editi
 1. Fetch `origin/personal` over SSH and use its current tip as the base for a focused topic branch, such as `feat/<change>`, `fix/<change>`, or `docs/<change>`. Keep unrelated work out of the branch. Use the existing worktree policy for branch and worktree lifecycle operations.
 2. Implement the requested change and its applicable checks. Record new retained behavior and its regression check as described below.
 3. Publish the topic branch to `origin` and open a PR in `LuisUrrutia/VoiceInk` with base `personal`. Review the diff against that base and describe the behavior and actual validation. The inherited upstream notices that PRs are not accepted apply to `Beingpax/VoiceInk`; they do not prohibit PRs within this fork. Submit a PR to upstream only when explicitly requested.
-4. Update ordinary topic PRs from `personal` by rebasing their own commits, following the existing publication rules. Merge approved changes through the fork PR; do not commit directly to `personal` or force-push it. Opening a PR does not authorize merging it or replacing an installed app.
+4. Update ordinary topic PRs from `personal` by rebasing their own commits, following the existing publication rules. Merge eligible changes through the fork PR under the `pr-followup` policy; do not commit directly to `personal` or force-push it. Opening a PR does not authorize replacing an installed app.
 
 Upstream synchronization is a separate maintenance task, performed when requested or before a fork release. Do not automatically merge upstream into every feature branch when work resumes. If upstream drift affects the requested change, report it and keep synchronization reviewable as a separate PR.
 
