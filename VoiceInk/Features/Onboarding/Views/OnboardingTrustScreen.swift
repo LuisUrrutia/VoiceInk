@@ -47,7 +47,7 @@ struct OnboardingTrustScreen: View {
 
     private func setupRow(_ title: LocalizedStringKey, icon: String, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 16) {
-            Image(systemName: icon)
+            Image(appSymbol: icon)
                 .font(.system(size: 20))
                 .foregroundStyle(.secondary)
                 .frame(width: 28)

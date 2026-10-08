@@ -30,7 +30,7 @@ struct ModePopover: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if enabledConfigs.isEmpty {
                         VStack(alignment: .center, spacing: 8) {
-                            Image(systemName: "sparkles")
+                            Image(appSymbol: "sparkles")
                                 .foregroundColor(AppTheme.Text.secondary)
                                 .font(.system(size: 16))
                             Text("No Modes Available")
@@ -90,7 +90,7 @@ struct ModeRow: View {
 
                 if isSelected {
                     Spacer()
-                    Image(systemName: "checkmark")
+                    Image(appSymbol: "checkmark")
                         .foregroundColor(AppTheme.Status.positive)
                         .font(.system(size: 10))
                 }

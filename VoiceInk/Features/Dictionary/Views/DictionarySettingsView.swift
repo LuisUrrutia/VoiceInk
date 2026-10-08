@@ -119,7 +119,7 @@ struct DictionarySettingsView: View {
     private var sectionSelector: some View {
         Picker("Dictionary section", selection: $selectedSection) {
             ForEach(DictionarySection.allCases, id: \.self) { section in
-                Label(LocalizedStringKey(section.rawValue), systemImage: section.systemImage)
+                Label(LocalizedStringKey(section.rawValue), appSymbol: section.systemImage)
                     .tag(section)
                     .help(section.description)
             }

@@ -28,7 +28,7 @@ struct ProviderBrandIcon: View {
                     .scaledToFit()
                     .padding(size * 0.24)
             } else {
-                Image(systemName: fallbackSystemImage)
+                Image(appSymbol: fallbackSystemImage)
                     .font(.system(size: iconSize, weight: .semibold))
                     .foregroundStyle(isSelected ? AppTheme.Accent.primary : Color.secondary)
             }

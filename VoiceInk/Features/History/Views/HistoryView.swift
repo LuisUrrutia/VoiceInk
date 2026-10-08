@@ -179,7 +179,7 @@ struct HistoryView: View {
         VStack(spacing: 0) {
             AppWindowToolbar {
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
+                    Image(appSymbol: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                     TextField("Search history", text: $searchText)
@@ -192,7 +192,7 @@ struct HistoryView: View {
                             searchText = ""
                             isSearchFocused = true
                         } label: {
-                            Image(systemName: "xmark.circle.fill")
+                            Image(appSymbol: "xmark.circle.fill")
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)

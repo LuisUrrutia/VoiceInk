@@ -29,7 +29,7 @@ struct DashboardGettingStarted: View {
             onNavigate(destination)
         } label: {
             HStack(spacing: 14) {
-                Image(systemName: icon).font(.system(size: 14)).foregroundStyle(.secondary).frame(width: 24)
+                Image(appSymbol: icon).font(.system(size: 14)).foregroundStyle(.secondary).frame(width: 24)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.system(size: 14, weight: .medium))

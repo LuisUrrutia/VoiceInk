@@ -40,12 +40,12 @@ struct VoiceInkRefineModelCardView: View {
 
     private var metadataSection: some View {
         HStack(spacing: 12) {
-            Label("Enhancement Model", systemImage: "sparkles")
-            Label("On-Device", systemImage: "checkmark.shield")
+            Label("Enhancement Model", appSymbol: "sparkles")
+            Label("On-Device", appSymbol: "checkmark.shield")
             Label {
                 Text(verbatim: VoiceInkRefineService.downloadSizeDescription)
             } icon: {
-                Image(systemName: "internaldrive")
+                Image(appSymbol: "internaldrive")
             }
         }
         .font(.system(size: 11))
@@ -120,7 +120,7 @@ struct VoiceInkRefineModelCardView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text("Cancel")
-                            Image(systemName: "xmark.circle")
+                            Image(appSymbol: "xmark.circle")
                         }
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white)
@@ -134,7 +134,7 @@ struct VoiceInkRefineModelCardView: View {
 
                     Menu {
                         Button(role: .destructive, action: deleteAction) {
-                            Label("Delete Model", systemImage: "trash")
+                            Label("Delete Model", appSymbol: "trash")
                         }
 
                         Button {
@@ -145,10 +145,10 @@ struct VoiceInkRefineModelCardView: View {
                                 )
                             }
                         } label: {
-                            Label("Show in Finder", systemImage: "folder")
+                            Label("Show in Finder", appSymbol: "folder")
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(appSymbol: "ellipsis.circle")
                             .font(.system(size: 14))
                     }
                     .menuStyle(.borderlessButton)
@@ -164,7 +164,7 @@ struct VoiceInkRefineModelCardView: View {
                             } else {
                                 Text("Retry")
                             }
-                            Image(systemName: "arrow.down.circle")
+                            Image(appSymbol: "arrow.down.circle")
                         }
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white)

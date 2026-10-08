@@ -69,6 +69,24 @@ open VoiceInk.xcodeproj
 
 Select the `VoiceInk` scheme. Run builds `VoiceInk Dev.app`; Archive uses Release. `LOCAL_BUILD` applies only through `make local`.
 
+## Regenerate Icons
+
+Phosphor 2.1.1 outlined custom symbols use the regular weight and are checked into `VoiceInk/Assets.xcassets/Phosphor`. Normal builds use these assets without downloading icons or running a converter.
+
+To change the catalog, edit `SYMBOLS` in `scripts/phosphor-symbols.py`, then regenerate it with Python 3 and SwiftDraw 0.29.0:
+
+```bash
+git clone --depth 1 --branch 0.29.0 git@github.com:swhitty/SwiftDraw.git .tmp/swiftdraw
+swift build --package-path .tmp/swiftdraw -c release --product swiftdrawcli
+python3 scripts/phosphor-symbols.py .tmp/swiftdraw/.build/release/swiftdrawcli
+```
+
+The generator verifies the pinned Phosphor archive's checksum and stages all conversions before replacing the catalog, Swift mapping and bundled MIT license. Download or conversion failures preserve the existing files. Include all three outputs in the same commit.
+
+Use `Image(appSymbol:)` or `Label(_:appSymbol:)` with a mapped SF Symbol name. These identifiers preserve saved mode icons, including names ending in `.fill`; all artwork comes from Phosphor's regular outlines. Unknown imported names use a Phosphor question mark. Add an alias to the catalog before introducing a new interface symbol. Selected sidebar outlines use VoiceInk's current accent color. The custom symbols keep one fixed stroke weight while their size follows the font.
+
+VoiceInk app and menu-bar branding, bundled provider logo assets, installed application icons and user-selected emojis retain their original artwork. App Shortcuts use system symbols because Apple's `AppShortcut` API requires `systemImageName`.
+
 ## Troubleshooting
 
 - Run `make check` to verify the required tools.

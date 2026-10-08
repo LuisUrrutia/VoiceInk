@@ -129,12 +129,12 @@ struct ModelManagementView: View {
         AppWindowToolbar {
             if selectedSource == .local && selectedCategory == .speech {
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    Image(appSymbol: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Search models", text: $searchText).textFieldStyle(.plain)
                         .font(.system(size: 14)).accessibilityIdentifier("models.search")
                         .focused($isSearchFocused)
                     if !searchText.isEmpty {
-                        Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        Button { searchText = "" } label: { Image(appSymbol: "xmark.circle.fill") }
                             .buttonStyle(.plain).accessibilityLabel("Clear model search")
                     }
                 }
@@ -276,7 +276,7 @@ struct ModelManagementView: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            Label(selectedSource.title, systemImage: selectedSource == .local ? "desktopcomputer" : "cloud")
+            Label(selectedSource.title, appSymbol: selectedSource == .local ? "desktopcomputer" : "cloud")
         }
         .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 10).padding(.vertical, 6)
         .appHoverHighlight()
@@ -376,7 +376,7 @@ struct ModelManagementView: View {
 
     private var emptyModelsState: some View {
         ContentUnavailableView {
-            Label("No Matching Models", systemImage: "line.3.horizontal.decrease.circle")
+            Label("No Matching Models", appSymbol: "line.3.horizontal.decrease.circle")
         } description: {
             Text("Try showing all models to find one to download.")
         } actions: {
@@ -421,7 +421,7 @@ struct ModelManagementView: View {
     private var importLocalModelButton: some View {
         HStack {
             Button(action: presentImportPanel) {
-                Label("Import Local Model…", systemImage: "square.and.arrow.down")
+                Label("Import Local Model…", appSymbol: "square.and.arrow.down")
             }
             .appGlassButtonStyle()
             Spacer()
@@ -431,7 +431,7 @@ struct ModelManagementView: View {
 
     private var intelMacWarningBanner: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(appSymbol: "exclamationmark.triangle.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(AppTheme.Status.warningStrong)
 
@@ -449,7 +449,7 @@ struct ModelManagementView: View {
                 HStack(spacing: 4) {
                     Text("Use Cloud")
                         .font(.system(size: 12, weight: .semibold))
-                    Image(systemName: "arrow.right")
+                    Image(appSymbol: "arrow.right")
                         .font(.system(size: 10, weight: .bold))
                 }
                 .foregroundColor(AppTheme.Status.warningStrong)

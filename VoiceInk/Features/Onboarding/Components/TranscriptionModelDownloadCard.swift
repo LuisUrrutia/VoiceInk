@@ -124,7 +124,7 @@ struct TranscriptionModelDownloadCard: View {
         Button(action: isDownloading ? onCancel : onDownload) {
             HStack(spacing: 6) {
                 Text(downloadButtonTitle)
-                Image(systemName: isDownloading ? "xmark.circle" : "arrow.down.circle")
+                Image(appSymbol: isDownloading ? "xmark.circle" : "arrow.down.circle")
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(

@@ -68,7 +68,7 @@ struct AudioTranscribeView: View {
                     .animation(.easeInOut(duration: 0.15), value: isDropTargeted)
 
                 VStack(spacing: 14) {
-                    Image(systemName: "arrow.down.doc")
+                    Image(appSymbol: "arrow.down.doc")
                         .font(.system(size: 32))
                         .foregroundColor(isDropTargeted ? AppTheme.Accent.primary : .gray)
 
@@ -151,7 +151,7 @@ struct AudioTranscribeView: View {
                 selectFiles()
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "plus")
+                    Image(appSymbol: "plus")
                         .font(.system(size: 12, weight: .medium))
                     Text("Add")
                         .font(.system(size: 12, weight: .medium))
@@ -176,7 +176,7 @@ struct AudioTranscribeView: View {
                     transcriptionManager.cancelProcessing()
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "stop.fill")
+                        Image(appSymbol: "stop.fill")
                             .font(.system(size: 10, weight: .medium))
                         Text("Cancel")
                             .font(.system(size: 12, weight: .medium))
@@ -196,7 +196,7 @@ struct AudioTranscribeView: View {
                     startProcessing()
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "play.fill")
+                        Image(appSymbol: "play.fill")
                             .font(.system(size: 10, weight: .medium))
                         Text("Start")
                             .font(.system(size: 12, weight: .semibold))
@@ -223,7 +223,7 @@ struct AudioTranscribeView: View {
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "xmark.bin")
+                    Image(appSymbol: "xmark.bin")
                         .font(.system(size: 12, weight: .medium))
                     Text("Clear")
                         .font(.system(size: 12, weight: .medium))
@@ -268,7 +268,7 @@ struct AudioTranscribeView: View {
                             .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                        Image(systemName: "chevron.up.chevron.down")
+                        Image(appSymbol: "chevron.up.chevron.down")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundColor(.secondary)
                     }

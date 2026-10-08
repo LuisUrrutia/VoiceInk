@@ -86,7 +86,7 @@ struct AudioSetupView: View {
             Label {
                 Text("Refresh Microphones")
             } icon: {
-                Image(systemName: "arrow.clockwise")
+                Image(appSymbol: "arrow.clockwise")
                     .rotationEffect(.degrees(refreshIconRotation))
             }
         }
@@ -141,7 +141,7 @@ struct AudioSetupView: View {
             audioDeviceManager.addPrioritizedDevice(uid: device.uid, name: device.name)
         } label: {
             HStack(spacing: 8) {
-                Label(device.name, systemImage: "plus.circle")
+                Label(device.name, appSymbol: "plus.circle")
                     .lineLimit(1)
 
                 Spacer()
@@ -180,7 +180,7 @@ struct AudioSetupView: View {
             Spacer()
 
             if isActive {
-                Label("Active", systemImage: "checkmark.circle.fill")
+                Label("Active", appSymbol: "checkmark.circle.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .labelStyle(.titleAndIcon)
@@ -190,7 +190,7 @@ struct AudioSetupView: View {
                 Button {
                     movePrioritizedDeviceUp(prioritizedDevice)
                 } label: {
-                    Image(systemName: "chevron.up")
+                    Image(appSymbol: "chevron.up")
                 }
                 .disabled(prioritizedDevice.id == prioritizedDevicesInDisplayOrder.first?.id)
                 .help("Move up")
@@ -198,7 +198,7 @@ struct AudioSetupView: View {
                 Button {
                     movePrioritizedDeviceDown(prioritizedDevice)
                 } label: {
-                    Image(systemName: "chevron.down")
+                    Image(appSymbol: "chevron.down")
                 }
                 .disabled(prioritizedDevice.id == prioritizedDevicesInDisplayOrder.last?.id)
                 .help("Move down")
@@ -206,7 +206,7 @@ struct AudioSetupView: View {
                 Button {
                     audioDeviceManager.removePrioritizedDevice(id: prioritizedDevice.id)
                 } label: {
-                    Image(systemName: "minus.circle")
+                    Image(appSymbol: "minus.circle")
                 }
                 .help("Remove")
             }

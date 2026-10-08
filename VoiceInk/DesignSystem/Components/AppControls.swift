@@ -27,7 +27,7 @@ struct AppIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
+            Image(appSymbol: systemName)
                 .font(.system(size: iconSize, weight: .medium))
                 .foregroundColor(isDisabled ? .secondary.opacity(0.45) : .primary.opacity(0.7))
                 .frame(width: max(16, size - 12), height: max(16, size - 12))

@@ -96,7 +96,7 @@ struct ChangeLogView: View {
                     .scaledToFill()
             case .failure:
                 previewPlaceholder {
-                    Image(systemName: "play.rectangle.fill")
+                    Image(appSymbol: "play.rectangle.fill")
                         .font(.system(size: 42, weight: .medium))
                         .foregroundStyle(AppTheme.Text.secondary)
                 }

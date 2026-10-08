@@ -115,7 +115,7 @@ struct PromptEditorView: View {
             Button {
                 dismissPanel()
             } label: {
-                Image(systemName: "chevron.left")
+                Image(appSymbol: "chevron.left")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.secondary)
                     .frame(width: 28, height: 28)
@@ -164,7 +164,7 @@ struct PromptEditorView: View {
                 }
             }
         } label: {
-            Label("Template", systemImage: "sparkles")
+            Label("Template", appSymbol: "sparkles")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.secondary)
         }

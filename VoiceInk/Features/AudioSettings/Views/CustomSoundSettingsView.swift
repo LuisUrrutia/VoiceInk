@@ -63,7 +63,7 @@ struct CustomSoundSettingsView: View {
                     SoundManager.shared.playStopSound()
                 }
             } label: {
-                Image(systemName: "play.fill")
+                Image(appSymbol: "play.fill")
             }
             .buttonStyle(.borderless)
             .disabled(!isEnabled)
@@ -72,7 +72,7 @@ struct CustomSoundSettingsView: View {
             Button {
                 selectSound(for: type)
             } label: {
-                Image(systemName: "folder")
+                Image(appSymbol: "folder")
             }
             .buttonStyle(.borderless)
             .help("Choose")
@@ -85,7 +85,7 @@ struct CustomSoundSettingsView: View {
                         customSoundManager.selectBuiltInSound(type.defaultBuiltInSound, for: type)
                     }
                 } label: {
-                    Image(systemName: "arrow.uturn.backward")
+                    Image(appSymbol: "arrow.uturn.backward")
                 }
                 .buttonStyle(.borderless)
                 .help("Reset")

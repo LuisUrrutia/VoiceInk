@@ -79,7 +79,7 @@ struct OnboardingExperienceCard: View {
         HStack(spacing: 8) {
             trafficLights
 
-            Image(systemName: "note.text")
+            Image(appSymbol: "note.text")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(AppTheme.Text.secondary)
 
@@ -89,7 +89,7 @@ struct OnboardingExperienceCard: View {
 
             Spacer(minLength: 0)
 
-            Image(systemName: "square.and.pencil")
+            Image(appSymbol: "square.and.pencil")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(AppTheme.Text.muted)
         }
@@ -128,7 +128,7 @@ struct OnboardingExperienceCard: View {
     }
 
     private var transformArrow: some View {
-        Image(systemName: "arrow.right")
+        Image(appSymbol: "arrow.right")
             .font(.system(size: 15, weight: .semibold))
             .foregroundColor(AppTheme.Text.muted)
             .frame(width: 46)

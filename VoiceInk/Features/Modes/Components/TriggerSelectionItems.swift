@@ -128,7 +128,7 @@ private struct TriggerTextChip: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: systemName)
+            Image(appSymbol: systemName)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary)
 
@@ -139,7 +139,7 @@ private struct TriggerTextChip: View {
                 .frame(maxWidth: 100, alignment: .leading)
 
             Button(action: onRemove) {
-                Image(systemName: "xmark")
+                Image(appSymbol: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
                     .frame(width: 14, height: 14)
@@ -221,12 +221,12 @@ struct TriggerGroupPreviewStack: View {
                     Circle()
                         .fill(AppTheme.Surface.card)
                         .frame(width: tileSize - 8, height: tileSize - 8)
-                    Image(systemName: "globe")
+                    Image(appSymbol: "globe")
                         .font(.system(size: tileSize * 0.38, weight: .semibold))
                         .foregroundStyle(.primary)
                 }
             case .empty:
-                Image(systemName: "folder")
+                Image(appSymbol: "folder")
                     .font(.system(size: tileSize * 0.43, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -283,7 +283,7 @@ struct TriggerAppIcon: View {
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
         } else {
-            Image(systemName: "app.fill")
+            Image(appSymbol: "app.fill")
                 .font(.system(size: size * 0.58, weight: .medium))
                 .foregroundStyle(.primary)
                 .frame(width: size, height: size)
@@ -300,7 +300,7 @@ struct TriggerRemoveButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "xmark.circle.fill")
+            Image(appSymbol: "xmark.circle.fill")
                 .font(.system(size: 12, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
@@ -315,7 +315,7 @@ struct TriggerEditButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "pencil.circle.fill")
+            Image(appSymbol: "pencil.circle.fill")
                 .font(.system(size: 12, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)

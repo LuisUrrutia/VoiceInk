@@ -19,8 +19,8 @@ struct TranscribeCppModelCardView: View {
                 }
 
                 HStack(spacing: 12) {
-                    Label(model.language, systemImage: "globe")
-                    Label(model.size, systemImage: "internaldrive")
+                    Label(model.language, appSymbol: "globe")
+                    Label(model.size, appSymbol: "internaldrive")
                     HStack(spacing: 3) {
                         Text("Speed")
                         progressDotsWithNumber(value: model.speed * 10)
@@ -92,16 +92,16 @@ struct TranscribeCppModelCardView: View {
                     Button(role: .destructive) {
                         modelManager.deleteModel(model)
                     } label: {
-                        Label("Delete Model", systemImage: "trash")
+                        Label("Delete Model", appSymbol: "trash")
                     }
 
                     Button {
                         modelManager.showModelInFinder(model)
                     } label: {
-                        Label("Show in Finder", systemImage: "folder")
+                        Label("Show in Finder", appSymbol: "folder")
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(appSymbol: "ellipsis.circle")
                         .font(.system(size: 14))
                 }
                 .menuStyle(.borderlessButton)
@@ -117,7 +117,7 @@ struct TranscribeCppModelCardView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(LocalizedStringKey(isDownloading ? "Cancel" : "Download"))
-                        Image(systemName: isDownloading ? "xmark.circle" : "arrow.down.circle")
+                        Image(appSymbol: isDownloading ? "xmark.circle" : "arrow.down.circle")
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)

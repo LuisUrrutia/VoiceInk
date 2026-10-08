@@ -233,7 +233,7 @@ struct DashboardContent: View {
                 Button {
                     openAutoLearnReviewPanel()
                 } label: {
-                    Label("Review \(count) dictionary suggestions", systemImage: "text.badge.checkmark")
+                    Label("Review \(count) dictionary suggestions", appSymbol: "text.badge.checkmark")
                 }
                 .buttonStyle(.borderless)
             }
@@ -246,7 +246,7 @@ struct DashboardContent: View {
                 }
                 if recentDashboardTranscriptions.isEmpty {
                     HStack(spacing: 14) {
-                        Image(systemName: "waveform").font(.title2).foregroundStyle(.secondary)
+                        Image(appSymbol: "waveform").font(.title2).foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Your words will appear here").font(.headline)
                             Text("Dictate in any app, then come back to your recent transcriptions.").font(.callout)
@@ -278,7 +278,7 @@ struct DashboardContent: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text(selectedInsightPeriod.pickerTitle)
-                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .medium))
+                        Image(appSymbol: "chevron.up.chevron.down").font(.system(size: 10, weight: .medium))
                     }
                     .padding(.horizontal, 8).padding(.vertical, 6)
                     .appHoverHighlight()
@@ -719,7 +719,7 @@ private struct DashboardAccessibilityReminder: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(AppTheme.Accent.fill)
 
-                Image(systemName: "hand.raised")
+                Image(appSymbol: "hand.raised")
                     .font(.system(size: 15, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AppTheme.Accent.primary)
@@ -759,7 +759,7 @@ private struct DashboardNoModesReminder: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(AppTheme.Accent.fill)
 
-                Image(systemName: "square.grid.2x2")
+                Image(appSymbol: "square.grid.2x2")
                     .font(.system(size: 15, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AppTheme.Accent.primary)
