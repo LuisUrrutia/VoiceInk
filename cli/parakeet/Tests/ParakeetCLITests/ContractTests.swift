@@ -132,6 +132,16 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(String(decoding: try transcript.render(.txt), as: UTF8.self), "Café 東京 👋\n")
     }
 
+    func testSRTCuesCannotBeSplitByReplacementNewlines() throws {
+        let transcript = Transcript(text: "first\n\nsecond", segments: [
+            TimedSegment(start: 0, end: 1, text: "first\n\nsecond"),
+        ], duration: 1, speechDuration: 1, vadApplied: false)
+
+        let srt = String(decoding: try transcript.render(.srt), as: UTF8.self)
+
+        XCTAssertEqual(srt, "1\n00:00:00,000 --> 00:00:01,000\nfirst second\n")
+    }
+
     func testBatchContinuesAndProgressNeverReachesStdout() async throws {
         let output = directory.appendingPathComponent("out")
         let options = try Options.parse(["--output", output.path, "bad.wav", "good.wav"])

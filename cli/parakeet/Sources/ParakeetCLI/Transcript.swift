@@ -65,9 +65,11 @@ struct Transcript: Codable {
             let cues = segments.compactMap { segment -> (Int, Int, String)? in
                 let start = max(previousEnd, Int((max(0, segment.start) * 1000).rounded()))
                 let end = max(start, Int((min(duration, segment.end) * 1000).rounded()))
-                guard end > start, !segment.text.isEmpty else { return nil }
+                let text = segment.text.replacingOccurrences(of: #"[\r\n]+"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard end > start, !text.isEmpty else { return nil }
                 previousEnd = end
-                return (start, end, segment.text)
+                return (start, end, text)
             }
             let text = cues.enumerated().map { index, cue in
                 "\(index + 1)\n\(Self.timestamp(cue.0)) --> \(Self.timestamp(cue.1))\n\(cue.2)\n"
