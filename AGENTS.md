@@ -70,6 +70,13 @@ When local packaging is requested, inspect `make local` first: it recreates `.lo
 
 ## Tracked local overlays
 
+### Multiple Whisper transcription languages
+
+- Request: Independently adapt https://github.com/servitola/VoiceInk/commit/19ea75024adfe10a236293c54a2f84c4d1b4c6d6 to this fork's current architecture.
+- Preserve ordered, nonempty language selections in global settings and modes for multilingual local Whisper models. Automatic detection excludes explicit selections; multiple explicit languages use automatic recognition with their combined language prompts, without claiming to restrict recognition to those languages. Keep legacy single-language preferences and modes readable, and mirror the effective recognition language for existing consumers.
+- Carry mode languages into recording, imported audio, and History transcription requests. Validate selections against the actual model, and retain one supported language or locale for other providers and English-only Whisper models. Preserve Apple Speech asset controls and provider-qualified model selection keys.
+- Regression: `TranscriptionLanguageTests` runs in `VoiceInkTests` through `./scripts/check-personal-sync.sh` and covers legacy persistence, ordered prompts, automatic detection, nonempty selections, provider fallback, mode editing, and mode runtime requests. In `VoiceInk Dev.app`, verify global and mode menus, saving and reopening bilingual modes, automatic detection, model switching, and unrelated navigation. Verify real bilingual recording, audio import, and History retranscription with an installed multilingual Whisper model before claiming recognition quality.
+
 ### Display-backed recording context capture
 
 - Request: Independently adapt the behavior described in https://github.com/Beingpax/VoiceInk/pull/880. This fork implementation is tracked here rather than retaining the upstream PR head in `scripts/personal-prs.tsv`.
