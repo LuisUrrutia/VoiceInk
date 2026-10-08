@@ -130,6 +130,7 @@ enum AppDefaults {
             "enableAnnouncements": true,
 
             // Clipboard
+            PasteTargetSettings.key: true,
             "restoreClipboardAfterPaste": true,
             "clipboardRestoreDelay": 2.0,
             "useAppleScriptPaste": false,

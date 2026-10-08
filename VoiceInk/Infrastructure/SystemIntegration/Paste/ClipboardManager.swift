@@ -12,8 +12,10 @@ struct ClipboardManager {
         case accessDenied
     }
 
-    static func setClipboard(_ text: String, transient: Bool = false, sessionID: String? = nil) -> Bool {
-        let pasteboard = NSPasteboard.general
+    @discardableResult
+    static func setClipboard(
+        _ text: String, transient: Bool = false, sessionID: String? = nil, on pasteboard: NSPasteboard = .general
+    ) -> Bool {
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else {
             return false

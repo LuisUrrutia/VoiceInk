@@ -4,13 +4,15 @@ import os
 
 struct CustomCommandDeliveryContext {
     let transcript: String
+    var includesTranscriptEnvironment = true
 
     var standardInput: String {
         transcript
     }
 
     var environment: [String: String] {
-        [
+        guard includesTranscriptEnvironment else { return [:] }
+        return [
             "VOICEINK_TRANSCRIPT": transcript
         ]
     }
@@ -65,15 +67,22 @@ enum CustomCommandDeliveryRunner {
             throw CustomCommandDeliveryError.commandNotConfigured
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                execute(
-                    command: trimmedCommand,
-                    timeout: timeout,
-                    context: context,
-                    continuation: continuation
-                )
+        let cancellation = CommandCancellation()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    execute(
+                        command: trimmedCommand,
+                        timeout: timeout,
+                        context: context,
+                        cancellation: cancellation,
+                        continuation: continuation
+                    )
+                }
             }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 
@@ -81,14 +90,23 @@ enum CustomCommandDeliveryRunner {
         command: String,
         timeout: TimeInterval,
         context: CustomCommandDeliveryContext,
+        cancellation: CommandCancellation,
         continuation: CheckedContinuation<CustomCommandDeliveryResult, Error>
     ) {
+        guard !cancellation.isCancelled else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-lc", command]
         process.environment = ShellCommandEnvironment.commandEnvironment(
             additionalEnvironment: context.environment
         )
+        guard !cancellation.isCancelled else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -117,14 +135,19 @@ enum CustomCommandDeliveryRunner {
         let timeoutDeadline = DispatchTime.now() + timeout
         startWritingStandardInput(context.standardInput, to: inputPipe.fileHandleForWriting, group: inputWriteGroup)
 
-        let waitResult = semaphore.wait(timeout: timeoutDeadline)
+        var waitResult: DispatchTimeoutResult = .timedOut
+        while !cancellation.isCancelled && DispatchTime.now() < timeoutDeadline {
+            waitResult = semaphore.wait(timeout: min(.now() + 0.05, timeoutDeadline))
+            if waitResult == .success { break }
+        }
         if waitResult == .timedOut {
             terminate(process, semaphore: semaphore)
             try? inputPipe.fileHandleForWriting.close()
             _ = waitForCollectors(outputCollectors, timeout: 1)
             outputCollectors.forEach { $0.stop() }
             _ = waitForGroup(inputWriteGroup, timeout: 1)
-            continuation.resume(throwing: CustomCommandDeliveryError.timeout(seconds: timeout))
+            continuation.resume(throwing: cancellation.isCancelled
+                ? CancellationError() : CustomCommandDeliveryError.timeout(seconds: timeout))
             return
         }
 
@@ -134,6 +157,11 @@ enum CustomCommandDeliveryRunner {
 
         let stdout = outputCollector.stringValue()
         let stderr = errorCollector.stringValue()
+
+        guard !cancellation.isCancelled else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
 
         guard process.terminationStatus == 0 else {
             continuation.resume(
@@ -274,6 +302,23 @@ enum CustomCommandDeliveryRunner {
     private static func waitForCollectors(_ collectors: [PipeOutputCollector], timeout: TimeInterval) -> Bool {
         let deadline = DispatchTime.now() + timeout
         return collectors.allSatisfy { $0.wait(until: deadline) }
+    }
+}
+
+private final class CommandCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
     }
 }
 
