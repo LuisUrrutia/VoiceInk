@@ -64,6 +64,10 @@ enum ShortcutValidator {
                 return nil
             }
 
+            if shortcut.keyCode == UInt16(kVK_ANSI_Backslash), shortcut.modifierFlags.isEmpty {
+                return nil
+            }
+
             guard !shortcut.modifierFlags.isEmpty else {
                 return .plainKeyRequiresModifier
             }

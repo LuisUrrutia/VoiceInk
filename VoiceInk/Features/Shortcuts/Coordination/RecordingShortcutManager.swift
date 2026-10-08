@@ -335,10 +335,11 @@ final class RecordingShortcutModeHandler {
     private var interruptedRecordingActions = Set<ShortcutAction>()
     private var activeShortcutCanCancelAccidentalStart = false
     private var activeShortcutIsDoubleTap = false
-    private var lastShortcutPressTime: Date?
+    private var lastShortcutPressTime: TimeInterval?
+    private let now: () -> TimeInterval
     private var pendingDoubleTapReleaseTimes: [ShortcutAction: TimeInterval] = [:]
 
-    private let shortcutPressCooldown: TimeInterval = 0.5
+    private let shortcutPressCooldown: TimeInterval = 0.25
     private let hybridPressThreshold: TimeInterval = 0.5
     private let doubleTapThreshold: TimeInterval = 0.7
 
@@ -347,13 +348,15 @@ final class RecordingShortcutModeHandler {
         isRecorderVisible: @escaping @MainActor () -> Bool,
         recordingState: @escaping @MainActor () -> RecordingState,
         toggleRecorderPanel: @escaping @MainActor (UUID?) async -> Void,
-        cancelRecording: @escaping @MainActor () async -> Void
+        cancelRecording: @escaping @MainActor () async -> Void,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.canHandleShortcutAction = canHandleShortcutAction
         self.isRecorderVisible = isRecorderVisible
         self.recordingState = recordingState
         self.toggleRecorderPanel = toggleRecorderPanel
         self.cancelRecording = cancelRecording
+        self.now = now
     }
 
     func reset() {
@@ -408,7 +411,7 @@ final class RecordingShortcutModeHandler {
         }
 
         if mode != .doubleTap, let lastTrigger = lastShortcutPressTime,
-            Date().timeIntervalSince(lastTrigger) < shortcutPressCooldown
+            now() - lastTrigger < shortcutPressCooldown
         {
             return
         }
@@ -421,7 +424,7 @@ final class RecordingShortcutModeHandler {
         activeShortcutIsDoubleTap = mode == .doubleTap
         activeShortcutCanCancelAccidentalStart = mode != .doubleTap && canCurrentShortcutPressCancelAccidentalStart
         if mode != .doubleTap {
-            lastShortcutPressTime = Date()
+            lastShortcutPressTime = now()
         }
         shortcutPressStartTime = eventTime
 
