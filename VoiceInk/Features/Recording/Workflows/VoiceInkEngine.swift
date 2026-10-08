@@ -217,6 +217,20 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     try? modelContext.save()
                     NotificationCenter.default.post(name: .transcriptionCreated, object: transcription)
 
+                    if let error = recorder.recordingError {
+                        transcription.text = error.localizedDescription
+                        transcription.transcriptionStatus = TranscriptionStatus.failed.rawValue
+                        try? modelContext.save()
+                        NotificationManager.shared.showNotification(
+                            title: error.localizedDescription, type: .error
+                        )
+                        cancelCurrentSession()
+                        self.recordedFile = nil
+                        recordingState = .idle
+                        await cleanupResources()
+                        return
+                    }
+
                     recordingFinalization.finish(finalizationID)
                     await runPipeline(
                         on: transcription,

@@ -8,6 +8,32 @@ import os
 
 @MainActor
 final class RecordingFinalizationTests: XCTestCase {
+    func testCaptureFailureIsRetainedAfterAwaitedStopAndDoesNotEnterTranscription() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("failed.wav")
+        let hardware = try HeldRecordingHardware(url: url, captureFailure: RecordingAudioError.conversionFailed)
+        defer { hardware.releaseStop() }
+        let engine = try makeEngine(hardware: hardware, directory: directory)
+        engine.recordedFile = url
+        engine.recordingState = .recording
+        let stop = Task { await engine.toggleRecord() }
+        await fulfillment(of: [hardware.stopEntered], timeout: 3)
+
+        hardware.releaseStop()
+        await stop.value
+
+        let entries = try history(in: engine)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.transcriptionStatus, TranscriptionStatus.failed.rawValue)
+        XCTAssertEqual(entries.first?.text, RecordingAudioError.conversionFailed.localizedDescription)
+        XCTAssertNotNil(engine.recorder.recordingError)
+        XCTAssertEqual(engine.recordingState, .idle)
+        XCTAssertNil(engine.recordedFile)
+        XCTAssertNil(engine.recorder.onAudioChunk)
+        XCTAssertEqual(try AVAudioFile(forReading: url).length, 16_000)
+    }
+
     func testStopWaitsForClosedWAVAndFinalStreamingChunk() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -277,6 +303,7 @@ private final class HeldRecordingHardware: RecordingHardware, @unchecked Sendabl
     let stopEntered = XCTestExpectation(description: "hardware stop entered")
     let averagePower: Float = -160
     let peakPower: Float = -160
+    let recordingError: Error?
 
     var onAudioChunk: ((Data) -> Void)? {
         get { state.withLock { $0.callback } }
@@ -286,7 +313,8 @@ private final class HeldRecordingHardware: RecordingHardware, @unchecked Sendabl
     var startCount: Int { state.withLock { $0.startCount } }
     var error: Error? { state.withLock { $0.error } }
 
-    init(url: URL? = nil) throws {
+    init(url: URL? = nil, captureFailure: Error? = nil) throws {
+        recordingError = captureFailure
         var initial = State()
         if let url {
             let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
