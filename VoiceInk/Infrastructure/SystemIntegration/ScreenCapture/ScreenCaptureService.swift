@@ -12,14 +12,7 @@ class ScreenCaptureService: ObservableObject {
     @Published var isCapturing = false
     @Published var lastCapturedText: String?
 
-    private struct FocusedWindowHint: Sendable {
-        let processID: pid_t
-        let title: String?
-        let frame: CGRect?
-    }
-
     private static let captureTimeout: TimeInterval = 3.0
-    nonisolated private static let focusedWindowFrameTolerance: CGFloat = 96
 
     static func requestScreenCapturePermissionRegistration() async -> Bool {
         if CGPreflightScreenCaptureAccess() {
@@ -67,7 +60,7 @@ class ScreenCaptureService: ObservableObject {
         return contextText
     }
 
-    private func makeFocusedWindowHint(excluding currentPID: pid_t) -> FocusedWindowHint? {
+    private func makeFocusedWindowHint(excluding currentPID: pid_t) -> ActiveWindowSelector.FocusedWindow? {
         guard let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
             frontmostPID != currentPID
         else {
@@ -76,10 +69,12 @@ class ScreenCaptureService: ObservableObject {
 
         var focusedTitle: String?
         var focusedFrame: CGRect?
+        var focusedWindowID: CGWindowID?
 
         if AXIsProcessTrusted() {
             let appElement = AXUIElementCreateApplication(frontmostPID)
             if let focusedWindow = copyAXElementAttribute(kAXFocusedWindowAttribute, from: appElement) {
+                focusedWindowID = AccessibilityWindowID.resolve(focusedWindow)
                 focusedTitle = normalized(copyStringAttribute(kAXTitleAttribute, from: focusedWindow))
 
                 if let position = copyCGPointAttribute(kAXPositionAttribute, from: focusedWindow),
@@ -90,15 +85,16 @@ class ScreenCaptureService: ObservableObject {
             }
         }
 
-        return FocusedWindowHint(
+        return ActiveWindowSelector.FocusedWindow(
             processID: frontmostPID,
+            windowID: focusedWindowID,
             title: focusedTitle,
             frame: focusedFrame
         )
     }
 
     private nonisolated static func captureAndExtractWindowText(
-        focusedWindowHint: FocusedWindowHint?,
+        focusedWindowHint: ActiveWindowSelector.FocusedWindow?,
         currentPID: pid_t
     ) async -> String? {
         do {
@@ -162,55 +158,27 @@ class ScreenCaptureService: ObservableObject {
 
     private nonisolated static func findActiveWindow(
         in windows: [SCWindow],
-        focusedWindowHint: FocusedWindowHint?,
+        focusedWindowHint: ActiveWindowSelector.FocusedWindow?,
         currentPID: pid_t
     ) -> SCWindow? {
-        let candidates = windows.filter { window in
-            guard let processID = window.owningApplication?.processID else {
-                return false
-            }
-
-            return processID != currentPID && window.windowLayer == 0 && window.isOnScreen && window.frame.width > 0
-                && window.frame.height > 0
+        let candidates = windows.map { window in
+            ActiveWindowSelector.Window(
+                windowID: window.windowID,
+                processID: window.owningApplication?.processID,
+                title: window.title,
+                frame: window.frame,
+                windowLayer: window.windowLayer,
+                isOnScreen: window.isOnScreen
+            )
         }
 
-        guard let focusedWindowHint else {
-            return candidates.first
-        }
+        guard let selected = ActiveWindowSelector.select(
+            from: candidates,
+            focusedWindow: focusedWindowHint,
+            excluding: currentPID
+        ) else { return nil }
 
-        let appWindows = candidates.filter {
-            $0.owningApplication?.processID == focusedWindowHint.processID
-        }
-
-        guard !appWindows.isEmpty else {
-            return candidates.first
-        }
-
-        if let focusedFrame = focusedWindowHint.frame,
-            let closestWindow = closestFrameMatch(to: focusedFrame, in: appWindows),
-            frameDistance(closestWindow.frame, focusedFrame) <= focusedWindowFrameTolerance
-        {
-            return closestWindow
-        }
-
-        if let focusedTitle = focusedWindowHint.title,
-            let titledWindow = appWindows.first(where: { normalized($0.title) == focusedTitle })
-        {
-            return titledWindow
-        }
-
-        return appWindows.first
-    }
-
-    private nonisolated static func closestFrameMatch(to frame: CGRect, in windows: [SCWindow]) -> SCWindow? {
-        windows.min {
-            frameDistance($0.frame, frame) < frameDistance($1.frame, frame)
-        }
-    }
-
-    private nonisolated static func frameDistance(_ first: CGRect, _ second: CGRect) -> CGFloat {
-        abs(first.origin.x - second.origin.x) + abs(first.origin.y - second.origin.y)
-            + abs(first.size.width - second.size.width) + abs(first.size.height - second.size.height)
+        return windows.first(where: { $0.windowID == selected.windowID })
     }
 
     private nonisolated static func extractText(from cgImage: CGImage) -> String? {
