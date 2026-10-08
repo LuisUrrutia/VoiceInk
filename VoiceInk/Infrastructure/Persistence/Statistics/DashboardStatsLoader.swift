@@ -2,7 +2,10 @@ import Foundation
 import SwiftData
 
 enum DashboardStatsLoader {
-    static func load(from modelContainer: ModelContainer) async throws -> DashboardStatsSummary {
+    static func load(
+        from modelContainer: ModelContainer,
+        windows: DashboardPeriodWindows? = nil
+    ) async throws -> DashboardStatsSummary {
         let task = Task.detached(priority: .utility) {
             try Task.checkCancellation()
 
@@ -56,7 +59,7 @@ enum DashboardStatsLoader {
             var allTimeMonthWords: [Date: Int] = [:]
             var allTimeDayWords: [Date: Int] = [:]
             var firstMetricDate: Date?
-            let windows = DashboardPeriodWindows()
+            let windows = windows ?? DashboardPeriodWindows()
             let now = windows.now
             let calendar = windows.calendar
             var todayProductivity = Self.hourlyProductivityPoints(now: now, calendar: calendar)
@@ -108,7 +111,9 @@ enum DashboardStatsLoader {
                     firstMetricDate = records.first?.timestamp
                 }
 
-                for metric in records {
+                for record in records {
+                    // SwiftData getters are costly when repeated for every period accumulator.
+                    let metric = DashboardMetricValues(record)
                     words += metric.wordCount
                     duration += metric.audioDuration
 
@@ -480,11 +485,11 @@ enum DashboardStatsLoader {
     }
 
     private static func addModelPerformance(
-        for metric: SessionMetric,
+        for metric: DashboardMetricValues,
         transcriptionPerformance: inout [String: ModelPerformanceAccumulator],
         enhancementPerformance: inout [String: ModelPerformanceAccumulator]
     ) {
-        if let modelName = sanitizedModelName(metric.transcriptionModelName),
+        if let modelName = metric.transcriptionModelName,
             let transcriptionDuration = metric.transcriptionDuration,
             transcriptionDuration > 0
         {
@@ -494,7 +499,7 @@ enum DashboardStatsLoader {
             )
         }
 
-        if let modelName = sanitizedModelName(metric.aiEnhancementModelName),
+        if let modelName = metric.aiEnhancementModelName,
             let enhancementDuration = metric.enhancementDuration,
             enhancementDuration > 0
         {
@@ -545,11 +550,11 @@ enum DashboardStatsLoader {
     }
 
     private static func addModelUsage(
-        for metric: SessionMetric,
+        for metric: DashboardMetricValues,
         transcriptionAudioUsage: inout [String: TranscriptionAudioUsageAccumulator],
         enhancementTokenUsage: inout [String: EnhancementTokenUsageAccumulator]
     ) {
-        if let modelName = sanitizedModelName(metric.transcriptionModelName),
+        if let modelName = metric.transcriptionModelName,
             metric.audioDuration > 0
         {
             transcriptionAudioUsage[modelName, default: TranscriptionAudioUsageAccumulator()].add(
@@ -557,7 +562,7 @@ enum DashboardStatsLoader {
             )
         }
 
-        if let modelName = sanitizedModelName(metric.aiEnhancementModelName) {
+        if let modelName = metric.aiEnhancementModelName {
             let tokens = max(metric.enhancementEstimatedTokenCount ?? 0, 0)
             enhancementTokenUsage[modelName, default: EnhancementTokenUsageAccumulator()].add(
                 tokens: tokens
@@ -566,7 +571,7 @@ enum DashboardStatsLoader {
     }
 
     private static func addPeakHour(
-        for metric: SessionMetric,
+        for metric: DashboardMetricValues,
         hour: Int,
         day: Date,
         to peakHours: inout [Int: DashboardPeakHourAccumulator]
@@ -724,4 +729,26 @@ private func sanitizedModelName(_ name: String?) -> String? {
 
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+}
+
+private struct DashboardMetricValues {
+    let timestamp: Date
+    let wordCount: Int
+    let audioDuration: TimeInterval
+    let transcriptionModelName: String?
+    let transcriptionDuration: TimeInterval?
+    let aiEnhancementModelName: String?
+    let enhancementDuration: TimeInterval?
+    let enhancementEstimatedTokenCount: Int?
+
+    init(_ metric: SessionMetric) {
+        timestamp = metric.timestamp
+        wordCount = metric.wordCount
+        audioDuration = metric.audioDuration
+        transcriptionModelName = sanitizedModelName(metric.transcriptionModelName)
+        transcriptionDuration = metric.transcriptionDuration
+        aiEnhancementModelName = sanitizedModelName(metric.aiEnhancementModelName)
+        enhancementDuration = metric.enhancementDuration
+        enhancementEstimatedTokenCount = metric.enhancementEstimatedTokenCount
+    }
 }
