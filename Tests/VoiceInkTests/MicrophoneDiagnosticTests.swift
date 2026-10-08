@@ -207,6 +207,26 @@ final class MicrophoneDiagnosticTests: XCTestCase {
         engine.recordingState = .idle
     }
 
+    func testRecorderWriteFailureRejectsOtherwiseValidClosedWAV() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "DiagnosticWriteFailureTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let devices = DiagnosticAudioDevices(userDefaults: defaults, notificationCenter: NotificationCenter())
+        let hardware = DiagnosticWAVHardware(failStop: true)
+        let recorder = Recorder(hardware: hardware, deviceManager: devices)
+        let diagnostic = makeDiagnostic(recorder, directory: directory)
+
+        diagnostic.start()
+        await waitForCompletion(diagnostic)
+
+        guard case .failed = diagnostic.phase else { return XCTFail("Expected recorder failure") }
+        XCTAssertNotNil(recorder.recordingError)
+        XCTAssertNil(diagnostic.resultURL)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
     func testEngineStartFailureReportsErrorWithoutActiveCapture() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -321,13 +341,19 @@ private final class DiagnosticAudioDevices: AudioDeviceManager {
 
 private final class DiagnosticWAVHardware: RecordingHardware, @unchecked Sendable {
     private let failStart: Bool
+    private let failStop: Bool
     private struct State {
         var file: AVAudioFile?
         var deviceID: AudioDeviceID?
         var callback: ((Data) -> Void)?
+        var failure: Error?
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
-    init(failStart: Bool = false) { self.failStart = failStart }
+    init(failStart: Bool = false, failStop: Bool = false) {
+        self.failStart = failStart
+        self.failStop = failStop
+    }
+    var recordingError: Error? { state.withLock { $0.failure } }
     var deviceID: AudioDeviceID? { state.withLock { $0.deviceID } }
     var onAudioChunk: ((Data) -> Void)? {
         get { state.withLock { $0.callback } }
@@ -345,6 +371,7 @@ private final class DiagnosticWAVHardware: RecordingHardware, @unchecked Sendabl
         state.withLock { state in
             if let file = state.file { try? writeFinalFrames(file) }
             state.file = nil
+            if failStop { state.failure = MicrophoneDiagnosticError.invalidAudio }
         }
     }
     func switchDevice(to deviceID: AudioDeviceID) throws {}

@@ -244,6 +244,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     NotificationCenter.default.post(name: .transcriptionCreated, object: transcription)
 
                     if let error = recorder.recordingError {
+                        recordingError = String(localized: "Recording failed. Check the microphone and try again.")
                         transcription.text = error.localizedDescription
                         transcription.transcriptionStatus = TranscriptionStatus.failed.rawValue
                         try? modelContext.save()

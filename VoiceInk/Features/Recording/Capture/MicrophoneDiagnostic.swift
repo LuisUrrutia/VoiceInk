@@ -3,9 +3,14 @@ import Foundation
 
 @MainActor
 protocol MicrophoneCapturing: AnyObject {
+    var recordingError: Error? { get }
     func startMicrophoneTest(toOutputFile url: URL) async throws
     func stopRecording() async
     func audioMeterSnapshot() -> AudioMeter
+}
+
+extension MicrophoneCapturing {
+    var recordingError: Error? { nil }
 }
 
 extension Recorder: MicrophoneCapturing {}
@@ -156,6 +161,7 @@ final class MicrophoneDiagnostic: ObservableObject {
             await recorder.stopRecording()
             didCloseHardware = true
             guard !cancelRequested else { throw CancellationError() }
+            if let error = recorder.recordingError { throw error }
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             let report = try await Task.detached(priority: .utility) {
                 try MicrophoneDiagnosticReport.validate(url, peakInputLevel: peakInputLevel)
