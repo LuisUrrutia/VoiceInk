@@ -23,12 +23,8 @@ EXPECTED_FEED_URL="https://beingpax.github.io/VoiceInk/appcast.xml"
 EXPECTED_BUNDLE_ID="com.prakashjoshipax.VoiceInk"
 EXPECTED_MINIMUM_SYSTEM_VERSION="15.0"
 
-XCODE_DEVELOPER_DIR="${VOICEINK_XCODE_DEVELOPER_DIR:-${DEVELOPER_DIR:-}}"
-if [[ -z "$XCODE_DEVELOPER_DIR" && -d "/Applications/Xcode.app/Contents/Developer" ]]; then
-    XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
-fi
-if [[ -n "$XCODE_DEVELOPER_DIR" ]]; then
-    export DEVELOPER_DIR="$XCODE_DEVELOPER_DIR"
+if [[ -n "${VOICEINK_XCODE_DEVELOPER_DIR:-}" ]]; then
+    export DEVELOPER_DIR="$VOICEINK_XCODE_DEVELOPER_DIR"
 fi
 
 INPUT_APP=""
@@ -253,7 +249,7 @@ else
         ARCHIVE_PATH="$INPUT_ARCHIVE"
     else
         log "Archiving VoiceInk"
-        xcodebuild archive \
+        python3 "$SCRIPT_DIR/xcode-toolchain.py" -- xcodebuild archive \
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME" \
             -configuration Release \
@@ -261,7 +257,7 @@ else
     fi
 
     log "Exporting Developer ID application"
-    xcodebuild -exportArchive \
+    python3 "$SCRIPT_DIR/xcode-toolchain.py" -- xcodebuild -exportArchive \
         -archivePath "$ARCHIVE_PATH" \
         -exportPath "$EXPORT_DIR" \
         -exportOptionsPlist "$EXPORT_OPTIONS"

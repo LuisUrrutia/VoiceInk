@@ -1,6 +1,6 @@
 // LocalBuild.xcconfig
 // Build configuration for local builds with an ad-hoc fallback when no stable signing identity is available.
-// Applied only by `make local` on top of Release; normal Xcode configurations are unchanged.
+// Applied by `make local` and `make local-build` on top of Release; normal Xcode configurations are unchanged.
 
 // Defaults to ad-hoc signing; make local overrides this when a stable signing identity is available.
 CODE_SIGN_IDENTITY = -
