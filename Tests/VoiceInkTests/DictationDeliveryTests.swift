@@ -55,6 +55,74 @@ final class DictationDeliveryTests: XCTestCase {
         XCTAssertTrue(fixture.delays.contains(0.02))
     }
 
+    func testPasteTimingMarksOnlyAfterFocusSettleAndSuccessfulPosting() async {
+        let fixture = Fixture()
+        fixture.frontmost = Fixture.remote
+        let timing = RecordingTimingTrace()
+        fixture.onWait = { delay in
+            if delay == 0.02 {
+                XCTAssertEqual(timing.snapshot.first { $0.phase == .destinationReady }?.outcome, .completed)
+                XCTAssertNil(timing.snapshot.first { $0.phase == .clipboardSettled })
+                XCTAssertNil(timing.snapshot.first { $0.phase == .pasteCommandPosted })
+            }
+        }
+        fixture.onPost = {
+            XCTAssertEqual(timing.snapshot.first { $0.phase == .clipboardSettled }?.outcome, .completed)
+            XCTAssertNil(timing.snapshot.first { $0.phase == .pasteCommandPosted })
+        }
+
+        let result = await fixture.paste(destination: .originalApplication(Fixture.local), timing: timing)
+
+        XCTAssertEqual(result.result, .commandPosted)
+        XCTAssertEqual(result.target, Fixture.local)
+        XCTAssertEqual(timing.snapshot.map(\.phase), [.requestReceived, .destinationReady, .clipboardSettled, .pasteCommandPosted])
+        XCTAssertTrue(timing.snapshot.allSatisfy { $0.outcome == .completed })
+    }
+
+    func testPasteTimingPreservesReachedPhasesWhenTargetOrPostingFails() async {
+        for missingTarget in [true, false] {
+            let fixture = Fixture()
+            fixture.running = !missingTarget
+            fixture.postSucceeds = false
+            let timing = RecordingTimingTrace()
+
+            let result = await fixture.paste(destination: .originalApplication(Fixture.local), timing: timing)
+
+            XCTAssertEqual(result.result, missingTarget ? .targetUnavailable : .commandNotPosted)
+            for phase in [RecordingTimingTrace.Phase.destinationReady, .clipboardSettled] {
+                XCTAssertEqual(timing.snapshot.first { $0.phase == phase }?.outcome, missingTarget ? .failed : .completed)
+            }
+            XCTAssertEqual(timing.snapshot.first { $0.phase == .pasteCommandPosted }?.outcome, .failed)
+            XCTAssertTrue(fixture.learnedProcesses.isEmpty)
+            XCTAssertTrue(fixture.sentKeys.isEmpty)
+        }
+    }
+
+    func testDeliveryWithoutPasteMarksSkippedOrCanceledWithoutPosting() async {
+        for cancel in [false, true] {
+            let session = RecordingDeliverySession(destination: .currentApplication)
+            if cancel { session.cancel() }
+            let request = TranscriptionDelivery.Request(
+                transcription: Transcription(text: "fixture", duration: 1, transcriptionStatus: .completed),
+                text: nil, output: OutputRuntimeConfiguration(mode: nil, outputMode: .paste, customCommand: nil),
+                responseConfig: nil, responseError: nil, isAssistantFollowUp: false, sendAfterPaste: false,
+                deliverySession: session
+            )
+            var dismissed = false
+
+            await TranscriptionDelivery().deliver(request, actions: .init(
+                setState: { _ in XCTFail("No paste should start") }, dismiss: { dismissed = true },
+                sendFollowUp: { _, _ in XCTFail("No follow-up") }, showResponse: { _, _ in XCTFail("No response") },
+                failResponse: { _ in XCTFail("No response failure") }
+            ))
+
+            XCTAssertEqual(dismissed, !cancel)
+            for phase in [RecordingTimingTrace.Phase.destinationReady, .clipboardSettled, .pasteCommandPosted] {
+                XCTAssertEqual(session.timing.snapshot.first { $0.phase == phase }?.outcome, cancel ? .canceled : .skipped)
+            }
+        }
+    }
+
     func testTerminatedMissingAndDeniedTargetsRetainClipboardWithoutPostingOrSending() async {
         for destination in [PasteDestination.originalApplication(nil), .originalApplication(Fixture.local)] {
             let fixture = Fixture()
@@ -134,14 +202,16 @@ final class DictationDeliveryTests: XCTestCase {
             let fixture = Fixture()
             fixture.frontmost = Fixture.remote
             fixture.pushFails = failure
+            let timing = RecordingTimingTrace()
 
-            let result = await fixture.paste(command: "configured")
+            let result = await fixture.paste(command: "configured", timing: timing)
 
             XCTAssertEqual(result.result, .commandPosted)
             XCTAssertEqual(fixture.pushedTexts, ["transcript"])
             XCTAssertEqual(fixture.methods, [.appleScript])
             XCTAssertTrue(fixture.delays.contains(failure ? 0.8 : 0.2))
             XCTAssertEqual(fixture.failures.isEmpty, !failure)
+            XCTAssertTrue(timing.snapshot.allSatisfy { $0.outcome == .completed })
         }
     }
 
@@ -156,21 +226,28 @@ final class DictationDeliveryTests: XCTestCase {
                 }
             }
 
-            let result = await fixture.paste(destination: recording.destination, sendKey: .enter) { recording.isCancelled }
+            let result = await fixture.paste(destination: recording.destination, sendKey: .enter, timing: recording.timing) {
+                recording.isCancelled
+            }
 
             XCTAssertFalse(result.result.didPostPasteCommand)
             XCTAssertTrue(fixture.methods.isEmpty)
             XCTAssertTrue(fixture.sentKeys.isEmpty)
+            XCTAssertEqual(recording.timing.snapshot.first { $0.phase == .destinationReady }?.outcome, .completed)
+            for phase in [RecordingTimingTrace.Phase.clipboardSettled, .pasteCommandPosted] {
+                XCTAssertEqual(recording.timing.snapshot.first { $0.phase == phase }?.outcome, cancel ? .canceled : .failed)
+            }
         }
     }
 
     func testExternalClipboardChangeDuringSettlePreventsPasteAndAutoSend() async throws {
         let fixture = Fixture()
+        let timing = RecordingTimingTrace()
         fixture.onWait = { delay in
             if delay == 0.02 { ClipboardManager.setClipboard("external", on: fixture.board) }
         }
 
-        let result = await fixture.paste(restore: true, sendKey: .enter)
+        let result = await fixture.paste(restore: true, sendKey: .enter, timing: timing)
         try await Task.sleep(for: .seconds(0.4))
 
         XCTAssertEqual(result.result, .cancelled)
@@ -178,6 +255,9 @@ final class DictationDeliveryTests: XCTestCase {
         XCTAssertTrue(fixture.methods.isEmpty)
         XCTAssertTrue(fixture.learnedProcesses.isEmpty)
         XCTAssertTrue(fixture.sentKeys.isEmpty)
+        XCTAssertEqual(timing.snapshot.first { $0.phase == .destinationReady }?.outcome, .completed)
+        XCTAssertEqual(timing.snapshot.first { $0.phase == .clipboardSettled }?.outcome, .canceled)
+        XCTAssertEqual(timing.snapshot.first { $0.phase == .pasteCommandPosted }?.outcome, .canceled)
     }
 
     func testAutoSendHonorsCancellationAndFocusChangesAfterPostedPaste() async {
@@ -239,6 +319,8 @@ final class DictationDeliveryTests: XCTestCase {
 
     func testNewPasteSupersedesOlderPendingPasteWithoutPostingOlderText() async {
         let fixture = Fixture()
+        let oldTiming = RecordingTimingTrace()
+        let newTiming = RecordingTimingTrace()
         let entered = expectation(description: "old paste waiting")
         var release: CheckedContinuation<Void, Never>?
         fixture.onAsyncWait = { delay in
@@ -247,10 +329,10 @@ final class DictationDeliveryTests: XCTestCase {
                 await withCheckedContinuation { release = $0 }
             }
         }
-        let old = Task { await fixture.paste(text: "old") }
+        let old = Task { await fixture.paste(text: "old", timing: oldTiming) }
         await fulfillment(of: [entered], timeout: 2)
 
-        let newer = await fixture.paste(text: "new")
+        let newer = await fixture.paste(text: "new", timing: newTiming)
         release?.resume()
         let older = await old.value
 
@@ -258,6 +340,11 @@ final class DictationDeliveryTests: XCTestCase {
         XCTAssertEqual(older.result, .cancelled)
         XCTAssertEqual(fixture.postedTexts, ["new"])
         XCTAssertEqual(fixture.board.string(forType: .string), "new")
+        XCTAssertEqual(oldTiming.snapshot.first { $0.phase == .pasteCommandPosted }?.outcome, .canceled)
+        XCTAssertEqual(newTiming.snapshot.first { $0.phase == .pasteCommandPosted }?.outcome, .completed)
+        XCTAssertNotEqual(oldTiming.recordingID, newTiming.recordingID)
+        XCTAssertEqual(oldTiming.snapshot.count, 4)
+        XCTAssertEqual(newTiming.snapshot.count, 4)
     }
 
     func testSupersededRemotePushStopsBeforeNewPushAndPaste() async {
@@ -337,6 +424,7 @@ final class DictationDeliveryTests: XCTestCase {
         var onPush: ((String) async throws -> Void)?
         var onWait: ((TimeInterval) -> Void)?
         var onAsyncWait: ((TimeInterval) async -> Void)?
+        var onPost: (() -> Void)?
         lazy var session = PasteSession(pasteboard: board, environment: .init(
             frontmost: { self.frontmost },
             isRunning: { _ in self.running },
@@ -359,6 +447,7 @@ final class DictationDeliveryTests: XCTestCase {
             },
             postPaste: { method, canPost in
                 guard canPost() else { return false }
+                self.onPost?()
                 self.methods.append(method)
                 self.postedTexts.append(self.board.string(forType: .string) ?? "")
                 return self.postSucceeds
@@ -372,11 +461,13 @@ final class DictationDeliveryTests: XCTestCase {
         func paste(
             text: String = "transcript", destination: PasteDestination = .currentApplication,
             restore: Bool = false, method: PasteMethod = .standard, command: String? = nil,
-            sendKey: FinishAndSendKey = .none, shouldCancel: @escaping () -> Bool = { false }
+            sendKey: FinishAndSendKey = .none, timing: RecordingTimingTrace? = nil,
+            shouldCancel: @escaping () -> Bool = { false }
         ) async -> CursorPaster.PasteOutcome {
             await session.paste(
                 text, destination: destination, restoreClipboard: restore, restoreDelay: 0.25,
-                preferredMethod: method, remotePushCommand: command, sendKey: sendKey, shouldCancel: shouldCancel
+                preferredMethod: method, remotePushCommand: command, sendKey: sendKey, timing: timing,
+                shouldCancel: shouldCancel
             )
         }
     }

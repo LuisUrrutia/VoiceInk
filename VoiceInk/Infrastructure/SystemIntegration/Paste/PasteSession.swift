@@ -58,16 +58,27 @@ final class PasteSession {
         preferredMethod: PasteMethod,
         remotePushCommand: String?,
         sendKey: FinishAndSendKey = .none,
+        timing: RecordingTimingTrace? = nil,
         shouldCancel: @escaping () -> Bool = { false }
     ) async -> CursorPaster.PasteOutcome {
+        var unreachedOutcome = RecordingTimingTrace.Outcome.canceled
+        defer {
+            for phase in [RecordingTimingTrace.Phase.destinationReady, .clipboardSettled, .pasteCommandPosted] {
+                timing?.mark(phase, outcome: unreachedOutcome)
+            }
+        }
+        func finish(_ result: CursorPaster.PasteResult) -> CursorPaster.PasteOutcome {
+            unreachedOutcome = result == .cancelled ? .canceled : .failed
+            return outcome(result)
+        }
         let canceled = { Task.isCancelled || shouldCancel() }
-        guard !canceled() else { return outcome(.cancelled) }
+        guard !canceled() else { return finish(.cancelled) }
 
         let previousContents = ownership.flatMap { owns($0) ? $0.savedContents : nil } ?? snapshot()
         let id = UUID().uuidString
         guard ClipboardManager.setClipboard(text, transient: restoreClipboard, sessionID: id, on: pasteboard) else {
             environment.reportFailure(String(localized: "Could not copy the transcription to the clipboard."))
-            return outcome(.commandNotPosted)
+            return finish(.commandNotPosted)
         }
         let owner = ClipboardOwnership(id: id, changeCount: pasteboard.changeCount, savedContents: previousContents)
         ownership = owner
@@ -85,7 +96,7 @@ final class PasteSession {
                     String(localized: "Could not paste into the destination application. The transcription is on the clipboard.")
                 )
             }
-            return outcome(result)
+            return finish(result)
         }
 
         do {
@@ -117,6 +128,7 @@ final class PasteSession {
             guard environment.frontmost() == target, environment.isRunning(target) else {
                 return fail(.targetUnavailable)
             }
+            timing?.mark(.destinationReady)
 
             var policy = PastePolicy.resolve(for: target, preferredMethod: preferredMethod)
             if policy.usesRemoteClipboard,
@@ -148,8 +160,10 @@ final class PasteSession {
                 mayContinue() && self.environment.frontmost() == target && self.environment.isRunning(target)
             }
             guard canPost() else { return fail(.targetUnavailable) }
+            timing?.mark(.clipboardSettled)
             let posted = await environment.postPaste(policy.method, canPost)
             guard posted else { return fail(canceled() ? .cancelled : .commandNotPosted) }
+            timing?.mark(.pasteCommandPosted)
 
             let generation = await environment.autoLearn(text, target.processID, posted)
             if sendKey.isEnabled {
@@ -160,10 +174,11 @@ final class PasteSession {
                 }
             }
             if restoreClipboard { scheduleRestore(owner, delay: restoreDelay) }
+            unreachedOutcome = .skipped
             return CursorPaster.PasteOutcome(result: .commandPosted, autoLearnGeneration: generation, target: target)
         } catch {
             if restoreClipboard { scheduleRestore(owner, delay: restoreDelay) }
-            return outcome(.cancelled)
+            return finish(.cancelled)
         }
     }
 
