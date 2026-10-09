@@ -193,11 +193,13 @@ class TranscriptionPipeline {
                             resolvedEnhancementConfiguration.modelName
                             ?? resolvedEnhancementConfiguration.provider?.defaultModel
                         transcription.promptName = resolvedEnhancementConfiguration.prompt?.title
-                        let enhancementResult = try await enhancementService.enhance(
-                            textForAI,
-                            configuration: resolvedEnhancementConfiguration,
-                            contextSnapshot: contextSnapshot
-                        )
+                        let enhancementResult = try await Self.performEnhancement(deliverySession: deliverySession) {
+                            try await enhancementService.enhance(
+                                textForAI,
+                                configuration: resolvedEnhancementConfiguration,
+                                contextSnapshot: contextSnapshot
+                            )
+                        }
                         transcription.enhancedText = enhancementResult.text
                         transcription.promptName =
                             enhancementResult.promptName ?? resolvedEnhancementConfiguration.prompt?.title
@@ -206,6 +208,10 @@ class TranscriptionPipeline {
                         transcription.aiRequestUserMessage = enhancementResult.userMessage
                         finalText = enhancementResult.text
                     } catch {
+                        if shouldCancel() || Task.isCancelled || error is CancellationError || deliverySession?.isCancelled == true {
+                            await finishCanceledTranscription()
+                            return
+                        }
                         let errorDescription = EnhancementFailureFormatter.description(for: error)
                         let failureMessage = EnhancementFailureFormatter.message(description: errorDescription)
                         transcription.enhancedText = failureMessage
@@ -296,6 +302,26 @@ class TranscriptionPipeline {
         )
 
         saveTranscriptionAndPostCompletion()
+    }
+
+    static func performEnhancement<Result>(
+        deliverySession: RecordingDeliverySession?,
+        operation: @escaping @MainActor () async throws -> Result
+    ) async throws -> Result {
+        let task = Task {
+            try Task.checkCancellation()
+            return try await operation()
+        }
+        deliverySession?.own(task)
+        let result = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        try Task.checkCancellation()
+        guard deliverySession?.isCancelled != true else { throw CancellationError() }
+        return result
     }
 
     private func metadata(for mode: ModeConfig?) -> (name: String?, emoji: String?) {
