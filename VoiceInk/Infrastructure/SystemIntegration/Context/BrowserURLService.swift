@@ -109,67 +109,28 @@ class BrowserURLService {
             throw BrowserURLError.browserNotRunning
         }
 
-        let task = Process()
-        task.launchPath = "/usr/bin/osascript"
-        task.arguments = [scriptURL.path]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-
         do {
-            logger.debug("▶️ Executing AppleScript for \(browser.displayName, privacy: .public)")
-            try task.run()
-            try await waitUntilExit(task, browser: browser)
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-                if output.isEmpty {
-                    logger.error("❌ Empty output from AppleScript for \(browser.displayName, privacy: .public)")
-                    throw BrowserURLError.noActiveTab
-                }
-
-                // Check if output contains error messages
-                if output.lowercased().contains("error") {
-                    logger.error(
-                        "❌ AppleScript error for \(browser.displayName, privacy: .public): \(output, privacy: .public)")
-                    throw BrowserURLError.executionFailed
-                }
-
-                logger.debug(
-                    "✅ Successfully retrieved URL from \(browser.displayName, privacy: .public): \(output, privacy: .public)"
-                )
-                return output
-            } else {
-                logger.error("❌ Failed to decode output from AppleScript for \(browser.displayName, privacy: .public)")
-                throw BrowserURLError.executionFailed
-            }
+            let data = try await BrowserScriptProcess(arguments: [scriptURL.path]).run(timeout: scriptTimeout)
+            return try Self.url(from: data)
         } catch let error as BrowserURLError {
+            logger.error("Browser URL lookup failed for \(browser.displayName, privacy: .public)")
             throw error
         } catch is CancellationError {
-            if task.isRunning {
-                task.terminate()
-            }
             throw CancellationError()
         } catch {
-            logger.error(
-                "❌ AppleScript execution failed for \(browser.displayName, privacy: .public): \(error, privacy: .public)"
-            )
+            logger.error("Browser URL process failed for \(browser.displayName, privacy: .public)")
             throw BrowserURLError.executionFailed
         }
     }
 
-    private func waitUntilExit(_ task: Process, browser: BrowserType) async throws {
-        let timeoutDate = Date().addingTimeInterval(scriptTimeout)
-        while task.isRunning {
-            if Date() >= timeoutDate {
-                task.terminate()
-                logger.error("❌ AppleScript timed out for \(browser.displayName, privacy: .public)")
-                throw BrowserURLError.executionTimedOut
-            }
-
-            try await Task.sleep(nanoseconds: 50_000_000)
+    static func url(from data: Data) throws -> String {
+        guard let output = String(data: data, encoding: .utf8) else {
+            throw BrowserURLError.executionFailed
         }
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw BrowserURLError.noActiveTab }
+        guard !trimmed.lowercased().contains("error") else { throw BrowserURLError.executionFailed }
+        return trimmed
     }
 
     func isRunning(_ browser: BrowserType) -> Bool {

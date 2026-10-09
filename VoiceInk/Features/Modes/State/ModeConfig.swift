@@ -618,6 +618,10 @@ class ModeManager: ObservableObject {
     }
 
     func cleanURL(_ url: String) -> String {
+        Self.normalizedURL(url)
+    }
+
+    static func normalizedURL(_ url: String) -> String {
         return url.lowercased()
             .replacingOccurrences(of: "https://", with: "")
             .replacingOccurrences(of: "http://", with: "")
