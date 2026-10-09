@@ -100,8 +100,14 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private let audioProcessingScheduled = ManagedAtomic(false)
     private let recordingActive = ManagedAtomic(false)
     private let renderCallbacksInFlight = ManagedAtomic<UInt32>(0)
+    private let firstAudioTimestamp = ManagedAtomic<UInt64>(0)
     private let droppedInputBuffersBackpressure = ManagedAtomic<UInt64>(0)
     private let droppedInputBuffersCapacity = ManagedAtomic<UInt64>(0)
+
+    var firstAudioTimestampNanoseconds: UInt64? {
+        let timestamp = firstAudioTimestamp.load(ordering: .relaxed)
+        return timestamp == 0 ? nil : timestamp
+    }
 
     /// Called from the recorder processing queue with raw PCM data (16-bit, 16kHz, mono) for streaming.
     private let audioChunkLock = NSLock()
@@ -193,6 +199,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
                 audioWriter?.onAudioChunk = { [weak self] data in self?.onAudioChunk?(data) }
             }
             resetAudioProcessingState()
+            firstAudioTimestamp.store(0, ordering: .relaxed)
 
             try startAudioUnit()
         } catch {
@@ -804,6 +811,12 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
 
         if status != noErr {
             return status
+        }
+
+        if inNumberFrames > 0, firstAudioTimestamp.load(ordering: .relaxed) == 0 {
+            _ = firstAudioTimestamp.compareExchange(
+                expected: 0, desired: DispatchTime.now().uptimeNanoseconds, ordering: .relaxed
+            )
         }
 
         // Calculate audio meters from input buffer

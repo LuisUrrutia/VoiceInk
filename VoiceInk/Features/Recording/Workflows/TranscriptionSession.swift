@@ -12,6 +12,11 @@ protocol TranscriptionSession: AnyObject {
 
     /// Cancel the session and clean up resources.
     func cancel()
+    func finishPreparation() async
+}
+
+extension TranscriptionSession {
+    func finishPreparation() async {}
 }
 
 // MARK: - File-Based Session
@@ -57,6 +62,7 @@ final class StreamingTranscriptionSession: TranscriptionSession {
     private var streamingFailed = false
     private var startupTask: Task<Void, Never>?
     private var startupTaskID: UUID?
+    private var isCancelled = false
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "StreamingTranscriptionSession")
 
     init(streamingService: StreamingTranscriptionService, fallbackService: TranscriptionService) {
@@ -70,6 +76,7 @@ final class StreamingTranscriptionSession: TranscriptionSession {
 
         self.model = model
         self.context = context
+        isCancelled = false
         logger.notice("Streaming session prepare model=\(model.displayName, privacy: .public)")
 
         // Return callback immediately; WebSocket connects in background
@@ -119,11 +126,15 @@ final class StreamingTranscriptionSession: TranscriptionSession {
             throw VoiceInkEngineError.transcriptionFailed
         }
 
+        await startupTask?.value
+        guard !isCancelled else { throw CancellationError() }
+
         if !streamingFailed {
             do {
                 let start = Date()
                 logger.notice("Streaming stop/transcribe started model=\(model.displayName, privacy: .public)")
                 let result = try await streamingService.stopAndFinalize()
+                guard !isCancelled else { throw CancellationError() }
                 switch result {
                 case .finalized(let text):
                     logger.notice(
@@ -134,19 +145,19 @@ final class StreamingTranscriptionSession: TranscriptionSession {
                     logger.notice("Streaming provider requested full batch transcription")
                 }
             } catch {
+                guard !isCancelled else { throw CancellationError() }
                 logger.error("❌ Streaming failed, falling back to batch: \(error, privacy: .public)")
                 startupTask?.cancel()
-                startupTask = nil
-                startupTaskID = nil
                 streamingService.cancel()
+                await finishPreparation()
             }
         } else {
             startupTask?.cancel()
-            startupTask = nil
-            startupTaskID = nil
             streamingService.cancel()
+            await finishPreparation()
         }
 
+        guard !isCancelled else { throw CancellationError() }
         let fallbackStart = Date()
         logger.notice(
             "Using batch fallback for \(model.displayName, privacy: .public) file=\(audioURL.lastPathComponent, privacy: .public)"
@@ -159,9 +170,14 @@ final class StreamingTranscriptionSession: TranscriptionSession {
     }
 
     func cancel() {
+        isCancelled = true
         startupTask?.cancel()
-        startupTask = nil
-        startupTaskID = nil
         streamingService.cancel()
+    }
+
+    func finishPreparation() async {
+        let startup = startupTask
+        await startup?.value
+        await streamingService.finishCancellation()
     }
 }

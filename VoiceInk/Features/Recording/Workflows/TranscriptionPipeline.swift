@@ -101,6 +101,7 @@ class TranscriptionPipeline {
         }
 
         do {
+            deliverySession?.timing.mark(.asrStarted)
             let transcriptionStart = Date()
             var text: String
             if let session {
@@ -113,6 +114,7 @@ class TranscriptionPipeline {
                 )
             }
             text = TranscriptionOutputFilter.filter(text)
+            deliverySession?.timing.mark(.asrFinished)
             let transcriptionDuration = Date().timeIntervalSince(transcriptionStart)
 
             if shouldCancel() {
@@ -188,6 +190,7 @@ class TranscriptionPipeline {
                     }
 
                     do {
+                        deliverySession?.timing.mark(.enhancementStarted)
                         let contextSnapshot = await recordingContextSnapshot()
                         transcription.aiEnhancementModelName =
                             resolvedEnhancementConfiguration.modelName
@@ -207,8 +210,12 @@ class TranscriptionPipeline {
                         transcription.aiRequestSystemMessage = enhancementResult.systemMessage
                         transcription.aiRequestUserMessage = enhancementResult.userMessage
                         finalText = enhancementResult.text
+                        deliverySession?.timing.mark(.enhancementFinished)
                     } catch {
-                        if shouldCancel() || Task.isCancelled || error is CancellationError || deliverySession?.isCancelled == true {
+                        let wasCanceled = shouldCancel() || Task.isCancelled || error is CancellationError
+                            || deliverySession?.isCancelled == true
+                        deliverySession?.timing.mark(.enhancementFinished, outcome: wasCanceled ? .canceled : .failed)
+                        if wasCanceled {
                             await finishCanceledTranscription()
                             return
                         }
@@ -232,6 +239,7 @@ class TranscriptionPipeline {
 
             transcription.transcriptionStatus = TranscriptionStatus.completed.rawValue
         } catch {
+            deliverySession?.timing.mark(.asrFinished, outcome: shouldCancel() ? .canceled : .failed)
             let errorDescription = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 
             if let nativeAppleError = error as? NativeAppleTranscriptionService.ServiceError,
@@ -281,6 +289,7 @@ class TranscriptionPipeline {
             return
         }
 
+        deliverySession?.timing.mark(.deliveryStarted)
         await delivery.deliver(
             TranscriptionDelivery.Request(
                 transcription: transcription,
@@ -300,6 +309,7 @@ class TranscriptionPipeline {
                 failResponse: assistant.failResponse
             )
         )
+        deliverySession?.timing.mark(.deliveryFinished, outcome: shouldCancel() ? .canceled : .completed)
 
         saveTranscriptionAndPostCompletion()
     }

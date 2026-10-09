@@ -6,6 +6,7 @@ protocol RecordingHardware: AnyObject, Sendable {
     var averagePower: Float { get }
     var peakPower: Float { get }
     var recordingError: Error? { get }
+    var firstAudioTimestampNanoseconds: UInt64? { get }
 
     func prepare(deviceID: AudioDeviceID) throws
     func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID) throws
@@ -17,4 +18,5 @@ protocol RecordingHardware: AnyObject, Sendable {
 
 extension RecordingHardware {
     var recordingError: Error? { nil }
+    var firstAudioTimestampNanoseconds: UInt64? { nil }
 }

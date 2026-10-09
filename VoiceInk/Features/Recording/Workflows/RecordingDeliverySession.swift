@@ -49,11 +49,13 @@ enum PasteTargetSettings {
 @MainActor
 final class RecordingDeliverySession {
     let destination: PasteDestination
+    let timing: RecordingTimingTrace
     private(set) var isCancelled = false
     private var cancelPendingTask: (() -> Void)?
 
-    init(destination: PasteDestination) {
+    init(destination: PasteDestination, timing: RecordingTimingTrace = RecordingTimingTrace()) {
         self.destination = destination
+        self.timing = timing
     }
 
     static func capture(

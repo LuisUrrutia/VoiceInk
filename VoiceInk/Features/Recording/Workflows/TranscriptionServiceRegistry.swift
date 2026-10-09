@@ -83,6 +83,26 @@ class TranscriptionServiceRegistry {
         configuration.isRealtimeEnabled
     }
 
+    func prepareForRecording(
+        _ configuration: TranscriptionRuntimeConfiguration, whisperModelManager: WhisperModelManager
+    ) async throws {
+        try Task.checkCancellation()
+        let model = configuration.model
+        if model.provider == .whisper {
+            if let localModel = whisperModelManager.availableModels.first(where: { $0.name == model.name }),
+                whisperModelManager.whisperContext == nil
+            {
+                try await whisperModelManager.loadModel(localModel)
+            }
+        } else if let model = model as? FluidAudioModel, !configuration.isRealtimeEnabled {
+            // Streaming owns its ASR manager; avoid preparing an unused batch manager concurrently.
+            try await fluidAudioTranscriptionService.loadModel(for: model)
+        } else if let model = model as? TranscribeCppModel {
+            try await transcribeCppTranscriptionService.loadModel(for: model)
+        }
+        try Task.checkCancellation()
+    }
+
     func cleanup() async {
         await fluidAudioTranscriptionService.cleanup()
         cachedTranscribeCppTranscriptionService?.cleanup()
