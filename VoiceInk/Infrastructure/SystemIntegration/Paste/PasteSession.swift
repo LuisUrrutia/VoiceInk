@@ -9,9 +9,10 @@ struct PastePolicy: Equatable {
         -> PastePolicy
     {
         let remote = application.bundleIdentifier == "com.apple.ScreenSharing"
+        let localSettleDelay: TimeInterval = preferredMethod == .standard ? 0.02 : 0.05
         return PastePolicy(
             method: remote ? .appleScript : preferredMethod,
-            settleDelay: remote ? (pushedClipboard ? 0.2 : 0.8) : 0.05,
+            settleDelay: remote ? (pushedClipboard ? 0.2 : 0.8) : localSettleDelay,
             usesRemoteClipboard: remote
         )
     }
