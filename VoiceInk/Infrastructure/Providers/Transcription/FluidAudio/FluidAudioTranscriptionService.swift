@@ -6,13 +6,36 @@ class FluidAudioTranscriptionService: TranscriptionService {
     private var asrManager: AsrManager?
     private var unifiedAsrManager: UnifiedAsrManager?
     private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
-    private var vadManager: VadManager?
+    private let vadCache: FluidAudioVADCache
     private var activeVersion: AsrModelVersion?
     private var activeNemotronModelName: String?
     private var cachedModels: AsrModels?
     private var loadingTask: (version: AsrModelVersion, task: Task<AsrModels, Error>)?
     private let audioConverter = AudioConverter()
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "FluidAudioTranscriptionService")
+
+    init(vadCache: FluidAudioVADCache = FluidAudioVADCache()) {
+        self.vadCache = vadCache
+    }
+
+    func prepareVAD(recordingID: UUID, model: any TranscriptionModel) async throws -> Bool {
+        guard model.provider == .fluidAudio else {
+            await releaseVADPreparation(recordingID: recordingID)
+            return false
+        }
+        do {
+            return try await vadCache.prepare(recordingID: recordingID, modelName: model.name)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            logger.notice("VAD preparation unavailable; preserving full-audio fallback")
+            return false
+        }
+    }
+
+    func releaseVADPreparation(recordingID: UUID) async {
+        await vadCache.release(recordingID: recordingID)
+    }
 
     private func version(for model: any TranscriptionModel) -> AsrModelVersion {
         FluidAudioModelManager.asrVersion(for: model.name)
@@ -33,7 +56,6 @@ class FluidAudioTranscriptionService: TranscriptionService {
         unifiedAsrManager = nil
         nemotronAsrManager = nil
         asrManager = nil
-        vadManager = nil
         activeVersion = nil
         activeNemotronModelName = nil
     }
@@ -236,13 +258,9 @@ class FluidAudioTranscriptionService: TranscriptionService {
 
     // Streaming callers retain each segment's original position for word timestamps.
     func detectedSpeechSegments(in samples: [Float]) async throws -> [VadSegment]? {
-        guard UserDefaults.standard.bool(forKey: "IsVADEnabled") else {
-            return nil
-        }
-
         do {
             try Task.checkCancellation()
-            let manager = try await getOrLoadVadManager()
+            guard let manager = try await vadCache.manager() else { return nil }
             let segments = try await manager.segmentSpeech(samples)
             try Task.checkCancellation()
             return segments
@@ -254,22 +272,11 @@ class FluidAudioTranscriptionService: TranscriptionService {
         }
     }
 
-    private func getOrLoadVadManager() async throws -> VadManager {
-        if let vadManager { return vadManager }
-        let manager = try await VadManager(config: VadConfig(defaultThreshold: 0.7))
-        vadManager = manager
-        return manager
-    }
-
     // Nil means VAD is disabled or unavailable; callers preserve the original audio.
     private func detectedSpeechAudio(in samples: [Float]) async throws -> [[Float]]? {
-        guard UserDefaults.standard.bool(forKey: "IsVADEnabled") else {
-            return nil
-        }
-
         do {
             try Task.checkCancellation()
-            let manager = try await getOrLoadVadManager()
+            guard let manager = try await vadCache.manager() else { return nil }
             let segments = try await manager.segmentSpeechAudio(samples)
             try Task.checkCancellation()
             return segments
@@ -283,6 +290,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
 
     // Releases ASR/VAD resources but preserves cached models for reuse
     func cleanup() async {
+        await vadCache.cleanup()
         await cleanupLoadedManagers()
     }
 
