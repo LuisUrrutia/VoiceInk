@@ -72,6 +72,12 @@ When local packaging is requested, inspect `make local` first: it builds increme
 
 ## Tracked local overlays
 
+### Local CLI process lifecycle
+
+- Request: Repair the Local CLI enhancement runner's output backpressure and cancellation failures from critical-path item 1.
+- Drain stdout and stderr while writing bounded, nonblocking stdin. Keep one invocation-owned process group, a deadline that includes input and output completion, and bounded TERM/KILL shutdown before releasing the result. Preserve custom login-shell commands, inherited environment and cached PATH, all three prompt variables, built-in argument-prompt stdin behavior, edge-only output trimming, and existing error categories. Own enhancement tasks through the recording's delivery session so Cancel reaches the subprocess; reject canceled results before notification or original-target delivery. Keep WAV finalization and recording-scoped destination ownership intact.
+- Regression: `LocalCLIProcessTests` and `RecordingEnhancementCancellationTests` run in `VoiceInkTests` through `./scripts/check-personal-sync.sh`. Real, self-bounded processes cover large simultaneous streams, ignored/large stdin, early exit, launch and command failures, timeout, cancellation during startup/execution, resistant descendants, exited leaders, concurrent calls, prompt transport and exact output. Recheck `RecordingFinalizationTests`, `DictationDeliveryTests` and `RemoteClipboardProcessTests`. In the checkout-owned `VoiceInk Dev.app`, exercise a synthetic Local CLI command, cancellation and unrelated navigation; fixture results do not establish real Codex inference or Stop-to-insertion latency.
+
 ### Reliable History pagination
 
 - Request: Preserve the intent of https://github.com/ivolkoff/VoiceInk/commit/1de47aae86e0d5aacd807f98d59a09b5f07217ce in the current History architecture.

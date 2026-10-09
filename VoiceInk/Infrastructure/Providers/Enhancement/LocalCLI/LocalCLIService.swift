@@ -86,7 +86,7 @@ final class LocalCLIService {
         }
 
         let fullPrompt = Self.makeFullPrompt(systemPrompt: systemPrompt, userPrompt: userPrompt)
-        return try await executeCommand(
+        return try await Self.executeCommand(
             commandTemplate: commandTemplate,
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
@@ -109,92 +109,46 @@ final class LocalCLIService {
         """
     }
 
-    private func executeCommand(
+    static func executeCommand(
         commandTemplate: String,
         systemPrompt: String,
         userPrompt: String,
         fullPrompt: String,
-        timeout: Double
+        timeout: Double,
+        inheritedEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-lc", commandTemplate]
-
-                var environment = ProcessInfo.processInfo.environment
+        guard !commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LocalCLIError.commandNotConfigured
+        }
+        let usesArgumentPrompt =
+            commandTemplate == LocalCLITemplate.codex.commandTemplate
+            || commandTemplate == LocalCLITemplate.claude.commandTemplate
+        let result = try await LocalCLIProcessRunner.run(
+            command: commandTemplate,
+            standardInput: usesArgumentPrompt ? nil : Data(fullPrompt.utf8),
+            timeout: timeout,
+            environment: {
+                var environment = inheritedEnvironment
                 environment["PATH"] = ShellCommandEnvironment.preferredPATH(fallback: environment["PATH"])
                 environment["VOICEINK_SYSTEM_PROMPT"] = systemPrompt
                 environment["VOICEINK_USER_PROMPT"] = userPrompt
                 environment["VOICEINK_FULL_PROMPT"] = fullPrompt
-                process.environment = environment
-
-                let usesArgumentPrompt =
-                    commandTemplate == LocalCLITemplate.codex.commandTemplate
-                    || commandTemplate == LocalCLITemplate.claude.commandTemplate
-                let inputPipe = usesArgumentPrompt ? nil : Pipe()
-                let outputPipe = Pipe()
-                let errorPipe = Pipe()
-                process.standardInput = inputPipe ?? FileHandle.nullDevice
-                process.standardOutput = outputPipe
-                process.standardError = errorPipe
-
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(throwing: LocalCLIError.executionFailed(error.localizedDescription))
-                    return
-                }
-
-                if let inputPipe {
-                    if let inputData = fullPrompt.data(using: .utf8) {
-                        inputPipe.fileHandleForWriting.write(inputData)
-                    }
-                    try? inputPipe.fileHandleForWriting.close()
-                }
-
-                let semaphore = DispatchSemaphore(value: 0)
-                process.terminationHandler = { _ in
-                    semaphore.signal()
-                }
-
-                let waitResult = semaphore.wait(timeout: .now() + timeout)
-                if waitResult == .timedOut {
-                    if process.isRunning {
-                        process.terminate()
-                        _ = semaphore.wait(timeout: .now() + 2)
-                    }
-                    continuation.resume(throwing: LocalCLIError.timeout(seconds: timeout))
-                    return
-                }
-
-                let stdoutData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-                let stdout = Self.cleanOutput(String(data: stdoutData, encoding: .utf8) ?? "")
-                let stderr = Self.cleanOutput(String(data: stderrData, encoding: .utf8) ?? "")
-
-                if process.terminationStatus != 0 {
-                    let looksLikeCommandNotFound =
-                        process.terminationStatus == 127 || stderr.lowercased().contains("command not found")
-                    if looksLikeCommandNotFound {
-                        continuation.resume(
-                            throwing: LocalCLIError.commandNotFound(stderr.isEmpty ? commandTemplate : stderr))
-                    } else {
-                        continuation.resume(
-                            throwing: LocalCLIError.nonZeroExit(status: Int(process.terminationStatus), stderr: stderr))
-                    }
-                    return
-                }
-
-                guard !stdout.isEmpty else {
-                    continuation.resume(throwing: LocalCLIError.emptyOutput)
-                    return
-                }
-
-                continuation.resume(returning: stdout)
+                return environment
             }
+        )
+        try Task.checkCancellation()
+        let stdout = Self.cleanOutput(String(data: result.stdout, encoding: .utf8) ?? "")
+        let stderr = Self.cleanOutput(String(data: result.stderr, encoding: .utf8) ?? "")
+
+        if result.status != 0 {
+            let looksLikeCommandNotFound = result.status == 127 || stderr.lowercased().contains("command not found")
+            if looksLikeCommandNotFound {
+                throw LocalCLIError.commandNotFound(stderr.isEmpty ? commandTemplate : stderr)
+            }
+            throw LocalCLIError.nonZeroExit(status: Int(result.status), stderr: stderr)
         }
+        guard !stdout.isEmpty else { throw LocalCLIError.emptyOutput }
+        return stdout
     }
 
     private static func cleanOutput(_ value: String) -> String {

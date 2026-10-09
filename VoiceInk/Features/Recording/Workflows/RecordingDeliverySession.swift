@@ -66,7 +66,7 @@ final class RecordingDeliverySession {
         )
     }
 
-    func own<Result>(_ task: Task<Result, Never>) {
+    func own<Result, Failure: Error>(_ task: Task<Result, Failure>) {
         cancelPendingTask = { task.cancel() }
         if isCancelled { task.cancel() }
     }
