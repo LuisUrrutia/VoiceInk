@@ -77,6 +77,7 @@ class CursorPaster {
                 preferredMethod: PasteMethod.current(),
                 remotePushCommand: UserDefaults.standard.string(forKey: PasteTargetSettings.remoteClipboardPushCommandKey),
                 sendKey: sendKey,
+                timing: deliverySession?.timing,
                 shouldCancel: { deliverySession?.isCancelled == true }
             )
         }

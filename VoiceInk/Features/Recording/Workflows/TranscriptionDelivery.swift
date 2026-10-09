@@ -25,6 +25,13 @@ final class TranscriptionDelivery {
     }
 
     func deliver(_ request: Request, actions: Actions) async {
+        defer {
+            let outcome: RecordingTimingTrace.Outcome = Task.isCancelled || request.deliverySession?.isCancelled == true
+                ? .canceled : .skipped
+            for phase in [RecordingTimingTrace.Phase.destinationReady, .clipboardSettled, .pasteCommandPosted] {
+                request.deliverySession?.timing.mark(phase, outcome: outcome)
+            }
+        }
         guard !Task.isCancelled, request.deliverySession?.isCancelled != true else { return }
         guard request.transcription.transcriptionStatus == TranscriptionStatus.completed.rawValue else {
             await actions.dismiss()
