@@ -52,7 +52,7 @@ final class DictationDeliveryTests: XCTestCase {
         XCTAssertEqual(fixture.learnedProcesses, [Fixture.local.processID])
         XCTAssertEqual(fixture.cancelledGenerations, [42])
         XCTAssertEqual(fixture.sentKeys, [.enter])
-        XCTAssertTrue(fixture.delays.contains(0.05))
+        XCTAssertTrue(fixture.delays.contains(0.02))
     }
 
     func testTerminatedMissingAndDeniedTargetsRetainClipboardWithoutPostingOrSending() async {
@@ -117,6 +117,18 @@ final class DictationDeliveryTests: XCTestCase {
         XCTAssertTrue(fixture.delays.contains(0.05))
     }
 
+    func testLocalEventAndAppleScriptPastesKeepSeparateSettleBudgets() {
+        let events = PastePolicy.resolve(for: Fixture.local, preferredMethod: .standard)
+        let script = PastePolicy.resolve(for: Fixture.local, preferredMethod: .appleScript)
+
+        XCTAssertEqual(events.method, .standard)
+        XCTAssertEqual(events.settleDelay, 0.02)
+        XCTAssertFalse(events.usesRemoteClipboard)
+        XCTAssertEqual(script.method, .appleScript)
+        XCTAssertEqual(script.settleDelay, 0.05)
+        XCTAssertFalse(script.usesRemoteClipboard)
+    }
+
     func testScreenSharingPushSuccessAndFailureHaveSeparateSettleBudgets() async {
         for failure in [false, true] {
             let fixture = Fixture()
@@ -138,7 +150,7 @@ final class DictationDeliveryTests: XCTestCase {
             let fixture = Fixture()
             let recording = RecordingDeliverySession(destination: .originalApplication(Fixture.local))
             fixture.onWait = { delay in
-                if delay == 0.05 {
+                if delay == 0.02 {
                     if cancel { recording.cancel() }
                     else { fixture.frontmost = Fixture.remote }
                 }
@@ -150,6 +162,22 @@ final class DictationDeliveryTests: XCTestCase {
             XCTAssertTrue(fixture.methods.isEmpty)
             XCTAssertTrue(fixture.sentKeys.isEmpty)
         }
+    }
+
+    func testExternalClipboardChangeDuringSettlePreventsPasteAndAutoSend() async throws {
+        let fixture = Fixture()
+        fixture.onWait = { delay in
+            if delay == 0.02 { ClipboardManager.setClipboard("external", on: fixture.board) }
+        }
+
+        let result = await fixture.paste(restore: true, sendKey: .enter)
+        try await Task.sleep(for: .seconds(0.4))
+
+        XCTAssertEqual(result.result, .cancelled)
+        XCTAssertEqual(fixture.board.string(forType: .string), "external")
+        XCTAssertTrue(fixture.methods.isEmpty)
+        XCTAssertTrue(fixture.learnedProcesses.isEmpty)
+        XCTAssertTrue(fixture.sentKeys.isEmpty)
     }
 
     func testAutoSendHonorsCancellationAndFocusChangesAfterPostedPaste() async {
@@ -214,7 +242,7 @@ final class DictationDeliveryTests: XCTestCase {
         let entered = expectation(description: "old paste waiting")
         var release: CheckedContinuation<Void, Never>?
         fixture.onAsyncWait = { delay in
-            if delay == 0.05 && fixture.board.string(forType: .string) == "old" {
+            if delay == 0.02 && fixture.board.string(forType: .string) == "old" {
                 entered.fulfill()
                 await withCheckedContinuation { release = $0 }
             }
