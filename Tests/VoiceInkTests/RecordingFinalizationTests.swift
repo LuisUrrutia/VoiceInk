@@ -8,6 +8,54 @@ import os
 
 @MainActor
 final class RecordingFinalizationTests: XCTestCase {
+    func testStopThenCancelDuringModeResolutionRetainsClosedWAVDuration() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("pending-mode.wav")
+        let hardware = try HeldRecordingHardware(url: url)
+        defer { hardware.releaseStop() }
+        let engine = try makeEngine(hardware: hardware, directory: directory)
+        let modeEntered = expectation(description: "mode resolution entered")
+        let modeCanceled = expectation(description: "mode resolution canceled")
+        let pendingCreated = expectation(forNotification: .transcriptionCreated, object: nil) { _ in true }
+        var modeCompletion: CheckedContinuation<Void, Never>?
+        let preparation = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
+        preparation.ownModeResolution(Task {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    modeCompletion = continuation
+                    modeEntered.fulfill()
+                }
+            } onCancel: { modeCanceled.fulfill() }
+        })
+        preparation.start(
+            resolveConfiguration: { nil }, retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
+        )
+        engine.activeRecordingPreparation = preparation
+        engine.recordedFile = url
+        engine.recordingState = .recording
+        await fulfillment(of: [modeEntered], timeout: 3)
+
+        let stop = Task { await engine.toggleRecord() }
+        await fulfillment(of: [hardware.stopEntered], timeout: 3)
+        hardware.releaseStop()
+        await fulfillment(of: [pendingCreated], timeout: 3)
+        let cancel = Task { await engine.cancelRecording() }
+        await fulfillment(of: [modeCanceled], timeout: 3)
+        modeCompletion?.resume()
+        await cancel.value
+        await stop.value
+
+        let entries = try history(in: engine)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.transcriptionStatus, TranscriptionStatus.canceled.rawValue)
+        XCTAssertEqual(entries.first?.audioFileURL, url.absoluteString)
+        XCTAssertEqual(try XCTUnwrap(entries.first?.duration), 1, accuracy: 0.001)
+        XCTAssertEqual(try AVAudioFile(forReading: url).length, 16_000)
+        XCTAssertEqual(engine.recordingState, .idle)
+        XCTAssertNil(engine.recordedFile)
+    }
+
     func testCaptureFailureIsRetainedAfterAwaitedStopAndDoesNotEnterTranscription() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

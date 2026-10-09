@@ -24,6 +24,7 @@ class Recorder: NSObject, ObservableObject {
     private var hasStoppedRecording = false
     private let recordingFinalization = RecordingFinalization()
     private(set) var recordingError: Error?
+    var firstAudioTimestampNanoseconds: UInt64? { recorder?.firstAudioTimestampNanoseconds }
     private let smoothedValuesLock = NSLock()
     private var smoothedAverage: Float = 0
     private var smoothedPeak: Float = 0

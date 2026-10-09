@@ -120,11 +120,13 @@ class StreamingTranscriptionService {
     private var provider: StreamingTranscriptionProvider?
     private var sendTask: Task<Void, Never>?
     private var eventConsumerTask: Task<Void, Never>?
+    private var cancellationTask: Task<Void, Never>?
     private let chunkSource = AudioChunkSource()
     private var state: StreamingState = .idle
     private var committedSegments: [String] = []
     private let modelContext: ModelContext
     private let fluidAudioService: FluidAudioTranscriptionService?
+    private let providerFactory: ((any TranscriptionModel) -> StreamingTranscriptionProvider)?
     private var onPartialTranscript: ((String) -> Void)?
     private let metrics = StreamingMetrics()
     private var stopStartedAt: Date?
@@ -133,11 +135,13 @@ class StreamingTranscriptionService {
 
     init(
         modelContext: ModelContext, fluidAudioService: FluidAudioTranscriptionService? = nil,
-        onPartialTranscript: ((String) -> Void)? = nil
+        onPartialTranscript: ((String) -> Void)? = nil,
+        providerFactory: ((any TranscriptionModel) -> StreamingTranscriptionProvider)? = nil
     ) {
         self.modelContext = modelContext
         self.fluidAudioService = fluidAudioService
         self.onPartialTranscript = onPartialTranscript
+        self.providerFactory = providerFactory
     }
 
     deinit {
@@ -274,6 +278,8 @@ class StreamingTranscriptionService {
     func cancel() {
         state = .cancelled
         onPartialTranscript = nil
+        let eventConsumer = eventConsumerTask
+        let sender = sendTask
         eventConsumerTask?.cancel()
         eventConsumerTask = nil
         sendTask?.cancel()
@@ -287,17 +293,28 @@ class StreamingTranscriptionService {
         let providerToDisconnect = provider
         provider = nil
 
-        Task {
-            await providerToDisconnect?.disconnect()
+        if providerToDisconnect != nil || eventConsumer != nil || sender != nil {
+            let previousCancellation = cancellationTask
+            cancellationTask = Task {
+                await previousCancellation?.value
+                await providerToDisconnect?.disconnect()
+                await sender?.value
+                await eventConsumer?.value
+            }
         }
 
         committedSegments = []
         logger.notice("Streaming cancelled")
     }
 
+    func finishCancellation() async {
+        await cancellationTask?.value
+    }
+
     // MARK: - Private
 
     private func createProvider(for model: any TranscriptionModel) -> StreamingTranscriptionProvider {
+        if let providerFactory { return providerFactory(model) }
         if model.provider == .fluidAudio {
             if FluidAudioModelManager.isNemotronModel(named: model.name) {
                 return FluidAudioNemotronStreamingProvider()
@@ -481,6 +498,8 @@ class StreamingTranscriptionService {
 
     private func cleanupStreaming() async {
         onPartialTranscript = nil
+        let eventConsumer = eventConsumerTask
+        let sender = sendTask
         eventConsumerTask?.cancel()
         eventConsumerTask = nil
         sendTask?.cancel()
@@ -489,6 +508,8 @@ class StreamingTranscriptionService {
         commitSignal?.finish()
         commitSignal = nil
         await provider?.disconnect()
+        await sender?.value
+        await eventConsumer?.value
         provider = nil
         state = .idle
         committedSegments = []
