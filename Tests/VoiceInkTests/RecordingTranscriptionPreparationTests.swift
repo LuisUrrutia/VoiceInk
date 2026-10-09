@@ -1,6 +1,7 @@
 import XCTest
 import SwiftData
 import os
+import FluidAudio
 @testable import VoiceInk
 
 @MainActor
@@ -288,6 +289,148 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         return StreamingTranscriptionSession(streamingService: service, fallbackService: fallback)
     }
 
+    func testRegistryPreparesASRBeforeVADAndStopRetainsLeaseThroughFallback() async throws {
+        let loadGate = PreparationGate()
+        let events = PreparationEvents()
+        let service = RecordingFluidService(events: events, loadGate: loadGate)
+        let (registry, whisper) = try makeRegistry(service: service)
+        let configuration = makeFluidConfiguration()
+        let owner = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
+        start(owner, registry: registry, whisper: whisper, configuration: configuration)
+        await loadGate.waitUntilEntered()
+        XCTAssertFalse(events.snapshot.contains("vadLoad"))
+        let stoppedOwner = owner
+
+        let setup = try await stoppedOwner.setup()
+        loadGate.open()
+        await stoppedOwner.waitUntilPrepared()
+        let text = try await stoppedOwner.performTranscription {
+            let audio = try await service.preparedSpeechAudio(in: [0.1, 0.2])
+            XCTAssertFalse(audio.isEmpty)
+            return "Fallback fixture"
+        }
+
+        XCTAssertEqual(text, "Fallback fixture")
+        XCTAssertEqual(setup?.configuration.model.name, configuration.model.name)
+        XCTAssertEqual(setup?.configuration.languages, configuration.languages)
+        XCTAssertEqual(events.snapshot.prefix(4), ["asrStarted", "asrFinished", "vadRequested", "vadLoad"])
+        XCTAssertEqual(events.snapshot.filter { $0 == "vadLoad" }.count, 1)
+        XCTAssertEqual(service.preparedRecordingID, stoppedOwner.recordingID)
+        XCTAssertFalse(events.snapshot.contains("release"))
+        await stoppedOwner.finish()
+        await stoppedOwner.finish()
+        XCTAssertEqual(events.snapshot.filter { $0 == "release" }.count, 1)
+        XCTAssertEqual(service.releasedRecordingID, stoppedOwner.recordingID)
+        _ = try await service.preparedSpeechAudio(in: [0.1, 0.2])
+        XCTAssertEqual(events.snapshot.filter { $0 == "vadLoad" }.count, 2)
+        await service.cleanup()
+    }
+
+    func testCanceledASRAwaitsMutationBeforeVADReleaseAndRejectsLateResult() async throws {
+        let events = PreparationEvents()
+        let service = RecordingFluidService(events: events)
+        let (registry, whisper) = try makeRegistry(service: service)
+        let owner = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
+        start(owner, registry: registry, whisper: whisper, configuration: makeFluidConfiguration())
+        _ = try await owner.setup()
+        await owner.waitUntilPrepared()
+        let asrGate = PreparationGate()
+        let canceled = expectation(description: "ASR task cancellation reaches owned operation")
+        let transcription = Task {
+            try await owner.performTranscription {
+                await withTaskCancellationHandler {
+                    await asrGate.wait()
+                    events.record("asrMutationFinished")
+                } onCancel: { canceled.fulfill() }
+                return "Late fixture"
+            }
+        }
+        await asrGate.waitUntilEntered()
+
+        let finish = Task { await owner.finish() }
+        await fulfillment(of: [canceled], timeout: 3)
+        let overlappingFinish = Task { await owner.finish() }
+        XCTAssertFalse(events.snapshot.contains("release"))
+        asrGate.open()
+        await finish.value
+        await overlappingFinish.value
+
+        do { _ = try await transcription.value; XCTFail("Canceled ASR cannot publish its late result") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(events.snapshot.suffix(2), ["asrMutationFinished", "release"])
+        XCTAssertEqual(events.snapshot.filter { $0 == "release" }.count, 1)
+        XCTAssertEqual(service.releasedRecordingID, owner.recordingID)
+    }
+
+    func testRealtimeRegistryPreparesVADAfterActualStreamingStartupWithoutBatchManager() async throws {
+        let connectGate = PreparationGate()
+        let provider = HeldPreparationProvider(connectGate: connectGate)
+        let session = try makeStreamingSession(provider: provider, fallback: PreparationFallback())
+        let events = PreparationEvents()
+        let service = RecordingFluidService(events: events)
+        let (registry, whisper) = try makeRegistry(service: service)
+        let owner = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
+        let configuration = makeFluidConfiguration(realtime: true)
+        owner.start(
+            resolveConfiguration: { configuration }, retireAutoLearn: {},
+            prepareModel: {
+                XCTAssertTrue(provider.connectionFinished)
+                try await registry.prepareForRecording($0, recordingID: owner.recordingID, whisperModelManager: whisper)
+            },
+            prepareSession: {
+                _ = try await session.prepare(configuration: $0)
+                return session
+            },
+            releaseResources: { await registry.releaseRecordingPreparation(recordingID: owner.recordingID, configuration: $0) }
+        )
+        _ = try await owner.setup()
+        await connectGate.waitUntilEntered()
+        XCTAssertTrue(events.snapshot.isEmpty)
+
+        connectGate.open()
+        await owner.waitUntilPrepared()
+
+        XCTAssertEqual(events.snapshot, ["vadRequested", "vadLoad"])
+        XCTAssertEqual(service.preparedRecordingID, owner.recordingID)
+        await owner.finish()
+        XCTAssertEqual(events.snapshot.last, "release")
+        XCTAssertEqual(provider.activeDisconnects, 0)
+    }
+
+    private func start(
+        _ owner: RecordingTranscriptionPreparation, registry: TranscriptionServiceRegistry,
+        whisper: WhisperModelManager, configuration: TranscriptionRuntimeConfiguration
+    ) {
+        let recordingID = owner.recordingID
+        owner.start(
+            resolveConfiguration: { configuration }, retireAutoLearn: {},
+            prepareModel: { try await registry.prepareForRecording($0, recordingID: recordingID, whisperModelManager: whisper) },
+            prepareSession: { _ in nil },
+            releaseResources: { await registry.releaseRecordingPreparation(recordingID: recordingID, configuration: $0) }
+        )
+    }
+
+    private func makeRegistry(service: FluidAudioTranscriptionService) throws -> (TranscriptionServiceRegistry, WhisperModelManager) {
+        let container = try ModelContainer(
+            for: Transcription.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let whisper = WhisperModelManager(modelsDirectory: URL(fileURLWithPath: "/unused-models"))
+        return (TranscriptionServiceRegistry(
+            modelProvider: whisper, modelsDirectory: whisper.modelsDirectory,
+            modelContext: ModelContext(container), fluidAudioService: service
+        ), whisper)
+    }
+
+    private func makeFluidConfiguration(realtime: Bool = false) -> TranscriptionRuntimeConfiguration {
+        TranscriptionRuntimeConfiguration(
+            mode: ModeConfig(name: "Ultra fixture", isAIEnhancementEnabled: false),
+            model: FluidAudioModel(
+                name: "parakeet-ultra", displayName: "Parakeet Ultra", description: "Fixture", size: "1 GB",
+                speed: 1, accuracy: 1, ramUsage: 1, supportedLanguages: ["en": "English"]
+            ), languages: ["en"], isRealtimeEnabled: realtime
+        )
+    }
+
     private func makeConfiguration(
         languages: [String] = ["en"], modelName: String = "ggml-small", realtime: Bool = false
     ) -> TranscriptionRuntimeConfiguration {
@@ -399,4 +542,51 @@ private final class PreparationSession: TranscriptionSession {
     }
     func transcribe(audioURL: URL) async throws -> String { "Fixture transcription" }
     func cancel() { cancelCount += 1 }
+}
+
+private final class PreparationEvents: @unchecked Sendable {
+    private let events = OSAllocatedUnfairLock(initialState: [String]())
+    func record(_ event: String) { events.withLock { $0.append(event) } }
+    var snapshot: [String] { events.withLock { $0 } }
+}
+
+private final class RecordingFluidService: FluidAudioTranscriptionService {
+    private let events: PreparationEvents
+    private let loadGate: PreparationGate?
+    private let identities = OSAllocatedUnfairLock(initialState: (prepared: UUID?.none, released: UUID?.none))
+    var preparedRecordingID: UUID? { identities.withLock { $0.prepared } }
+    var releasedRecordingID: UUID? { identities.withLock { $0.released } }
+
+    init(events: PreparationEvents, loadGate: PreparationGate? = nil) {
+        self.events = events
+        self.loadGate = loadGate
+        super.init(vadCache: FluidAudioVADCache(loader: {
+            events.record("vadLoad")
+            return PreparationVAD()
+        }, isEnabled: { true }))
+    }
+
+    override func loadModel(for model: FluidAudioModel) async throws {
+        events.record("asrStarted")
+        await loadGate?.wait()
+        events.record("asrFinished")
+        try Task.checkCancellation()
+    }
+
+    override func prepareVAD(recordingID: UUID, model: any TranscriptionModel) async throws -> Bool {
+        events.record("vadRequested")
+        identities.withLock { $0.prepared = recordingID }
+        return try await super.prepareVAD(recordingID: recordingID, model: model)
+    }
+
+    override func releaseVADPreparation(recordingID: UUID) async {
+        await super.releaseVADPreparation(recordingID: recordingID)
+        identities.withLock { $0.released = recordingID }
+        events.record("release")
+    }
+}
+
+private struct PreparationVAD: FluidAudioVADManaging {
+    func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment] { [] }
+    func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]] { [samples] }
 }

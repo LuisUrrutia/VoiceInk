@@ -16,7 +16,8 @@ class TranscriptionServiceRegistry {
     )
     private(set) lazy var cloudTranscriptionService = CloudTranscriptionService(modelContext: modelContext)
     private(set) lazy var nativeAppleTranscriptionService = NativeAppleTranscriptionService()
-    private(set) lazy var fluidAudioTranscriptionService = FluidAudioTranscriptionService()
+    private let providedFluidAudioService: FluidAudioTranscriptionService?
+    private(set) lazy var fluidAudioTranscriptionService = providedFluidAudioService ?? FluidAudioTranscriptionService()
     private var cachedTranscribeCppTranscriptionService: TranscribeCppTranscriptionService?
 
     var transcribeCppTranscriptionService: TranscribeCppTranscriptionService {
@@ -28,10 +29,14 @@ class TranscriptionServiceRegistry {
         return service
     }
 
-    init(modelProvider: any WhisperModelProvider, modelsDirectory: URL, modelContext: ModelContext) {
+    init(
+        modelProvider: any WhisperModelProvider, modelsDirectory: URL, modelContext: ModelContext,
+        fluidAudioService: FluidAudioTranscriptionService? = nil
+    ) {
         self.modelProvider = modelProvider
         self.modelsDirectory = modelsDirectory
         self.modelContext = modelContext
+        self.providedFluidAudioService = fluidAudioService
     }
 
     func service(for provider: ModelProvider) -> TranscriptionService {
@@ -84,7 +89,8 @@ class TranscriptionServiceRegistry {
     }
 
     func prepareForRecording(
-        _ configuration: TranscriptionRuntimeConfiguration, whisperModelManager: WhisperModelManager
+        _ configuration: TranscriptionRuntimeConfiguration, recordingID: UUID,
+        whisperModelManager: WhisperModelManager
     ) async throws {
         try Task.checkCancellation()
         let model = configuration.model
@@ -101,6 +107,14 @@ class TranscriptionServiceRegistry {
             try await transcribeCppTranscriptionService.loadModel(for: model)
         }
         try Task.checkCancellation()
+        if model.provider == .fluidAudio {
+            _ = try await fluidAudioTranscriptionService.prepareVAD(recordingID: recordingID, model: model)
+        }
+    }
+
+    func releaseRecordingPreparation(recordingID: UUID, configuration: TranscriptionRuntimeConfiguration) async {
+        guard configuration.model.provider == .fluidAudio else { return }
+        await fluidAudioTranscriptionService.releaseVADPreparation(recordingID: recordingID)
     }
 
     func cleanup() async {

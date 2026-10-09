@@ -60,6 +60,7 @@ class TranscriptionPipeline {
         outputConfiguration: @escaping () -> OutputRuntimeConfiguration,
         sendAfterPaste: Bool = false,
         deliverySession: RecordingDeliverySession? = nil,
+        preparation: RecordingTranscriptionPreparation? = nil,
         onStateChange: @escaping (RecordingState) -> Void,
         shouldCancel: () -> Bool,
         onCancel: @escaping () async -> Void,
@@ -104,14 +105,16 @@ class TranscriptionPipeline {
             deliverySession?.timing.mark(.asrStarted)
             let transcriptionStart = Date()
             var text: String
-            if let session {
-                text = try await session.transcribe(audioURL: audioURL)
-            } else {
-                text = try await serviceRegistry.transcribe(
-                    audioURL: audioURL,
-                    model: model,
-                    context: transcriptionConfiguration.requestContext
+            let transcribe: @MainActor () async throws -> String = { [serviceRegistry] in
+                if let session { return try await session.transcribe(audioURL: audioURL) }
+                return try await serviceRegistry.transcribe(
+                    audioURL: audioURL, model: model, context: transcriptionConfiguration.requestContext
                 )
+            }
+            if let preparation {
+                text = try await preparation.performTranscription(transcribe)
+            } else {
+                text = try await transcribe()
             }
             text = TranscriptionOutputFilter.filter(text)
             deliverySession?.timing.mark(.asrFinished)
@@ -239,7 +242,13 @@ class TranscriptionPipeline {
 
             transcription.transcriptionStatus = TranscriptionStatus.completed.rawValue
         } catch {
-            deliverySession?.timing.mark(.asrFinished, outcome: shouldCancel() ? .canceled : .failed)
+            let wasCanceled = shouldCancel() || Task.isCancelled || error is CancellationError
+                || deliverySession?.isCancelled == true || preparation?.isCancelled == true
+            deliverySession?.timing.mark(.asrFinished, outcome: wasCanceled ? .canceled : .failed)
+            if wasCanceled {
+                await finishCanceledTranscription()
+                return
+            }
             let errorDescription = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 
             if let nativeAppleError = error as? NativeAppleTranscriptionService.ServiceError,

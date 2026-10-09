@@ -394,7 +394,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         }
                     },
                     prepareModel: { configuration in
-                        try await registry.prepareForRecording(configuration, whisperModelManager: whisper)
+                        try await registry.prepareForRecording(
+                            configuration, recordingID: startID, whisperModelManager: whisper
+                        )
                     },
                     prepareSession: { [weak self] configuration in
                         guard registry.shouldUseRealtimeTranscription(for: configuration) else {
@@ -429,6 +431,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                             await session.finishPreparation()
                             throw error
                         }
+                    },
+                    releaseResources: { configuration in
+                        await registry.releaseRecordingPreparation(recordingID: startID, configuration: configuration)
                     }
                 )
 
@@ -682,6 +687,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             },
             sendAfterPaste: sendAfterPaste,
             deliverySession: deliverySession,
+            preparation: preparation,
             onStateChange: { [weak self] state in
                 guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
                 self.recordingState = state
