@@ -50,13 +50,7 @@ extension AudioDeviceManager {
 
     func recordingDidStop() {
         recordingDeviceSession = RecordingDeviceSession()
-        if inputMode != .systemDefault {
-            let deviceID = resolveCurrentRecordingDevice().deviceID
-            if selectedDeviceID != deviceID {
-                selectedDeviceID = deviceID
-                notifyDeviceChange()
-            }
-        }
+        reconcileInputAvailability()
     }
 
     func resolveCurrentRecordingDevice(
@@ -83,7 +77,8 @@ extension AudioDeviceManager {
     }
 
     func getCurrentDevice() -> AudioDeviceID {
-        resolveCurrentRecordingDevice().deviceID ?? 0
+        if let activeRecordingDeviceID { return activeRecordingDeviceID }
+        return resolveCurrentRecordingDevice().deviceID ?? 0
     }
 
     func findBestAvailableDevice() -> AudioDeviceID? {
@@ -91,22 +86,30 @@ extension AudioDeviceManager {
     }
 
     func isDeviceUsableForRecording(_ deviceID: AudioDeviceID) -> Bool {
+        isPhysicalInputUsable(deviceID) && microphoneRequirementsAreMet(for: deviceID)
+    }
+
+    func isPhysicalInputUsable(_ deviceID: AudioDeviceID) -> Bool {
         isOperationalInputDevice(deviceID)
             && !(isClamshellClosed && isInternalMicrophone(deviceID))
     }
 
     private func preferredRecordingDeviceIDs() -> [AudioDeviceID] {
+        let automatic = automaticRecordingDeviceIDs()
+        guard let temporaryMicrophone,
+            let device = findAvailableDevice(uid: temporaryMicrophone.uid, modelUID: temporaryMicrophone.modelUID)
+        else { return automatic }
+        return [device.id] + automatic
+    }
+
+    func automaticRecordingDeviceIDs() -> [AudioDeviceID] {
         switch inputMode {
         case .systemDefault:
             return getSystemDefaultDevice().map { [$0] } ?? []
         case .custom:
             let savedUID = userDefaults.selectedAudioDeviceUID ?? ""
             let savedModelUID = userDefaults.selectedAudioDeviceModelUID
-            var candidates = findAvailableDevice(uid: savedUID, modelUID: savedModelUID).map { [$0.id] } ?? []
-            if let selectedDeviceID, !candidates.contains(selectedDeviceID) {
-                candidates.append(selectedDeviceID)
-            }
-            return candidates
+            return findAvailableDevice(uid: savedUID, modelUID: savedModelUID).map { [$0.id] } ?? []
         case .prioritized:
             return prioritizedDevices.sorted { $0.priority < $1.priority }.compactMap { device in
                 findAvailableDevice(uid: device.id, modelUID: device.modelUID)?.id
@@ -127,21 +130,7 @@ extension AudioDeviceManager {
     func handleClamshellChange(isClosed: Bool) {
         logger.notice("Clamshell state changed: \(isClosed ? "closed" : "open", privacy: .public)")
 
-        guard isRecordingActive else {
-            if inputMode != .systemDefault {
-                selectedDeviceID = resolveCurrentRecordingDevice().deviceID
-            }
-            notifyDeviceChange()
-            return
-        }
-        guard isClosed,
-            let activeRecordingDeviceID,
-            isInternalMicrophone(activeRecordingDeviceID)
-        else {
-            return
-        }
-
-        requestRecordingDeviceChange(reason: .closedLid)
+        reconcileInputAvailability(reason: isClosed ? .closedLid : .deviceUnavailable)
     }
 
     func requestRecordingDeviceChange(reason: RecordingDeviceChangeReason) {

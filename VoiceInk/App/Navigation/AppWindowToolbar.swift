@@ -47,26 +47,32 @@ struct MicrophoneMenu: View {
 
     var body: some View {
         Menu {
+            if devices.temporaryMicrophone != nil {
+                Button("Resume Automatic Selection") { devices.resumeAutomaticMicrophoneSelection() }
+                Divider()
+            }
             Toggle(isOn: Binding(
-                get: { devices.inputMode == .systemDefault },
+                get: { devices.inputMode == .systemDefault && devices.temporaryMicrophone == nil },
                 set: { if $0 { devices.selectInputMode(.systemDefault) } }
             )) {
                 Label("Use system default", appSymbol: "desktopcomputer")
             }
 
+            Text("Use Microphone Temporarily")
             ForEach(devices.availableDevices, id: \.uid) { device in
                 Toggle(isOn: Binding(
-                    get: { devices.inputMode == .custom && devices.selectedDeviceID == device.id },
-                    set: { if $0 { devices.selectDeviceAndSwitchToCustomMode(id: device.id) } }
+                    get: { devices.getCurrentDevice() == device.id },
+                    set: { _ in devices.selectTemporaryMicrophone(id: device.id) }
                 )) {
                     Label(device.name, appSymbol: "mic")
                 }
+                .disabled(!devices.isDeviceUsableForRecording(device.id))
             }
 
             if !devices.prioritizedDevices.isEmpty {
                 Divider()
                 Toggle("Use priority order", isOn: Binding(
-                    get: { devices.inputMode == .prioritized },
+                    get: { devices.inputMode == .prioritized && devices.temporaryMicrophone == nil },
                     set: { if $0 { devices.selectInputMode(.prioritized) } }
                 ))
             }
@@ -99,6 +105,7 @@ struct MicrophoneMenu: View {
     private var microphoneName: String {
         let name = devices.availableDevices.first { $0.id == devices.getCurrentDevice() }?.name
             ?? String(localized: "System microphone")
+        if devices.temporaryMicrophone != nil { return String(localized: "\(name) (Temporary)") }
         switch devices.inputMode {
         case .systemDefault: return String(localized: "\(name) (Default)")
         case .prioritized: return String(localized: "\(name) (Priority)")

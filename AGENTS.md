@@ -72,6 +72,13 @@ When local packaging is requested, inspect `make local` first: it builds increme
 
 ## Tracked local overlays
 
+### Generic microphone requirements and temporary selection
+
+- Request: Restore preferred inputs after temporary microphone changes and support virtual inputs with configurable dependencies for any user.
+- Preserve optional per-priority-entry requirements for another available microphone and an open application, identified by device UID/model UID and application bundle identifier. Apply requirements to prioritized, custom, system-default and fallback candidates so an ineligible virtual input cannot return through fallback. Keep existing priority archives readable and preserve requirements through reordering, removal of other entries and device rebinding. Application presence does not establish that its internal audio processing is active; do not infer readiness from silence or add user-specific application/device names.
+- Quick microphone menus make a memory-only temporary selection without changing the saved mode, custom preference or priority order. Keep it through unrelated changes and normal recording Stop; resume automatic selection when the temporary input becomes unavailable, an earlier automatic candidate becomes newly eligible, the user explicitly resumes, selects a permanent microphone or mode, reorders priorities, or relaunches. Returning preferred inputs wait for active recording to finish; loss of an active input or its requirements uses the existing coalesced device-switch path without replacing its WAV. Observe application launch/termination and input/default-input changes, remove listeners with their owner, and preserve closed-lid routing and recording finalization.
+- Regression: `MicrophoneSelectionTests` and `RecordingDeviceRoutingTests` run in `VoiceInkTests` through `./scripts/check-personal-sync.sh`. They cover legacy persistence, combined requirements, fallback exclusion, source/app return, temporary/permanent selection, unrelated/lower-priority changes, recording retention and coalesced switching. Recheck `RecordingFinalizationTests`, `MicrophoneDiagnosticTests`, `CaptureReadinessTests` and navigation. In checkout-owned `VoiceInk Dev.app`, verify requirements editing, unavailable reasons, temporary selection and automatic resumption plus unrelated navigation. Physical device switching and third-party processing state require separate runtime evidence.
+
 ### Local CLI process lifecycle
 
 - Request: Repair the Local CLI enhancement runner's output backpressure and cancellation failures from critical-path item 1.

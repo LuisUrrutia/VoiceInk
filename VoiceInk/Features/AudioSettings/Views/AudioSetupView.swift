@@ -9,6 +9,7 @@ struct AudioSetupView: View {
     @ObservedObject private var playbackController = PlaybackController.shared
     @State private var microphoneSourceBeforePriorityOrder: MicrophoneSourceSelection = .systemDefault
     @State private var refreshIconRotation = 0.0
+    @State private var requirementsMicrophone: PrioritizedDevice?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,10 +59,19 @@ struct AudioSetupView: View {
                 microphoneSourceBeforePriorityOrder = currentMicrophoneSource
             }
         }
+        .sheet(item: $requirementsMicrophone) { microphone in
+            MicrophoneRequirementsView(devices: audioDeviceManager, microphone: microphone)
+        }
     }
 
     @ViewBuilder
     private var inputSettingsRows: some View {
+        if let temporary = audioDeviceManager.temporaryMicrophone {
+            LabeledContent("Temporary Microphone", value: temporary.name)
+            Button("Resume Automatic Selection") {
+                audioDeviceManager.resumeAutomaticMicrophoneSelection()
+            }
+        }
         LabeledContent("Microphone Mode") {
             Picker("Microphone Mode", selection: inputRouteSelection) {
                 Text("Selected Microphone").tag(InputRoute.singleMicrophone)
@@ -75,6 +85,12 @@ struct AudioSetupView: View {
             LabeledContent("Microphone") {
                 Picker("Microphone", selection: microphoneSourceSelection) {
                     Text(systemDefaultSourceTitle).tag(MicrophoneSourceSelection.systemDefault)
+
+                    if let selectedDeviceUID,
+                        !audioDeviceManager.availableDevices.contains(where: { $0.uid == selectedDeviceUID })
+                    {
+                        Text("Selected Microphone (Unavailable)").tag(MicrophoneSourceSelection.device(selectedDeviceUID))
+                    }
 
                     ForEach(audioDeviceManager.availableDevices, id: \.uid) { device in
                         Text(device.name).tag(MicrophoneSourceSelection.device(device.uid))
@@ -163,6 +179,7 @@ struct AudioSetupView: View {
         let device = audioDeviceManager.availableDevices.first { $0.uid == prioritizedDevice.id }
         let isAvailable = device != nil
         let isActive = device.map { audioDeviceManager.getCurrentDevice() == $0.id } ?? false
+        let unmet = audioDeviceManager.unmetMicrophoneRequirements(for: prioritizedDevice)
 
         return HStack(spacing: 8) {
             Text("\(prioritizedDevice.priority + 1)")
@@ -180,6 +197,9 @@ struct AudioSetupView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                ForEach(unmet, id: \.self) { reason in
+                    Text(reason).font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
@@ -192,6 +212,13 @@ struct AudioSetupView: View {
             }
 
             HStack(spacing: 4) {
+                Button {
+                    requirementsMicrophone = prioritizedDevice
+                } label: {
+                    Image(appSymbol: "gearshape")
+                }
+                .help("Configure microphone requirements")
+                .accessibilityLabel("Requirements for \(prioritizedDevice.name)")
                 Button {
                     movePrioritizedDeviceUp(prioritizedDevice)
                 } label: {
@@ -259,6 +286,7 @@ struct AudioSetupView: View {
     }
 
     private var selectedDeviceUID: String? {
+        if let savedUID = audioDeviceManager.userDefaults.selectedAudioDeviceUID { return savedUID }
         guard let selectedDeviceID = audioDeviceManager.selectedDeviceID else { return nil }
         return audioDeviceManager.availableDevices.first { $0.id == selectedDeviceID }?.uid
     }
@@ -331,7 +359,9 @@ struct AudioSetupView: View {
     private func updatePriorities(_ devices: [PrioritizedDevice]) {
         let updatedDevices = devices.enumerated()
             .map { index, device in
-                PrioritizedDevice(id: device.id, name: device.name, priority: index, modelUID: device.modelUID)
+                var updated = device
+                updated.priority = index
+                return updated
             }
         audioDeviceManager.updatePriorities(devices: updatedDevices)
     }
