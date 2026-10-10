@@ -85,13 +85,21 @@ struct MenuBarView: View {
             }
 
             Menu {
+                if audioDeviceManager.temporaryMicrophone != nil {
+                    Button("Resume Automatic Selection") {
+                        audioDeviceManager.resumeAutomaticMicrophoneSelection()
+                    }
+                    Divider()
+                }
+                Text("Use Microphone Temporarily")
                 ForEach(audioDeviceManager.availableDevices, id: \.id) { device in
                     Button {
-                        audioDeviceManager.selectDeviceAndSwitchToCustomMode(id: device.id)
+                        audioDeviceManager.selectTemporaryMicrophone(id: device.id)
                     } label: {
                         let isActive = audioDeviceManager.getCurrentDevice() == device.id
                         Text(isActive ? "\(device.name)  ✓" : device.name)
                     }
+                    .disabled(!audioDeviceManager.isDeviceUsableForRecording(device.id))
                 }
 
                 if audioDeviceManager.availableDevices.isEmpty {
