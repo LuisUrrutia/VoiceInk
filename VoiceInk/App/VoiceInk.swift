@@ -20,9 +20,9 @@ struct VoiceInkApp: App {
     @StateObject private var updaterViewModel: UpdaterViewModel
     @StateObject private var menuBarManager: MenuBarManager
     @StateObject private var mainWindowNavigation = MainWindowNavigation.shared
-    @StateObject private var aiService = AIService()
+    @StateObject private var aiService: AIService
     @StateObject private var enhancementService: AIEnhancementService
-    @StateObject private var activeWindowService = ActiveWindowService.shared
+    @StateObject private var activeWindowService: ActiveWindowService
     @AppStorage(OnboardingSettings.completedV2Key) private var hasCompletedOnboardingV2 = false
     @AppStorage("enableAnnouncements") private var enableAnnouncements = true
     @State private var didShowLaunchReminders = false
@@ -43,8 +43,6 @@ struct VoiceInkApp: App {
         URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0)
 
         AppDefaults.registerDefaults()
-        AppLanguagePreference.applyStored()
-        AppAppearancePreference.applyStored()
         OnboardingV2Migration.prepareIfNeeded()
         #if DEBUG
             AppSymbolCheck.assertAssetsExist()
@@ -60,10 +58,12 @@ struct VoiceInkApp: App {
             VocabularySection.self
         ])
         let resolvedContainer: ModelContainer
+        var hasPersistentStorage = false
 
         // Attempt 1: Try persistent storage
         do {
             resolvedContainer = try Self.createPersistentContainer(schema: schema, logger: logger)
+            hasPersistentStorage = true
         } catch let persistentError {
             // Attempt 2: Try in-memory storage
             do {
@@ -95,6 +95,14 @@ struct VoiceInkApp: App {
 
         container = resolvedContainer
         DictionaryService.cleanUpDictionaryContent(context: resolvedContainer.mainContext, source: "launch")
+
+        let configurationFile = ConfigurationFileStore.shared
+        let usesConfigurationFile = hasPersistentStorage && NSClassFromString("XCTestCase") == nil
+        if usesConfigurationFile {
+            configurationFile.load(into: resolvedContainer)
+        }
+        AppLanguagePreference.applyStored()
+        AppAppearancePreference.applyStored()
 
         // Initialize services with proper sharing of instances
         let aiService = AIService()
@@ -176,6 +184,18 @@ struct VoiceInkApp: App {
             modelContext: resolvedContainer.mainContext
         )
         _prewarmService = StateObject(wrappedValue: prewarmService)
+
+        if usesConfigurationFile {
+            configurationFile.startObserving()
+            if let error = configurationFile.errorMessage {
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = String(localized: "Configuration file could not be loaded or saved")
+                    alert.informativeText = "\(configurationFile.fileURL.path)\n\n\(error)"
+                    alert.runModal()
+                }
+            }
+        }
 
         appDelegate.menuBarManager = menuBarManager
 

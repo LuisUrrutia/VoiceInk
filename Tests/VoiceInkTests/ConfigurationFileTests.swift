@@ -1,0 +1,422 @@
+import AppKit
+import SwiftData
+import XCTest
+@testable import VoiceInk
+
+@MainActor
+final class ConfigurationFileTests: XCTestCase {
+    private var directory: URL!
+    private var defaults: UserDefaults!
+    private var suite: String!
+    private var container: ModelContainer!
+    private var stores: [ConfigurationFileStore] = []
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("VoiceInkConfig-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        suite = "VoiceInkConfigTests.\(UUID())"
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let schema = Schema([VocabularyWord.self, VocabularySection.self, WordReplacement.self, Transcription.self])
+        container = try ModelContainer(for: schema, configurations: ModelConfiguration(
+            "config", schema: schema, url: directory.appendingPathComponent("data.store"), cloudKitDatabase: .none
+        ))
+    }
+
+    override func tearDownWithError() throws {
+        stores.forEach { $0.stopObserving() }
+        stores = []
+        container = nil
+        defaults.removePersistentDomain(forName: suite)
+        defaults = nil
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    private var file: URL { directory.appendingPathComponent("config.jsonc") }
+
+    private func store(at url: URL? = nil) -> ConfigurationFileStore {
+        let result = ConfigurationFileStore(fileURL: url ?? file, defaults: defaults)
+        stores.append(result)
+        return result
+    }
+
+    private func write(_ content: String) throws { try Data(content.utf8).write(to: file) }
+
+    private func root() throws -> [String: ConfigurationValue] {
+        try XCTUnwrap(ConfigurationJSON(data: Data(contentsOf: file)).root.value.object)
+    }
+
+    func testXDGPathsAndBuildIsolation() {
+        let home = URL(fileURLWithPath: "/Users/example")
+        for environment in [[:], ["XDG_CONFIG_HOME": ""], ["XDG_CONFIG_HOME": "relative"]] {
+            XCTAssertEqual(ConfigurationLocation.fileURL(environment: environment, home: home, variant: .production).path,
+                           "/Users/example/.config/voiceink/config.jsonc")
+        }
+        let environment = ["XDG_CONFIG_HOME": "/tmp/settings with spaces"]
+        XCTAssertEqual(ConfigurationLocation.fileURL(environment: environment, home: home, variant: .production).path,
+                       "/tmp/settings with spaces/voiceink/config.jsonc")
+        XCTAssertEqual(ConfigurationLocation.fileURL(environment: environment, home: home, variant: .development).path,
+                       "/tmp/settings with spaces/voiceink/dev/config.jsonc")
+        XCTAssertEqual(ConfigurationLocation.fileURL(environment: environment, home: home, variant: .local).path,
+                       "/tmp/settings with spaces/voiceink/local/config.jsonc")
+    }
+
+    func testJSONCStringsCommentsTrailingCommasAndUnicode() throws {
+        let source = #"""
+        // title
+        {"url": "https://example.test/a//b", "text": "á \\\" /*literal*/", /* block */ "items": [true, null, 3,],}
+        """#
+        let document = try ConfigurationJSON(data: Data(source.utf8))
+        XCTAssertEqual(document.root.value.object?["url"], .string("https://example.test/a//b"))
+        XCTAssertEqual(document.root.value.object?["items"], .array([.bool(true), .null, .number(3)]))
+        XCTAssertEqual(try document.updating(document.root.value), Data(source.utf8))
+    }
+
+    func testJSONCRejectsInvalidFilesAndDuplicateKeys() {
+        for source in ["{", "{\"a\":1,\"a\":2}", "/* unfinished", "[1 2]", "{\"a\":true} garbage", "{\"a\":NaN}", "{\"a\":\"unterminated}"] {
+            XCTAssertThrowsError(try ConfigurationJSON(data: Data(source.utf8)), source)
+        }
+    }
+
+    func testJSONCUpdatesLeavesAndAddsMembersWithoutLosingComments() throws {
+        for trailing in ["", ","] {
+            let source = "// header\n{\n\"preferences\": { /* keep */ \"IsVADEnabled\": true\(trailing)\n// footer\n}\n}"
+            let document = try ConfigurationJSON(data: Data(source.utf8))
+            let value: ConfigurationValue = .object(["preferences": .object([
+                "IsVADEnabled": .bool(false), "SelectedLanguage": .string("es")
+            ])])
+
+            let changed = try document.updating(value)
+
+            XCTAssertEqual(try ConfigurationJSON(data: changed).root.value, value)
+            let text = String(decoding: changed, as: UTF8.self)
+            for comment in ["// header", "/* keep */", "// footer"] { XCTAssertTrue(text.contains(comment)) }
+        }
+    }
+
+    func testFirstLaunchCreatesCompleteFileAndPreservesExistingPreferences() throws {
+        defaults.set("parakeet-v3", forKey: "CurrentTranscriptionModel")
+        defaults.set(["es", "en"], forKey: "SelectedLanguages")
+        defaults.set("test-secret", forKey: "OpenAIAPIKey")
+        defaults.set("cache", forKey: "dashboardStatsSnapshotStale")
+        let context = ModelContext(container)
+        context.insert(VocabularyWord(word: "VoiceInk"))
+        try context.save()
+        let service = store()
+
+        service.load(into: container)
+        service.startObserving()
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        let config = try root()
+        XCTAssertEqual(config["preferences"]?.object?["CurrentTranscriptionModel"], .string("parakeet-v3"))
+        XCTAssertEqual(config["preferences"]?.object?["SelectedLanguages"], .array([.string("es"), .string("en")]))
+        XCTAssertNil(config["preferences"]?.object?["OpenAIAPIKey"])
+        XCTAssertNil(config["preferences"]?.object?["dashboardStatsSnapshotStale"])
+        XCTAssertEqual(try config["dictionary"]?.decoded(as: ConfigurationDictionary.self).vocabulary.map(\.term), ["VoiceInk"])
+        let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(permissions?.intValue, 0o600)
+    }
+
+    func testEditablePreferencesLoadBeforeConsumersAndOmittedKeysSurvive() throws {
+        defaults.set(true, forKey: "IsVADEnabled")
+        defaults.set("dark", forKey: "AppAppearancePreference")
+        defaults.set(["fr"], forKey: "SelectedLanguages")
+        try write("""
+        {"schemaVersion":1,"preferences":{"SelectedLanguages":["es","en"],"IsVADEnabled":false,"localCLICommandTemplate":"printf '%s' hello"}}
+        """)
+        let service = store()
+
+        service.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertFalse(defaults.bool(forKey: "IsVADEnabled"))
+        XCTAssertEqual(defaults.string(forKey: "AppAppearancePreference"), "dark")
+        XCTAssertEqual(defaults.selectedTranscriptionLanguages, ["es", "en"])
+        XCTAssertEqual(defaults.string(forKey: "SelectedLanguage"), "auto")
+        XCTAssertEqual(defaults.string(forKey: "localCLICommandTemplate"), "printf '%s' hello")
+    }
+
+    func testModesPromptsModelsMicrophoneRequirementsAndShortcutsRoundTrip() throws {
+        let prompt = CustomPrompt(title: "Technical", promptText: "Keep names unchanged.")
+        let mode = ModeConfig(name: "Code", isAIEnhancementEnabled: true, selectedPrompt: prompt.id.uuidString,
+                              selectedTranscriptionModelName: "parakeet-v3", selectedLanguages: ["es", "en"])
+        let model = CustomAIProviderConfig(name: "Local", baseURL: "http://localhost:1234/v1", models: ["test"], selectedModel: "test")
+        let shortcut = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        let preferenceValues: [String: ConfigurationValue] = [
+            "modeConfigurationsV2": try .encoded([mode]), "customPrompts": try .encoded([prompt]),
+            "customAIProviders": try .encoded([model]),
+            ShortcutAction.mode(mode.id).userDefaultsKey: try .encoded(shortcut),
+            "Shortcut_secondaryRecording_cleared": .bool(true),
+            "prioritizedDevices": .array([.object([
+                "id": .string("virtual-uid"), "name": .string("Virtual Input"), "priority": .number(0),
+                "modelUID": .string("virtual-model"),
+                "requirements": .object(["application": .object(["bundleID": .string("test.audio"), "name": .string("Audio")])]),
+            ])]),
+        ]
+        let config: ConfigurationValue = .object(["schemaVersion": .number(1), "preferences": .object(preferenceValues)])
+        try config.data().write(to: file)
+        let service = store()
+
+        service.load(into: container)
+        service.startObserving()
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        let captured = try ConfigurationPreferences.capture(from: defaults)
+        for (key, expected) in preferenceValues { XCTAssertEqual(captured[key], expected, key) }
+        XCTAssertEqual(try JSONDecoder().decode([ModeConfig].self, from: XCTUnwrap(defaults.data(forKey: "modeConfigurationsV2"))).first?.name, "Code")
+    }
+
+    func testInvalidPreferenceCannotPartiallyChangeDictionaryOrDefaults() throws {
+        defaults.set(true, forKey: "IsVADEnabled")
+        let context = ModelContext(container)
+        context.insert(VocabularyWord(word: "Keep"))
+        try context.save()
+        try write("""
+        {"schemaVersion":1,"preferences":{"IsVADEnabled":false,"SelectedLanguages":42},"dictionary":{"sections":[],"vocabulary":[],"replacements":[]}}
+        """)
+        let original = try Data(contentsOf: file)
+        let service = store()
+
+        service.load(into: container)
+        service.startObserving()
+        service.saveNow()
+
+        XCTAssertFalse(service.isReady)
+        XCTAssertNotNil(service.errorMessage)
+        XCTAssertTrue(defaults.bool(forKey: "IsVADEnabled"))
+        XCTAssertEqual(try ConfigurationDictionary.capture(in: ModelContext(container)).vocabulary.map(\.term), ["Keep"])
+        XCTAssertEqual(try Data(contentsOf: file), original)
+    }
+
+    func testInvalidDictionaryCannotPartiallyChangePreferences() throws {
+        defaults.set(true, forKey: "IsVADEnabled")
+        try write("""
+        {"schemaVersion":1,"preferences":{"IsVADEnabled":false},"dictionary":{"sections":[],"vocabulary":[{"term":"Name","sectionID":"11111111-1111-1111-1111-111111111111"}],"replacements":[]}}
+        """)
+        let service = store()
+        service.load(into: container)
+        XCTAssertFalse(service.isReady)
+        XCTAssertTrue(defaults.bool(forKey: "IsVADEnabled"))
+    }
+
+    func testUnknownKeysUnsupportedVersionsAndPlaintextKeysAreRejected() throws {
+        for text in [
+            "{\"schemaVersion\":2}", "{\"schemaVersion\":1,\"preferencess\":{}}",
+            "{\"schemaVersion\":1,\"preferences\":{\"OpenAIAPIKey\":\"fake\"}}",
+            "{\"schemaVersion\":1,\"preferences\":{\"customCloudModels\":[{\"apiKey\":\"fake\"}]}}",
+        ] {
+            try write(text)
+            let service = store()
+            service.load(into: container)
+            XCTAssertFalse(service.isReady, text)
+            XCTAssertEqual(try Data(contentsOf: file), Data(text.utf8))
+        }
+    }
+
+    func testEmptyDictionaryReplacesOnlyDictionaryAndPreservesHistory() throws {
+        let context = ModelContext(container)
+        context.insert(VocabularyWord(word: "Old"))
+        context.insert(WordReplacement(originalText: "old", replacementText: "new"))
+        let history = Transcription(text: "Keep history", duration: 1)
+        context.insert(history)
+        try context.save()
+        try write("{\"schemaVersion\":1,\"dictionary\":{\"sections\":[],\"vocabulary\":[],\"replacements\":[]}}")
+
+        let service = store()
+        service.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        let fresh = ModelContext(container)
+        XCTAssertTrue(try fresh.fetch(FetchDescriptor<VocabularyWord>()).isEmpty)
+        XCTAssertTrue(try fresh.fetch(FetchDescriptor<WordReplacement>()).isEmpty)
+        XCTAssertEqual(try fresh.fetch(FetchDescriptor<Transcription>()).map(\.id), [history.id])
+    }
+
+    func testDictionarySectionsVariantsIdentitiesAndDatesSurviveReload() throws {
+        let sectionID = UUID()
+        let replacementID = UUID()
+        let dictionary = ConfigurationDictionary(
+            sections: [.init(id: sectionID, name: "Technology", description: "Product names")],
+            vocabulary: [.init(term: "VoiceInk", sectionID: sectionID, addedAt: 1_700_000_000)],
+            replacements: [.init(id: replacementID, sources: ["voice ink", "vois ink"], replacement: "VoiceInk", addedAt: 1_700_000_001)]
+        )
+        let content: ConfigurationValue = .object(["schemaVersion": .number(1), "dictionary": try .encoded(dictionary)])
+        try content.data().write(to: file)
+
+        for _ in 0..<2 {
+            let service = store()
+            service.load(into: container)
+            XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+            XCTAssertEqual(try ConfigurationDictionary.capture(in: ModelContext(container)), dictionary)
+        }
+    }
+
+    func testAppChangesSaveWithCommentsAndNullResets() throws {
+        defaults.register(defaults: ["IsVADEnabled": true])
+        try write("// retain header\n{\"schemaVersion\":1,\"preferences\":{ /* speech */ \"IsVADEnabled\":false,\"CurrentTranscriptionModel\":\"old\"}}")
+        let service = store()
+        service.load(into: container)
+        defaults.set(true, forKey: "IsVADEnabled")
+        defaults.removeObject(forKey: "CurrentTranscriptionModel")
+
+        service.saveNow()
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        let preferences = try root()["preferences"]?.object
+        XCTAssertEqual(preferences?["IsVADEnabled"], .bool(true))
+        XCTAssertEqual(preferences?["CurrentTranscriptionModel"], .null)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(text.contains("// retain header"))
+        XCTAssertTrue(text.contains("/* speech */"))
+        defaults.set("reset-me", forKey: "CurrentTranscriptionModel")
+        store().load(into: container)
+        XCTAssertNil(defaults.string(forKey: "CurrentTranscriptionModel"))
+    }
+
+    func testUnchangedLaunchDoesNotRewriteUserFormatting() throws {
+        try write("// My config\n{ \"schemaVersion\" : 1, \"preferences\" : { \"IsVADEnabled\" : true, }, }\n")
+        let data = try Data(contentsOf: file)
+        let service = store()
+        service.load(into: container)
+        service.startObserving()
+        service.saveNow()
+        XCTAssertEqual(try Data(contentsOf: file), data)
+    }
+
+    func testExternalEditOrDeletionPausesSavingAndKeepsEditorContent() throws {
+        let service = store()
+        service.load(into: container)
+        service.saveNow()
+        let external = "{\"schemaVersion\":1,\"preferences\":{\"IsVADEnabled\":false}}"
+        try write(external)
+        defaults.set(true, forKey: "IsVADEnabled")
+
+        service.saveNow()
+
+        XCTAssertFalse(service.isReady)
+        XCTAssertTrue(service.errorMessage?.contains("outside VoiceInk") == true)
+        XCTAssertEqual(try Data(contentsOf: file), Data(external.utf8))
+        let reopened = store()
+        reopened.load(into: container)
+        XCTAssertFalse(defaults.bool(forKey: "IsVADEnabled"))
+        try FileManager.default.removeItem(at: file)
+        reopened.saveNow()
+        XCTAssertFalse(reopened.isReady)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testSymlinkTargetIsUpdatedWithoutReplacingTheLink() throws {
+        let target = directory.appendingPathComponent("dotfiles/voiceink.jsonc")
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{\"schemaVersion\":1,\"preferences\":{\"IsVADEnabled\":true}}".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
+        let service = store()
+        service.load(into: container)
+        defaults.set(false, forKey: "IsVADEnabled")
+
+        service.saveNow()
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: file.path), target.path)
+        XCTAssertEqual(try root()["preferences"]?.object?["IsVADEnabled"], .bool(false))
+    }
+
+    func testWriteFailureIsVisibleAndDoesNotReplaceExistingFile() throws {
+        let parentFile = directory.appendingPathComponent("not-a-directory")
+        try Data("keep".utf8).write(to: parentFile)
+        let service = store(at: parentFile.appendingPathComponent("config.jsonc"))
+        service.load(into: container)
+        service.saveNow()
+        XCTAssertFalse(service.isReady)
+        XCTAssertNotNil(service.errorMessage)
+        XCTAssertEqual(try String(contentsOf: parentFile, encoding: .utf8), "keep")
+    }
+
+    func testDefaultsChangesAreObserved() async throws {
+        defaults.set(true, forKey: "IsVADEnabled")
+        let service = store()
+        service.load(into: container)
+        service.startObserving()
+
+        defaults.set(false, forKey: "IsVADEnabled")
+        for _ in 0..<30 {
+            try await Task.sleep(for: .milliseconds(100))
+            if try root()["preferences"]?.object?["IsVADEnabled"] == .bool(false) { break }
+        }
+
+        XCTAssertEqual(try root()["preferences"]?.object?["IsVADEnabled"], .bool(false))
+    }
+
+    func testBackgroundDictionarySavesAreObservedWithoutPreferenceChanges() async throws {
+        let service = store()
+        service.load(into: container)
+        service.startObserving()
+        let writer = ModelContext(container)
+
+        writer.insert(VocabularyWord(word: "Observed"))
+        try writer.save()
+        for _ in 0..<30 {
+            try await Task.sleep(for: .milliseconds(100))
+            if try root()["dictionary"]?.decoded(as: ConfigurationDictionary.self).vocabulary.count == 1 { break }
+        }
+
+        XCTAssertEqual(try root()["dictionary"]?.decoded(as: ConfigurationDictionary.self).vocabulary.map(\.term), ["Observed"])
+    }
+
+    func testDictionaryReloadPreservesPersistentIdentitiesAndMissingDates() throws {
+        let context = ModelContext(container)
+        let word = VocabularyWord(word: "Retained", dateAdded: Date(timeIntervalSince1970: 1_700_000_000))
+        let replacement = WordReplacement(originalText: "v ink", replacementText: "VoiceInk", dateAdded: word.dateAdded)
+        context.insert(word)
+        context.insert(replacement)
+        try context.save()
+        let wordID = word.persistentModelID
+        let ruleID = replacement.persistentModelID
+        try write("""
+        {"schemaVersion":1,"dictionary":{"sections":[],"vocabulary":[{"term":"Retained"}],"replacements":[{"sources":["v ink"],"replacement":"Updated"}]}}
+        """)
+
+        let service = store()
+        service.load(into: container)
+        let reader = ModelContext(container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        let savedWord = try XCTUnwrap(reader.fetch(FetchDescriptor<VocabularyWord>()).first)
+        let savedRule = try XCTUnwrap(reader.fetch(FetchDescriptor<WordReplacement>()).first)
+        XCTAssertEqual(savedWord.persistentModelID, wordID)
+        XCTAssertEqual(savedRule.persistentModelID, ruleID)
+        XCTAssertEqual(savedWord.dateAdded.timeIntervalSince1970, 1_700_000_000)
+        XCTAssertEqual(savedRule.dateAdded, savedWord.dateAdded)
+        XCTAssertEqual(savedRule.replacementText, "Updated")
+    }
+
+    func testModeEditsWithSameIDAreSavedAndLoadOnNextLaunch() throws {
+        var mode = ModeConfig(name: "Before", isAIEnhancementEnabled: false)
+        defaults.set(try JSONEncoder().encode([mode]), forKey: "modeConfigurationsV2")
+        let service = store()
+        service.load(into: container)
+        service.saveNow()
+
+        mode.name = "After"
+        defaults.set(try JSONEncoder().encode([mode]), forKey: "modeConfigurationsV2")
+        service.saveNow()
+        defaults.removeObject(forKey: "modeConfigurationsV2")
+        store().load(into: container)
+
+        let restored = try JSONDecoder().decode([ModeConfig].self, from: XCTUnwrap(defaults.data(forKey: "modeConfigurationsV2")))
+        XCTAssertEqual(restored.first?.id, mode.id)
+        XCTAssertEqual(restored.first?.name, "After")
+    }
+
+    func testLegacyModelKeyIsNotExported() throws {
+        let model = CustomCloudModel(name: "test", displayName: "Test", description: "Fixture", apiEndpoint: "https://example.test/v1", modelName: "test")
+        var object = try XCTUnwrap(ConfigurationValue.encoded(model).object)
+        object["apiKey"] = .string("fake-fixture-secret")
+        defaults.set(try ConfigurationValue.array([.object(object)]).data(), forKey: "customCloudModels")
+
+        let preferences = try ConfigurationPreferences.capture(from: defaults)
+
+        XCTAssertFalse(String(decoding: try ConfigurationValue.object(preferences).data(), as: UTF8.self).contains("fake-fixture-secret"))
+        XCTAssertEqual(try preferences["customCloudModels"]?.decoded(as: [CustomModelBackup].self).first?.id, model.id)
+    }
+}

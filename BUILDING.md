@@ -111,6 +111,10 @@ This certificate is for local development. Certificate creation and trust settin
 
 ## Other Commands
 
+For startup loading and automatic saving of preferences, modes and the dictionary
+in an XDG JSONC file, see [editable configuration](docs/configuration.md). Debug and
+`LOCAL_BUILD` use separate configuration paths, just as they use separate app data.
+
 The headless local Parakeet transcriber is built with `make cli` and checked with
 `make test-cli`. See [the CLI guide](cli/parakeet/README.md) for model requirements,
 read-only settings and dictionary exports, output formats, and batch usage.
