@@ -7,7 +7,9 @@ struct OnboardingView: View {
     @EnvironmentObject var transcriptionModelManager: TranscriptionModelManager
     @EnvironmentObject var aiService: AIService
     @EnvironmentObject var enhancementService: AIEnhancementService
-    @StateObject private var coordinator = OnboardingCoordinator()
+    @StateObject private var coordinator = OnboardingCoordinator(
+        preservesConfiguredModes: ConfigurationFileStore.shared.hasImportedModes
+    )
     let contentMaxWidth: CGFloat = 560
 
     var body: some View {

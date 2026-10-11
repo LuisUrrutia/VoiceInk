@@ -350,6 +350,8 @@ struct SettingsView: View {
                     Text("Export all settings, or choose specific categories when importing a backup.")
                 }
 
+                ConfigurationFileSettingsView()
+
                 Section("Diagnostics") {
                     MicrophoneDiagnosticView(engine: engine)
                     DiagnosticsSettingsView()

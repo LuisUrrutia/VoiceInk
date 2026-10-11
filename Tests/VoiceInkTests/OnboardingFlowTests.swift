@@ -107,8 +107,81 @@ import XCTest
         XCTAssertFalse(OnboardingStage.allCases.map(\.rawValue).contains("license"))
     }
 
-    private func makeCoordinator() -> OnboardingCoordinator {
-        let coordinator = OnboardingCoordinator(defaults: defaults)
+    func testRestoredModesSkipResumedDemonstrationsAfterRequiredSetup() {
+        for stage in [OnboardingStage.experience, .contextAwareness] {
+            let coordinator = makeCoordinator(preservesConfiguredModes: true)
+            coordinator.storedStage = stage.rawValue
+            coordinator.hasSkippedAPISetup = true
+            var didComplete = false
+
+            coordinator.flow.reconcileSetupStage(isTranscriptionSetupReady: true)
+            coordinator.flow.completeOnboarding(isTranscriptionSetupReady: true) { didComplete = true }
+
+            XCTAssertEqual(coordinator.stage, .trust)
+            XCTAssertTrue(didComplete)
+        }
+    }
+
+    func testRestoredModesDoNotBypassMachineSetup() {
+        let coordinator = makeCoordinator(preservesConfiguredModes: true)
+        coordinator.storedStage = OnboardingStage.experience.rawValue
+        coordinator.hasSkippedAPISetup = true
+        coordinator.permissionStatuses[.microphone] = .denied
+        var didComplete = false
+
+        coordinator.flow.reconcileSetupStage(isTranscriptionSetupReady: true)
+        coordinator.flow.completeOnboarding(isTranscriptionSetupReady: true) { didComplete = true }
+
+        XCTAssertEqual(coordinator.stage, .permissions)
+        XCTAssertFalse(didComplete)
+        coordinator.permissionStatuses[.microphone] = .granted
+        defaults.selectedAudioDeviceUID = nil
+        coordinator.storedStage = OnboardingStage.experience.rawValue
+        coordinator.flow.reconcileSetupStage(isTranscriptionSetupReady: true)
+        XCTAssertEqual(coordinator.stage, .microphone)
+        defaults.selectedAudioDeviceUID = "test-microphone"
+        coordinator.storedStage = OnboardingStage.experience.rawValue
+        coordinator.flow.reconcileSetupStage(isTranscriptionSetupReady: false)
+        XCTAssertEqual(coordinator.stage, .model)
+    }
+
+    func testRestoredModesKeepDefaultAndActiveSelectionWhenFinishingOrSkipping() throws {
+        let manager = ModeManager.shared
+        let savedModes = manager.configurations
+        let savedActive = manager.activeConfiguration
+        let savedPreferences = ["modeConfigurationsV2", "activeConfigurationId"].map {
+            (key: $0, value: UserDefaults.standard.object(forKey: $0))
+        }
+        defer {
+            manager.configurations = savedModes
+            manager.activeConfiguration = savedActive
+            for (key, value) in savedPreferences {
+                if let value { UserDefaults.standard.set(value, forKey: key) }
+                else { UserDefaults.standard.removeObject(forKey: key) }
+            }
+        }
+        let cleanID = try XCTUnwrap(StarterModeCatalog.templates.first(where: { $0.kind == .clean })?.id)
+        let clean = ModeConfig(id: cleanID, name: "Customized clean", isAIEnhancementEnabled: false)
+        let preferred = ModeConfig(name: "Preferred", isAIEnhancementEnabled: false, isDefault: true)
+        manager.configurations = [clean, preferred]
+        manager.activeConfiguration = preferred
+        let expected = try ConfigurationValue.encoded(manager.configurations)
+        let coordinator = makeCoordinator(preservesConfiguredModes: true)
+        coordinator.hasSkippedAPISetup = true
+        coordinator.storedStage = OnboardingStage.experience.rawValue
+
+        coordinator.flow.activateExperienceModeForDemo()
+        coordinator.flow.skipOnboarding {}
+        coordinator.storedStage = OnboardingStage.trust.rawValue
+        coordinator.flow.completeOnboarding(isTranscriptionSetupReady: true) {}
+
+        XCTAssertEqual(try ConfigurationValue.encoded(manager.configurations), expected)
+        XCTAssertEqual(manager.activeConfiguration?.id, preferred.id)
+        XCTAssertEqual(manager.getDefaultConfiguration()?.id, preferred.id)
+    }
+
+    private func makeCoordinator(preservesConfiguredModes: Bool = false) -> OnboardingCoordinator {
+        let coordinator = OnboardingCoordinator(defaults: defaults, preservesConfiguredModes: preservesConfiguredModes)
         coordinator.permissionStatuses = [
             .microphone: .granted, .accessibility: .granted, .screenRecording: .needsAccess
         ]
