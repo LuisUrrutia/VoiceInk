@@ -249,6 +249,279 @@ final class ConfigurationFileTests: XCTestCase {
         XCTAssertFalse(invalid.hasImportedModes)
     }
 
+    func testLegacyModeShortcutConflictRejectsTheCompleteFileBeforeMutation() throws {
+        let mode = ModeConfig(name: "Retained", isAIEnhancementEnabled: false)
+        let modeKey = ShortcutAction.mode(mode.id).userDefaultsKey
+        let legacyKey = "Shortcut_powerMode_\(mode.id.uuidString)"
+        let primaryKey = ShortcutAction.primaryRecording.userDefaultsKey
+        let legacyShortcut = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        let currentShortcut = Shortcut.key(keyCode: 40, modifierFlags: [.command, .shift])
+        let currentData = try JSONEncoder().encode(currentShortcut)
+        defaults.set(try JSONEncoder().encode([mode]), forKey: "modeConfigurationsV2")
+        defaults.set(try JSONEncoder().encode(legacyShortcut), forKey: legacyKey)
+        defaults.set(currentData, forKey: modeKey)
+        defaults.set(true, forKey: "IsVADEnabled")
+        let context = ModelContext(container)
+        context.insert(VocabularyWord(word: "Keep"))
+        try context.save()
+        let input = try ConfigurationValue.object([
+            "schemaVersion": .number(1),
+            "preferences": .object([
+                modeKey: .null, primaryKey: try .encoded(legacyShortcut), "IsVADEnabled": .bool(false),
+            ]),
+            "dictionary": .object(["sections": .array([]), "vocabulary": .array([]), "replacements": .array([])]),
+        ]).data()
+        try input.write(to: file)
+        let service = store()
+
+        service.load(into: container)
+        service.saveNow()
+
+        XCTAssertFalse(service.isReady)
+        XCTAssertTrue(service.errorMessage?.contains("conflicts") == true)
+        XCTAssertEqual(defaults.data(forKey: modeKey), currentData)
+        XCTAssertNil(defaults.object(forKey: primaryKey))
+        XCTAssertTrue(defaults.bool(forKey: "IsVADEnabled"))
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<VocabularyWord>()).map(\.word), ["Keep"])
+        XCTAssertEqual(try Data(contentsOf: file), input)
+    }
+
+    func testNoncanonicalModeShortcutKeyRejectsTheCompleteFileBeforeMutation() throws {
+        let mode = ModeConfig(id: UUID(uuidString: "A1B2C3D4-1234-4321-ABCD-0123456789AB")!,
+                              name: "Retained", isAIEnhancementEnabled: false)
+        let canonicalKey = ShortcutAction.mode(mode.id).userDefaultsKey
+        let lowercaseKey = "Shortcut_mode_\(mode.id.uuidString.lowercased())"
+        let current = try JSONEncoder().encode(Shortcut.key(keyCode: 40, modifierFlags: [.command, .shift]))
+        defaults.set(try JSONEncoder().encode([mode]), forKey: "modeConfigurationsV2")
+        defaults.set(current, forKey: canonicalKey)
+        defaults.set(true, forKey: "IsVADEnabled")
+        let context = ModelContext(container)
+        context.insert(VocabularyWord(word: "Keep"))
+        try context.save()
+        let input = try ConfigurationValue.object([
+            "schemaVersion": .number(1),
+            "preferences": .object([
+                lowercaseKey: try .encoded(Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])),
+                "IsVADEnabled": .bool(false),
+            ]),
+            "dictionary": .object(["sections": .array([]), "vocabulary": .array([]), "replacements": .array([])]),
+        ]).data()
+        try input.write(to: file)
+        let service = store()
+
+        service.load(into: container)
+        service.saveNow()
+
+        XCTAssertFalse(service.isReady)
+        XCTAssertNotNil(service.errorMessage)
+        XCTAssertEqual(defaults.data(forKey: canonicalKey), current)
+        XCTAssertNil(defaults.object(forKey: lowercaseKey))
+        XCTAssertTrue(defaults.bool(forKey: "IsVADEnabled"))
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<VocabularyWord>()).map(\.word), ["Keep"])
+        XCTAssertEqual(try Data(contentsOf: file), input)
+    }
+
+    func testFirstCaptureDoesNotWriteConflictingMigratedShortcuts() throws {
+        let mode = ModeConfig(name: "Legacy", isAIEnhancementEnabled: false)
+        let shortcut = try JSONEncoder().encode(Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift]))
+        defaults.set(try JSONEncoder().encode([mode]), forKey: "modeConfigurationsV2")
+        defaults.set(shortcut, forKey: "Shortcut_powerMode_\(mode.id.uuidString)")
+        defaults.set(shortcut, forKey: ShortcutAction.primaryRecording.userDefaultsKey)
+        let service = store()
+
+        service.load(into: container)
+        ModeShortcutMigration.migrate(modeIDs: [mode.id], defaults: defaults)
+        service.startObserving()
+
+        XCTAssertFalse(service.isReady)
+        XCTAssertTrue(service.errorMessage?.contains("conflicts") == true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testLegacyShortcutPrecedenceAndClearedFlagsSurviveSaveAndReload() throws {
+        let mode = ModeConfig(name: "Legacy", isAIEnhancementEnabled: false)
+        let key = ShortcutAction.mode(mode.id).userDefaultsKey
+        let legacyKey = "Shortcut_powerMode_\(mode.id.uuidString)"
+        let first = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        let second = Shortcut.key(keyCode: 40, modifierFlags: [.command, .shift])
+        struct Scenario {
+            let name: String
+            var current: Shortcut? = nil
+            var supplied: ConfigurationValue? = nil
+            var legacyCleared: Bool? = nil
+            var currentCleared: Bool? = nil
+            var suppliedCleared: ConfigurationValue? = nil
+            var conflicts = false
+            let expected: Shortcut
+            var expectedCleared = false
+        }
+        let scenarios = [
+            Scenario(name: "Missing current binding restores legacy", conflicts: true, expected: first),
+            Scenario(name: "Null restores legacy", current: second, supplied: .null, conflicts: true, expected: first),
+            Scenario(name: "Current binding overrides legacy", current: second, expected: second),
+            Scenario(name: "Supplied binding overrides legacy", supplied: try .encoded(second), expected: second),
+            Scenario(name: "Legacy clear remains effective", legacyCleared: true, expected: first, expectedCleared: true),
+            Scenario(name: "Current false overrides legacy clear", legacyCleared: true, currentCleared: false,
+                     conflicts: true, expected: first),
+            Scenario(name: "Current clear overrides legacy false", legacyCleared: false, currentCleared: true,
+                     expected: first, expectedCleared: true),
+            Scenario(name: "Null clear restores legacy true", legacyCleared: true, currentCleared: false,
+                     suppliedCleared: .null, expected: first, expectedCleared: true),
+            Scenario(name: "Null clear restores legacy false", legacyCleared: false, currentCleared: true,
+                     suppliedCleared: .null, conflicts: true, expected: first),
+            Scenario(name: "Explicit false removes current clear", legacyCleared: true, currentCleared: true,
+                     suppliedCleared: .bool(false), conflicts: true, expected: first),
+            Scenario(name: "Explicit clear suppresses restored binding", current: second, supplied: .null,
+                     legacyCleared: false, suppliedCleared: .bool(true), expected: first, expectedCleared: true),
+        ]
+        for scenario in scenarios {
+            defaults.removePersistentDomain(forName: suite)
+            defaults.set(try JSONEncoder().encode(first), forKey: legacyKey)
+            if let current = scenario.current { defaults.set(try JSONEncoder().encode(current), forKey: key) }
+            if let cleared = scenario.legacyCleared { defaults.set(cleared, forKey: "\(legacyKey)_cleared") }
+            if let cleared = scenario.currentCleared { defaults.set(cleared, forKey: "\(key)_cleared") }
+            var preferences: [String: ConfigurationValue] = [
+                "modeConfigurationsV2": try .encoded([mode]),
+                ShortcutAction.primaryRecording.userDefaultsKey: try .encoded(first),
+            ]
+            preferences[key] = scenario.supplied
+            preferences["\(key)_cleared"] = scenario.suppliedCleared
+            let input = Data("// Retain this comment\n".utf8) + (try ConfigurationValue.object([
+                "schemaVersion": .number(1), "preferences": .object(preferences),
+            ]).data())
+            try input.write(to: file)
+            let before = defaults.persistentDomain(forName: suite) ?? [:]
+            let service = store()
+
+            service.load(into: container)
+
+            XCTAssertEqual(service.isReady, !scenario.conflicts, scenario.name)
+            if scenario.conflicts {
+                XCTAssertTrue(service.errorMessage?.contains("conflicts") == true, scenario.name)
+                XCTAssertTrue(NSDictionary(dictionary: before).isEqual(to: defaults.persistentDomain(forName: suite) ?? [:]), scenario.name)
+                XCTAssertEqual(try Data(contentsOf: file), input, scenario.name)
+                continue
+            }
+            ModeShortcutMigration.migrate(modeIDs: [mode.id], defaults: defaults)
+            service.saveNow()
+            let reopened = store()
+            reopened.load(into: container)
+            ModeShortcutMigration.migrate(modeIDs: [mode.id], defaults: defaults)
+
+            XCTAssertTrue(service.isReady, service.errorMessage ?? scenario.name)
+            XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? scenario.name)
+            XCTAssertEqual(try JSONDecoder().decode(Shortcut.self, from: XCTUnwrap(defaults.data(forKey: key))), scenario.expected, scenario.name)
+            XCTAssertEqual(defaults.bool(forKey: "\(key)_cleared"), scenario.expectedCleared, scenario.name)
+            XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("// Retain this comment"), scenario.name)
+        }
+    }
+
+    func testLegacyShortcutConflictsFollowTheFinalModeList() throws {
+        let mode = ModeConfig(name: "Legacy", isAIEnhancementEnabled: false)
+        let other = ModeConfig(name: "Other", isAIEnhancementEnabled: false)
+        let shortcut = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        defaults.set(try JSONEncoder().encode([mode]), forKey: "powerModeConfigurationsV2")
+        defaults.set(try JSONEncoder().encode(shortcut), forKey: "Shortcut_powerMode_\(mode.id.uuidString)")
+        let binding: ConfigurationValue = try .encoded(shortcut)
+        let primary = ShortcutAction.primaryRecording.userDefaultsKey
+
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([primary: binding], defaults: defaults))
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([primary: binding, "modeConfigurationsV2": .null], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([primary: binding, "modeConfigurationsV2": .array([])], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([primary: binding, "modeConfigurationsV2": .encoded([other])], defaults: defaults))
+        defaults.set(try JSONEncoder().encode([other]), forKey: "modeConfigurationsV2")
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([primary: binding], defaults: defaults))
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([primary: binding, "modeConfigurationsV2": .null], defaults: defaults))
+    }
+
+    func testTwoLegacyModeBindingsCannotEscapeConflictValidation() throws {
+        let first = ModeConfig(name: "First", isAIEnhancementEnabled: false)
+        let second = ModeConfig(name: "Second", isAIEnhancementEnabled: false)
+        let shortcut = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        defaults.set(try JSONEncoder().encode([first, second]), forKey: "modeConfigurationsV2")
+        for mode in [first, second] {
+            defaults.set(try JSONEncoder().encode(shortcut), forKey: "Shortcut_powerMode_\(mode.id.uuidString)")
+        }
+
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([:], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate(["modeConfigurationsV2": .encoded([first])], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([
+            "\(ShortcutAction.mode(second.id).userDefaultsKey)_cleared": .bool(true),
+        ], defaults: defaults))
+    }
+
+    func testUnsafeLegacyBindingIsRejectedUnlessOverriddenOrItsModeIsRemoved() throws {
+        let mode = ModeConfig(name: "Legacy", isAIEnhancementEnabled: false)
+        let key = ShortcutAction.mode(mode.id).userDefaultsKey
+        defaults.set(try JSONEncoder().encode([mode]), forKey: "modeConfigurationsV2")
+        defaults.set(try JSONEncoder().encode(Shortcut.key(keyCode: 0, modifierFlags: [])),
+                     forKey: "Shortcut_powerMode_\(mode.id.uuidString)")
+        let safe: ConfigurationValue = try .encoded(Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift]))
+
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([:], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([key: safe], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate(["modeConfigurationsV2": .array([])], defaults: defaults))
+    }
+
+    func testOnlyCanonicalModeShortcutNamesAreAcceptedIncludingClearFlagsAndNulls() throws {
+        let id = UUID(uuidString: "A1B2C3D4-1234-4321-ABCD-0123456789AB")!
+        let canonical = ShortcutAction.mode(id).userDefaultsKey
+        let shortcut: ConfigurationValue = try .encoded(Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift]))
+        let invalidNames = [
+            "Shortcut_mode_\(id.uuidString.lowercased())",
+            "Shortcut_mode_a1B2C3D4-1234-4321-ABCD-0123456789AB",
+            "Shortcut_mode_not-a-uuid", "\(canonical) ",
+        ]
+        for name in invalidNames {
+            for value in [shortcut, .null] {
+                XCTAssertThrowsError(try ConfigurationPreferences.validate([name: value]), name)
+            }
+            for value in [ConfigurationValue.bool(true), .bool(false), .null] {
+                XCTAssertThrowsError(try ConfigurationPreferences.validate(["\(name)_cleared": value]), name)
+            }
+            XCTAssertThrowsError(try ConfigurationPreferences.validate([canonical: shortcut, name: shortcut]), name)
+        }
+        for key in [canonical, "Shortcut_mode_01234567-1234-4321-1234-012345678901"] {
+            XCTAssertNoThrow(try ConfigurationPreferences.validate([key: shortcut, "\(key)_cleared": .bool(false)]))
+            XCTAssertNoThrow(try ConfigurationPreferences.validate([key: .null, "\(key)_cleared": .null]))
+        }
+    }
+
+    func testCaptureOmitsPreviouslyStoredNoncanonicalShortcutAliases() throws {
+        let id = UUID(uuidString: "A1B2C3D4-1234-4321-ABCD-0123456789AB")!
+        let key = ShortcutAction.mode(id).userDefaultsKey
+        let alias = "Shortcut_mode_\(id.uuidString.lowercased())"
+        let shortcut = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        let data = try JSONEncoder().encode(shortcut)
+        defaults.set(data, forKey: key)
+        defaults.set(data, forKey: alias)
+        defaults.set(true, forKey: "\(alias)_cleared")
+
+        let captured = try ConfigurationPreferences.capture(from: defaults)
+
+        XCTAssertEqual(captured[key], try .encoded(shortcut))
+        XCTAssertNil(captured[alias])
+        XCTAssertNil(captured["\(alias)_cleared"])
+    }
+
+    func testConflictingAppChangesLeaveTheLastValidFileUntouched() throws {
+        let first = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        let second = Shortcut.key(keyCode: 40, modifierFlags: [.command, .shift])
+        defaults.set(try JSONEncoder().encode(first), forKey: ShortcutAction.primaryRecording.userDefaultsKey)
+        defaults.set(try JSONEncoder().encode(second), forKey: ShortcutAction.secondaryRecording.userDefaultsKey)
+        let service = store()
+        service.load(into: container)
+        service.saveNow()
+        let original = try Data(contentsOf: file)
+
+        defaults.set(try JSONEncoder().encode(first), forKey: ShortcutAction.secondaryRecording.userDefaultsKey)
+        service.saveNow()
+
+        XCTAssertFalse(service.isReady)
+        XCTAssertTrue(service.errorMessage?.contains("conflicts") == true)
+        XCTAssertEqual(try Data(contentsOf: file), original)
+    }
+
     func testShortcutConflictsIgnoreRemovedModesAndRetainOmittedOrLegacyModes() throws {
         let old = ModeConfig(name: "Old", isAIEnhancementEnabled: false)
         let new = ModeConfig(name: "New", isAIEnhancementEnabled: false)

@@ -60,14 +60,21 @@ extension ModeManager {
             saveConfigurations()
         }
 
-        migrateLegacyShortcutStorageIfNeeded()
+        ModeShortcutMigration.migrate(modeIDs: configurations.map(\.id))
     }
-    private func migrateLegacyShortcutStorageIfNeeded() {
-        let defaults = UserDefaults.standard
+}
 
-        for config in configurations {
-            let oldShortcutKey = "\(LegacyModeDataKey.shortcutPrefix)\(config.id.uuidString)"
-            let newShortcutKey = ShortcutAction.mode(config.id).userDefaultsKey
+enum ModeShortcutMigration {
+    static func legacyKey(for action: ShortcutAction) -> String? {
+        guard case .mode(let id) = action else { return nil }
+        return "\(LegacyModeDataKey.shortcutPrefix)\(id.uuidString)"
+    }
+
+    static func migrate(modeIDs: [UUID], defaults: UserDefaults = .standard) {
+        for id in modeIDs {
+            let action = ShortcutAction.mode(id)
+            guard let oldShortcutKey = legacyKey(for: action) else { continue }
+            let newShortcutKey = action.userDefaultsKey
 
             if defaults.object(forKey: newShortcutKey) == nil,
                 let oldShortcutData = defaults.data(forKey: oldShortcutKey)

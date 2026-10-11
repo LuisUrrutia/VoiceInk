@@ -60,7 +60,10 @@ enum ConfigurationPreferences {
 
     private static func shortcutAction(for key: String) -> ShortcutAction? {
         if let action = ShortcutAction.legacyKeyboardShortcutActions.first(where: { $0.userDefaultsKey == key }) { return action }
-        if key.hasPrefix("Shortcut_mode_"), let id = UUID(uuidString: String(key.dropFirst(14))) { return .mode(id) }
+        if key.hasPrefix("Shortcut_mode_"), let id = UUID(uuidString: String(key.dropFirst(14))) {
+            let action = ShortcutAction.mode(id)
+            return action.userDefaultsKey == key ? action : nil
+        }
         return nil
     }
 
@@ -86,9 +89,9 @@ enum ConfigurationPreferences {
                 let data = try JSONSerialization.data(withJSONObject: stored, options: [.fragmentsAllowed, .sortedKeys])
                 value = try JSONDecoder().decode(ConfigurationValue.self, from: data)
             }
-            try validate(value, key: key)
             result[key] = value
         }
+        try validate(result, defaults: defaults)
         return result
     }
 
@@ -102,22 +105,29 @@ enum ConfigurationPreferences {
             let data = current ?? defaults?.data(forKey: "powerModeConfigurationsV2")
             modes = data.flatMap { try? JSONDecoder().decode([ModeConfig].self, from: $0) } ?? []
         }
-        let modeIDs = Set(modes.map(\.id))
-        let keys = Set(values.keys).union(defaults?.dictionaryRepresentation().keys.map { $0 } ?? [])
+        let actions = ShortcutAction.legacyKeyboardShortcutActions + modes.map { ShortcutAction.mode($0.id) }
+        func effectiveKey(_ key: String, legacy: String?) -> String {
+            let isPresent = values[key].map { $0 != .null } ?? (defaults?.object(forKey: key) != nil)
+            return isPresent ? key : legacy ?? key
+        }
         var shortcuts: [(key: String, shortcut: Shortcut)] = []
-        for key in keys.sorted() {
-            guard let action = shortcutAction(for: key) else { continue }
-            if case .mode(let id) = action, !modeIDs.contains(id) { continue }
-            let clearedKey = "\(key)_cleared"
+        for action in actions {
+            let key = action.userDefaultsKey
+            let legacyKey = ModeShortcutMigration.legacyKey(for: action)
+            let clearedKey = effectiveKey("\(key)_cleared", legacy: legacyKey.map { "\($0)_cleared" })
             let cleared = values[clearedKey].map { $0 == .bool(true) } ?? (defaults?.bool(forKey: clearedKey) == true)
             guard !cleared else { continue }
+            let sourceKey = effectiveKey(key, legacy: legacyKey)
             let shortcut: Shortcut?
-            if let value = values[key] {
+            if let value = values[sourceKey] {
                 shortcut = value == .null ? nil : try value.decoded(as: Shortcut.self)
             } else {
-                shortcut = defaults?.data(forKey: key).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }
+                shortcut = defaults?.data(forKey: sourceKey).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }
             }
             guard let shortcut else { continue }
+            guard ShortcutValidator.bindingValidationError(for: shortcut, action: action) == nil else {
+                throw ConfigurationError.invalid("Shortcut not allowed for \(key).")
+            }
             if let conflict = shortcuts.first(where: { $0.shortcut.conflicts(with: shortcut) }) {
                 throw ConfigurationError.invalid("\(key) conflicts with \(conflict.key).")
             }

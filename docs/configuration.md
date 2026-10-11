@@ -116,7 +116,12 @@ generated file to keep the complete structure and stable UUIDs.
   `Shortcut_<action>` and `Shortcut_mode_<UUID>` objects. `_cleared` flags preserve
   explicitly cleared shortcuts. Bindings use the editor's typing/reserved-key
   restrictions; conflicts are checked against the final settings, including
-  unchanged shortcuts omitted from the file.
+  unchanged shortcuts omitted from the file and bindings restored by legacy mode
+  migration. Keep the exact generated key names: mode shortcut UUIDs must use
+  uppercase letters. Lowercase and mixed-case aliases are rejected before loading.
+  Set `Shortcut_mode_<UUID>_cleared` to `true` to disable a mode shortcut. Setting
+  its binding or clear flag to `null` removes the current override, allowing an
+  older profile's legacy binding or flag to return during migration.
 - **Other settings:** appearance/language, Dock/menu-bar visibility, recorder
   style/live text, paste method and original target, clipboard restoration and
   remote push command, Auto Send, Auto Learn provider/model/schedule, dictionary
@@ -139,6 +144,8 @@ as entered, so review their contents before publishing a configuration file.
 Changes from the app are coalesced over 350 ms and flushed on normal termination.
 Files are replaced atomically with owner-only read/write permissions. Symbolic
 links are followed so an existing dotfiles link remains in place.
+Shortcut conflicts also prevent automatic saving, including first-file creation;
+an existing valid file remains untouched if the stored bindings become incompatible.
 
 Unchanged content is not rewritten. Updates preserve comments and formatting
 around unchanged values and inside objects whose existing members remain. A list
