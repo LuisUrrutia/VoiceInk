@@ -27,6 +27,10 @@ in Settings is authoritative for the running process.
 3. Reopen VoiceInk. It validates the file before applying the preferences and
    dictionary, then initializes the model, mode and shortcut services.
 
+On a new machine, local permissions and setup still apply. If the file provides
+`modeConfigurationsV2` (including an empty list), onboarding skips its starter-mode
+demonstrations and retains your modes, shortcuts, default and active selection.
+
 The file uses schema version `1`. A small configuration can contain only the
 preferences you want to override:
 
@@ -52,6 +56,9 @@ its `sections`, `vocabulary` and `replacements` lists describe the complete desi
 dictionary; empty lists intentionally clear those entries. Loading updates existing
 entries in place where their identities match and commits dictionary changes in one
 SwiftData save. History and recordings are unaffected.
+An app dictionary edit writes the complete dictionary, even if the original file
+omitted it. Editing a map such as `CustomLanguagePrompts` also saves that entire
+preference, retaining its other entries.
 
 ```jsonc
 {
@@ -78,7 +85,10 @@ Generated dictionary entries also include `addedAt` (Unix time in seconds), and
 replacement rules include their `id`. Keep these fields when moving a file between
 machines. They are optional when adding entries by hand. Vocabulary membership
 references section UUIDs; replacement sources are separate phrases, without commas.
-Duplicate identities, conflicting sources and replacement cycles are rejected.
+Duplicate identities and duplicate sources within one rule are rejected. Legacy
+rules sharing sources or forming cycles are preserved and use the app's existing
+ordered replacement behavior. Replacement targets trim surrounding whitespace and
+normalize Unicode on both insertion and update.
 
 ## Included preferences
 
@@ -104,7 +114,9 @@ generated file to keep the complete structure and stable UUIDs.
   temporary.
 - **Shortcuts:** primary/secondary selections and recording modes, plus
   `Shortcut_<action>` and `Shortcut_mode_<UUID>` objects. `_cleared` flags preserve
-  explicitly cleared shortcuts.
+  explicitly cleared shortcuts. Bindings use the editor's typing/reserved-key
+  restrictions; conflicts are checked against the final settings, including
+  unchanged shortcuts omitted from the file.
 - **Other settings:** appearance/language, Dock/menu-bar visibility, recorder
   style/live text, paste method and original target, clipboard restoration and
   remote push command, Auto Send, Auto Learn provider/model/schedule, dictionary

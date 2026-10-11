@@ -119,16 +119,18 @@ struct ConfigurationJSON {
             }
             let added = Set(new.keys).subtracting(old.keys).sorted()
             if !added.isEmpty {
+                let insertion = node.range.upperBound - 1
+                var prefix = ""
                 if let end = node.lastValueEnd, !node.trailingComma {
-                    edits.append((end..<end, Data(",".utf8)))
+                    if end == insertion { prefix = "," }
+                    else { edits.append((end..<end, Data(",".utf8))) }
                 }
                 let members = try added.map { key in
                     let name = String(decoding: try ConfigurationValue.string(key).data(), as: UTF8.self)
                     let content = String(decoding: try new[key]!.data(), as: UTF8.self)
                     return "\(name): \(content)"
                 }.joined(separator: ",\n")
-                let end = node.range.upperBound - 1
-                edits.append((end..<end, Data("\n\(members)\n".utf8)))
+                edits.append((insertion..<insertion, Data("\(prefix)\n\(members)\n".utf8)))
             }
         } else if case .array(let old) = node.value, case .array(let new) = value, old.count == new.count {
             for (child, replacement) in zip(node.elements, new) {

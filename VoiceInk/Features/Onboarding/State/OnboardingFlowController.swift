@@ -58,6 +58,10 @@ final class OnboardingFlowController {
         enhancementService: AIEnhancementService
     ) {
         guard coordinator.isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else { return }
+        if coordinator.preservesConfiguredModes {
+            coordinator.storedStage = OnboardingStage.trust.rawValue
+            return
+        }
         coordinator.storedStage = OnboardingStage.experience.rawValue
         moveToExperienceStep(0, enhancementService: enhancementService)
     }
@@ -163,6 +167,10 @@ final class OnboardingFlowController {
         }
         guard coordinator.isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
             goToFirstIncompleteSetupStep(isTranscriptionSetupReady: isTranscriptionSetupReady)
+            return
+        }
+        if coordinator.preservesConfiguredModes {
+            coordinator.storedStage = OnboardingStage.api.rawValue
             return
         }
 
@@ -275,6 +283,9 @@ final class OnboardingFlowController {
             && !coordinator.isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady)
         {
             goToFirstIncompleteSetupStep(isTranscriptionSetupReady: isTranscriptionSetupReady)
+        }
+        if coordinator.preservesConfiguredModes && (coordinator.stage == .experience || coordinator.stage == .contextAwareness) {
+            coordinator.storedStage = OnboardingStage.trust.rawValue
         }
     }
 
@@ -432,7 +443,7 @@ final class OnboardingFlowController {
         at index: Int,
         enhancementService: AIEnhancementService
     ) {
-        guard coordinator.activeExperienceSteps.indices.contains(index) else {
+        guard !coordinator.preservesConfiguredModes, coordinator.activeExperienceSteps.indices.contains(index) else {
             return
         }
 
@@ -487,7 +498,7 @@ final class OnboardingFlowController {
     }
 
     func clearExperienceShortcutForIntroIfNeeded() {
-        guard coordinator.stage == .experience,
+        guard !coordinator.preservesConfiguredModes, coordinator.stage == .experience,
             coordinator.isExperienceInIntroPhase,
             coordinator.experienceStep.shouldClearShortcutOnIntro,
             !coordinator.clearedExperienceShortcutActions.contains(coordinator.experienceShortcutAction)
@@ -502,7 +513,7 @@ final class OnboardingFlowController {
     }
 
     func activateExperienceModeForDemo() {
-        guard coordinator.stage == .experience,
+        guard !coordinator.preservesConfiguredModes, coordinator.stage == .experience,
             let config = ModeManager.shared.getConfiguration(with: coordinator.experienceModeTemplate.id)
         else {
             return
@@ -513,7 +524,8 @@ final class OnboardingFlowController {
     }
 
     func activateCleanTranscriptionMode() {
-        guard let cleanTemplate = StarterModeCatalog.templates.first(where: { $0.kind == .clean }),
+        guard !coordinator.preservesConfiguredModes,
+            let cleanTemplate = StarterModeCatalog.templates.first(where: { $0.kind == .clean }),
             let cleanConfig = ModeManager.shared.getConfiguration(with: cleanTemplate.id)
         else {
             return

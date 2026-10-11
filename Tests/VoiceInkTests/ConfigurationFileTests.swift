@@ -93,6 +93,186 @@ final class ConfigurationFileTests: XCTestCase {
         }
     }
 
+    func testJSONCAddsMembersToCompactAndCommentedObjects() throws {
+        for source in [
+            "{}", "{\"a\":1}", "{\"a\":1 }", "{\"a\":1,}",
+            "{\"a\":1/* retained */}", "{\"a\":1// retained\n}",
+            "{\"a\":{\"nested\":\"á\"}}",
+        ] {
+            let document = try ConfigurationJSON(data: Data(source.utf8))
+            let expected: ConfigurationValue = .object(["a": .number(2), "b": .string("added")])
+
+            let changed = try document.updating(expected)
+
+            XCTAssertEqual(try ConfigurationJSON(data: changed).root.value, expected, source)
+            if source.contains("retained") {
+                XCTAssertTrue(String(decoding: changed, as: UTF8.self).contains("retained"))
+            }
+        }
+    }
+
+    func testAddingAPreferenceToCompactFileSavesAndReloads() throws {
+        try write("{\"schemaVersion\":1,\"preferences\":{\"IsVADEnabled\":true}}")
+        let service = store()
+        service.load(into: container)
+
+        defaults.set("dark", forKey: "AppAppearancePreference")
+        service.saveNow()
+        defaults.removeObject(forKey: "AppAppearancePreference")
+        let reopened = store()
+        reopened.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? "")
+        XCTAssertEqual(defaults.string(forKey: "AppAppearancePreference"), "dark")
+    }
+
+    func testDictionaryEditCapturesCompleteDictionaryWhenOriginallyOmitted() throws {
+        let context = ModelContext(container)
+        let section = VocabularySection(name: "Technology", sectionDescription: "Names")
+        context.insert(section)
+        context.insert(VocabularyWord(word: "Retained", sectionID: section.id))
+        context.insert(WordReplacement(originalText: "v ink", replacementText: "VoiceInk"))
+        try context.save()
+        try write("{\"schemaVersion\":1\n}")
+        let service = store()
+        service.load(into: container)
+
+        context.insert(VocabularyWord(word: "Added", sectionID: section.id))
+        try context.save()
+        let expected = try ConfigurationDictionary.capture(in: ModelContext(container))
+        service.saveNow()
+        let reopened = store()
+        reopened.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? "")
+        XCTAssertEqual(try root()["dictionary"]?.decoded(as: ConfigurationDictionary.self), expected)
+        XCTAssertEqual(try ConfigurationDictionary.capture(in: ModelContext(container)), expected)
+    }
+
+    func testEditingOmittedLanguagePromptMapPreservesUnchangedLanguages() throws {
+        defaults.set(["en": "Keep English names."], forKey: "CustomLanguagePrompts")
+        try write("{\"schemaVersion\":1\n}")
+        let service = store()
+        service.load(into: container)
+        let expected = ["en": "Keep English names.", "es": "Keep Spanish names."]
+
+        defaults.set(expected, forKey: "CustomLanguagePrompts")
+        service.saveNow()
+        defaults.removeObject(forKey: "CustomLanguagePrompts")
+        let reopened = store()
+        reopened.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? "")
+        XCTAssertEqual(defaults.dictionary(forKey: "CustomLanguagePrompts") as? [String: String], expected)
+    }
+
+    func testRemovingLanguagePromptSavesAValidMap() throws {
+        defaults.set(["en": "English", "es": "Spanish"], forKey: "CustomLanguagePrompts")
+        let service = store()
+        service.load(into: container)
+        service.saveNow()
+
+        defaults.set(["en": "English"], forKey: "CustomLanguagePrompts")
+        service.saveNow()
+        let reopened = store()
+        reopened.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? "")
+        XCTAssertEqual(try root()["preferences"]?.object?["CustomLanguagePrompts"], .object(["en": .string("English")]))
+    }
+
+    func testUnsafeShortcutRejectsTheCompleteFileBeforeAnyMutation() throws {
+        for shortcut in [Shortcut.key(keyCode: 0, modifierFlags: []), .key(keyCode: 8, modifierFlags: .command)] {
+            defaults.set(true, forKey: "IsVADEnabled")
+            let context = ModelContext(container)
+            context.insert(VocabularyWord(word: "Keep"))
+            try context.save()
+            let config: ConfigurationValue = .object([
+                "schemaVersion": .number(1),
+                "preferences": .object([
+                    "IsVADEnabled": .bool(false),
+                    ShortcutAction.primaryRecording.userDefaultsKey: try .encoded(shortcut),
+                ]),
+                "dictionary": .object(["sections": .array([]), "vocabulary": .array([]), "replacements": .array([])]),
+            ])
+            try config.data().write(to: file)
+            let service = store()
+
+            service.load(into: container)
+
+            XCTAssertFalse(service.isReady)
+            XCTAssertTrue(defaults.bool(forKey: "IsVADEnabled"))
+            XCTAssertNil(defaults.data(forKey: ShortcutAction.primaryRecording.userDefaultsKey))
+            XCTAssertFalse(try context.fetch(FetchDescriptor<VocabularyWord>()).isEmpty)
+        }
+    }
+
+    func testShortcutConflictsUseFinalValuesIncludingOmittedAndClearedBindings() throws {
+        let primary = ShortcutAction.primaryRecording.userDefaultsKey
+        let secondary = ShortcutAction.secondaryRecording.userDefaultsKey
+        let first = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        let second = Shortcut.key(keyCode: 40, modifierFlags: [.command, .shift])
+        defaults.set(try JSONEncoder().encode(first), forKey: primary)
+        defaults.set(try JSONEncoder().encode(second), forKey: secondary)
+
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([secondary: .encoded(first)], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([primary: .encoded(second), secondary: .encoded(first)], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([primary: .null, secondary: .encoded(first)], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([primary + "_cleared": .bool(true), secondary: .encoded(first)], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([
+            primary: .encoded(Shortcut.key(keyCode: 42, modifierFlags: [])),
+            secondary: .null,
+            ShortcutAction.cancelRecorder.userDefaultsKey: .encoded(Shortcut.key(keyCode: 53, modifierFlags: [])),
+        ], defaults: defaults))
+    }
+
+    func testOnlySuccessfullyImportedModeListsProtectOnboardingModes() throws {
+        for (preference, expected) in [("\"modeConfigurationsV2\":[]", true), ("\"modeConfigurationsV2\":null", false), ("", false)] {
+            try write("{\"schemaVersion\":1,\"preferences\":{\(preference)}}")
+            let service = store()
+
+            service.load(into: container)
+
+            XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+            XCTAssertEqual(service.hasImportedModes, expected)
+        }
+        try write("{\"schemaVersion\":1,\"preferences\":{\"modeConfigurationsV2\":[],\"IsVADEnabled\":42}}")
+        let invalid = store()
+
+        invalid.load(into: container)
+
+        XCTAssertFalse(invalid.isReady)
+        XCTAssertFalse(invalid.hasImportedModes)
+    }
+
+    func testShortcutConflictsIgnoreRemovedModesAndRetainOmittedOrLegacyModes() throws {
+        let old = ModeConfig(name: "Old", isAIEnhancementEnabled: false)
+        let new = ModeConfig(name: "New", isAIEnhancementEnabled: false)
+        let shortcut = Shortcut.key(keyCode: 42, modifierFlags: [.command, .shift])
+        defaults.set(try JSONEncoder().encode([old]), forKey: "modeConfigurationsV2")
+        defaults.set(try JSONEncoder().encode(shortcut), forKey: ShortcutAction.mode(old.id).userDefaultsKey)
+        let binding: ConfigurationValue = try .encoded(shortcut)
+        let replacement: [String: ConfigurationValue] = [
+            "modeConfigurationsV2": try .encoded([new]), ShortcutAction.mode(new.id).userDefaultsKey: binding,
+        ]
+
+        XCTAssertNoThrow(try ConfigurationPreferences.validate(replacement, defaults: defaults))
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([ShortcutAction.primaryRecording.userDefaultsKey: binding], defaults: defaults))
+        XCTAssertNoThrow(try ConfigurationPreferences.validate([
+            "modeConfigurationsV2": .null, ShortcutAction.primaryRecording.userDefaultsKey: binding,
+        ], defaults: defaults))
+
+        defaults.set(try JSONEncoder().encode([old]), forKey: "powerModeConfigurationsV2")
+
+        XCTAssertThrowsError(try ConfigurationPreferences.validate([
+            "modeConfigurationsV2": .null, ShortcutAction.primaryRecording.userDefaultsKey: binding,
+        ], defaults: defaults))
+    }
+
     func testFirstLaunchCreatesCompleteFileAndPreservesExistingPreferences() throws {
         defaults.set("parakeet-v3", forKey: "CurrentTranscriptionModel")
         defaults.set(["es", "en"], forKey: "SelectedLanguages")
@@ -418,5 +598,93 @@ final class ConfigurationFileTests: XCTestCase {
 
         XCTAssertFalse(String(decoding: try ConfigurationValue.object(preferences).data(), as: UTF8.self).contains("fake-fixture-secret"))
         XCTAssertEqual(try preferences["customCloudModels"]?.decoded(as: [CustomModelBackup].self).first?.id, model.id)
+    }
+
+    func testLegacyConflictingAndCyclicReplacementRulesSurviveFirstCaptureAndReload() throws {
+        let context = ModelContext(container)
+        for (index, pair) in [("tone", "alpha"), ("tone", "beta"), ("alpha", "tone")].enumerated() {
+            context.insert(WordReplacement(originalText: pair.0, replacementText: pair.1,
+                                           dateAdded: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))))
+        }
+        try context.save()
+        let expected = try ConfigurationDictionary.capture(in: ModelContext(container))
+        let service = store()
+
+        service.load(into: container)
+        service.saveNow()
+        let reopened = store()
+        reopened.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? "")
+        XCTAssertEqual(try ConfigurationDictionary.capture(in: ModelContext(container)), expected)
+        XCTAssertEqual(try root()["dictionary"]?.decoded(as: ConfigurationDictionary.self), expected)
+    }
+
+    func testReplacementNormalizationIsStableAcrossRepeatedLoads() throws {
+        try write("""
+        {"schemaVersion":1,"dictionary":{"sections":[],"vocabulary":[],"replacements":[
+            {"sources":["input"],"replacement":"  café  "}
+        ]}}
+        """)
+
+        for _ in 0..<2 {
+            let service = store()
+            service.load(into: container)
+
+            XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+            let replacement = try XCTUnwrap(ModelContext(container).fetch(FetchDescriptor<WordReplacement>()).first)
+            XCTAssertEqual(replacement.replacementText, "café")
+            let plan = WordReplacementPlan(rules: [ReplacementRule(
+                id: replacement.id.uuidString, sources: ["input"], replacement: replacement.replacementText
+            )])
+            XCTAssertEqual(plan.apply(to: "an input here"), "an café here")
+        }
+    }
+
+    func testConflictingRulesWithoutIDsRetainDistinctIdentitiesAndDates() throws {
+        try write("""
+        {"schemaVersion":1,"dictionary":{"sections":[],"vocabulary":[],"replacements":[
+            {"sources":["tone"],"replacement":"alpha"},
+            {"sources":["tone"],"replacement":"beta"}
+        ]}}
+        """)
+        let service = store()
+        service.load(into: container)
+        let before = try ConfigurationDictionary.capture(in: ModelContext(container))
+
+        let reopened = store()
+        reopened.load(into: container)
+
+        XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? "")
+        XCTAssertEqual(try ConfigurationDictionary.capture(in: ModelContext(container)), before)
+        XCTAssertEqual(Set(before.replacements.compactMap(\.id)).count, 2)
+    }
+
+    func testRuleWithoutIDCannotTakeAnotherRulesExplicitIdentity() throws {
+        let context = ModelContext(container)
+        let existing = WordReplacement(originalText: "tone", replacementText: "alpha",
+                                       dateAdded: Date(timeIntervalSince1970: 1_700_000_000))
+        context.insert(existing)
+        try context.save()
+        let persistentID = existing.persistentModelID
+        try write("""
+        {"schemaVersion":1,"dictionary":{"sections":[],"vocabulary":[],"replacements":[
+            {"sources":["tone"],"replacement":"beta"},
+            {"id":"\(existing.id.uuidString)","sources":["new tone"],"replacement":"alpha"}
+        ]}}
+        """)
+        let service = store()
+
+        service.load(into: container)
+        let rules = try ModelContext(container).fetch(FetchDescriptor<WordReplacement>())
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertEqual(rules.count, 2)
+        XCTAssertEqual(Set(rules.map(\.id)).count, 2)
+        let retained = try XCTUnwrap(rules.first(where: { $0.id == existing.id }))
+        XCTAssertEqual(retained.persistentModelID, persistentID)
+        XCTAssertEqual(retained.originalText, "new tone")
+        XCTAssertEqual(retained.dateAdded.timeIntervalSince1970, 1_700_000_000)
     }
 }

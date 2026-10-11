@@ -67,12 +67,14 @@ final class OnboardingCoordinator: ObservableObject {
     @Published var clearedExperienceShortcutActions: Set<ShortcutAction> = []
 
     let defaults: UserDefaults
+    let preservesConfiguredModes: Bool
     var refreshTask: Task<Void, Never>?
     lazy var flow = OnboardingFlowController(coordinator: self)
     lazy var permissions = OnboardingPermissionController(coordinator: self)
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, preservesConfiguredModes: Bool = false) {
         self.defaults = defaults
+        self.preservesConfiguredModes = preservesConfiguredModes
         self.storedStage = defaults.string(forKey: OnboardingStorageKeys.stage) ?? OnboardingStage.permissions.rawValue
         self.storedActivePermission =
             defaults.string(forKey: OnboardingStorageKeys.activePermission)

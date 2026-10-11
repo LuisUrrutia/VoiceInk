@@ -42,17 +42,16 @@ struct ConfigurationDictionary: Codable, Equatable {
             vocabulary.map { VocabularyWordIdentity(word: $0.term, sectionID: $0.sectionID) }, key: "dictionary.vocabulary"
         )
         try ConfigurationPreferences.requireUnique(replacements.compactMap(\.id), key: "dictionary.replacements")
-        var sourceKeys = Set<String>()
-        var cycles = WordReplacementVariants.CycleDetector(records: [])
+        // Existing stores can contain conflicting or cyclic rules; the replacement plan preserves them.
         for rule in replacements {
             guard !rule.sources.isEmpty, !rule.replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 rule.addedAt?.isFinite != false
             else { throw ConfigurationError.invalid("Replacement rules need sources and a replacement.") }
+            var sourceKeys = Set<String>()
             for source in rule.sources {
                 let key = WordReplacementVariants.key(for: source)
-                guard !key.isEmpty, !source.contains(","), sourceKeys.insert(key).inserted,
-                    cycles.insertIfAcyclic(source: source, destination: rule.replacement)
-                else { throw ConfigurationError.invalid("Replacement sources must be unique, comma-free and acyclic.") }
+                guard !key.isEmpty, !source.contains(","), sourceKeys.insert(key).inserted
+                else { throw ConfigurationError.invalid("Sources within a replacement rule must be nonempty, unique and comma-free.") }
             }
         }
     }
@@ -88,9 +87,13 @@ struct ConfigurationDictionary: Codable, Equatable {
             (VocabularyWordIdentity(word: $0.word, sectionID: $0.sectionID), $0)
         }, uniquingKeysWith: { first, _ in first })
         let rulesByID = Dictionary(oldRules.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let rulesBySources = Dictionary(oldRules.map {
-            (WordReplacementVariants.parse($0.originalText).map(WordReplacementVariants.key).sorted(), $0)
-        }, uniquingKeysWith: { first, _ in first })
+        let orderedRules = oldRules.sorted {
+            ($0.dateAdded, $0.id.uuidString) < ($1.dateAdded, $1.id.uuidString)
+        }
+        let rulesBySources = Dictionary(grouping: orderedRules) {
+            WordReplacementVariants.parse($0.originalText).map(WordReplacementVariants.key).sorted()
+        }
+        let explicitRuleIDs = Set(replacements.compactMap(\.id))
         var retained = Set<PersistentIdentifier>()
         do {
             for section in sections {
@@ -115,17 +118,24 @@ struct ConfigurationDictionary: Codable, Equatable {
             }
             for rule in replacements {
                 let source = WordReplacementVariants.serialize(rule.sources)
+                let destination = WordReplacementVariants.destinationKey(for: rule.replacement)
                 let sourceKeys = rule.sources.map(WordReplacementVariants.key).sorted()
                 let existing: WordReplacement?
                 if let id = rule.id { existing = rulesByID[id] }
-                else { existing = rulesBySources[sourceKeys] }
+                else {
+                    let candidates = (rulesBySources[sourceKeys] ?? []).filter {
+                        !retained.contains($0.persistentModelID) && !explicitRuleIDs.contains($0.id)
+                    }
+                    existing = candidates.first { WordReplacementVariants.destinationKey(for: $0.replacementText) == destination }
+                        ?? candidates.first
+                }
                 if let existing, !retained.contains(existing.persistentModelID) {
                     retained.insert(existing.persistentModelID)
                     if existing.originalText != source { existing.originalText = source }
-                    if existing.replacementText != rule.replacement { existing.replacementText = rule.replacement }
+                    if existing.replacementText != destination { existing.replacementText = destination }
                     if let date = rule.addedAt.map(Date.init(timeIntervalSince1970:)), existing.dateAdded != date { existing.dateAdded = date }
                 } else {
-                    let replacement = WordReplacement(originalText: source, replacementText: rule.replacement,
+                    let replacement = WordReplacement(originalText: source, replacementText: destination,
                         dateAdded: rule.addedAt.map(Date.init(timeIntervalSince1970:)) ?? Date())
                     if let id = rule.id { replacement.id = id }
                     context.insert(replacement)

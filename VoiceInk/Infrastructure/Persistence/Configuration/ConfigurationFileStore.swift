@@ -38,6 +38,7 @@ final class ConfigurationFileStore: ObservableObject {
     let fileURL: URL
     @Published private(set) var errorMessage: String?
     @Published private(set) var isReady = false
+    private(set) var hasImportedModes = false
     private let defaults: UserDefaults
     private let notifications: NotificationCenter
     private var container: ModelContainer?
@@ -57,7 +58,9 @@ final class ConfigurationFileStore: ObservableObject {
 
     func load(into container: ModelContainer) {
         self.container = container
+        hasImportedModes = false
         do {
+            var importsModes = false
             let target = fileURL.resolvingSymlinksInPath()
             let data = try readIfPresent(target)
             if let data {
@@ -71,17 +74,19 @@ final class ConfigurationFileStore: ObservableObject {
                     guard let object = value.object else { throw ConfigurationError.invalid("preferences must be an object.") }
                     preferences = object
                 } else { preferences = [:] }
-                try ConfigurationPreferences.validate(preferences)
+                try ConfigurationPreferences.validate(preferences, defaults: defaults)
                 let dictionary = try root["dictionary"].map { try $0.decoded(as: ConfigurationDictionary.self) }
                 try dictionary?.validate()
                 // Validate all input before the dictionary transaction or any defaults mutation.
                 try dictionary?.apply(to: container)
                 try ConfigurationPreferences.apply(preferences, to: defaults)
                 self.document = document
+                if case .array = preferences["modeConfigurationsV2"] { importsModes = true }
             }
             resolvedURL = target
             lastSnapshot = try capture()
             isReady = true
+            hasImportedModes = importsModes
             errorMessage = nil
         } catch { fail(error) }
     }
@@ -150,9 +155,13 @@ final class ConfigurationFileStore: ObservableObject {
         if let old = previous.object, let new = current.object {
             var result = saved.object ?? [:]
             for key in Set(old.keys).union(new.keys) where old[key] != new[key] {
-                if let next = new[key] {
-                    result[key] = mergingChanges(from: old[key] ?? .null, to: next, into: result[key] ?? .null)
-                } else { result[key] = .null }
+                if key == "preferences", let oldPreferences = old[key]?.object, let newPreferences = new[key]?.object {
+                    var preferences = result[key]?.object ?? [:]
+                    for name in Set(oldPreferences.keys).union(newPreferences.keys) where oldPreferences[name] != newPreferences[name] {
+                        preferences[name] = newPreferences[name] ?? .null
+                    }
+                    result[key] = .object(preferences)
+                } else { result[key] = new[key] ?? .null }
             }
             return .object(result)
         }

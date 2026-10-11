@@ -54,10 +54,14 @@ enum ConfigurationPreferences {
     private static func kind(for key: String) -> Kind? {
         if let kind = kinds[key] { return kind }
         let name = key.hasSuffix("_cleared") ? String(key.dropLast(8)) : key
-        let isShortcut = ShortcutAction.legacyKeyboardShortcutActions.contains { $0.userDefaultsKey == name }
-            || (name.hasPrefix("Shortcut_mode_") && UUID(uuidString: String(name.dropFirst(14))) != nil)
-        guard isShortcut else { return nil }
+        guard shortcutAction(for: name) != nil else { return nil }
         return key.hasSuffix("_cleared") ? .boolean : .json
+    }
+
+    private static func shortcutAction(for key: String) -> ShortcutAction? {
+        if let action = ShortcutAction.legacyKeyboardShortcutActions.first(where: { $0.userDefaultsKey == key }) { return action }
+        if key.hasPrefix("Shortcut_mode_"), let id = UUID(uuidString: String(key.dropFirst(14))) { return .mode(id) }
+        return nil
     }
 
     static func capture(from defaults: UserDefaults) throws -> [String: ConfigurationValue] {
@@ -88,8 +92,37 @@ enum ConfigurationPreferences {
         return result
     }
 
-    static func validate(_ values: [String: ConfigurationValue]) throws {
+    static func validate(_ values: [String: ConfigurationValue], defaults: UserDefaults? = nil) throws {
         for (key, value) in values { try validate(value, key: key) }
+        let modes: [ModeConfig]
+        if let value = values["modeConfigurationsV2"], value != .null {
+            modes = try value.decoded(as: [ModeConfig].self)
+        } else {
+            let current = values["modeConfigurationsV2"] == .null ? nil : defaults?.data(forKey: "modeConfigurationsV2")
+            let data = current ?? defaults?.data(forKey: "powerModeConfigurationsV2")
+            modes = data.flatMap { try? JSONDecoder().decode([ModeConfig].self, from: $0) } ?? []
+        }
+        let modeIDs = Set(modes.map(\.id))
+        let keys = Set(values.keys).union(defaults?.dictionaryRepresentation().keys.map { $0 } ?? [])
+        var shortcuts: [(key: String, shortcut: Shortcut)] = []
+        for key in keys.sorted() {
+            guard let action = shortcutAction(for: key) else { continue }
+            if case .mode(let id) = action, !modeIDs.contains(id) { continue }
+            let clearedKey = "\(key)_cleared"
+            let cleared = values[clearedKey].map { $0 == .bool(true) } ?? (defaults?.bool(forKey: clearedKey) == true)
+            guard !cleared else { continue }
+            let shortcut: Shortcut?
+            if let value = values[key] {
+                shortcut = value == .null ? nil : try value.decoded(as: Shortcut.self)
+            } else {
+                shortcut = defaults?.data(forKey: key).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }
+            }
+            guard let shortcut else { continue }
+            if let conflict = shortcuts.first(where: { $0.shortcut.conflicts(with: shortcut) }) {
+                throw ConfigurationError.invalid("\(key) conflicts with \(conflict.key).")
+            }
+            shortcuts.append((key, shortcut))
+        }
     }
 
     private static func validate(_ value: ConfigurationValue, key: String) throws {
@@ -135,7 +168,10 @@ enum ConfigurationPreferences {
             case "prioritizedDevices":
                 try requireUnique(value.decoded(as: [PrioritizedDevice].self).map(\.id), key: key)
             default:
-                _ = try value.decoded(as: Shortcut.self)
+                let shortcut = try value.decoded(as: Shortcut.self)
+                guard let action = shortcutAction(for: key),
+                    ShortcutValidator.bindingValidationError(for: shortcut, action: action) == nil
+                else { throw ConfigurationError.invalid("Shortcut not allowed for \(key).") }
             }
         } catch let error as ConfigurationError { throw error }
         catch { throw ConfigurationError.invalid("Invalid structure for \(key).") }
