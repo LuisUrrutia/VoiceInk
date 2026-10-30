@@ -53,7 +53,7 @@ enum ConfigurationPreferences {
         return result
     }()
 
-    /// Removed by Auto Learn's local review; older files stay valid and the values are ignored.
+    /// Removed by Auto Learn's local review; older files stay valid. Values are ignored, never applied or captured.
     private static let retiredKeys: Set<String> = [
         "AutoLearnDictionaryProvider", "AutoLearnDictionaryModel", "AutoLearnDictionaryReviewSchedule",
     ]

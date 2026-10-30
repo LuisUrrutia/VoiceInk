@@ -131,7 +131,7 @@ The supported names and value types are defined in
 `VoiceInk/Infrastructure/Persistence/Configuration/ConfigurationPreferences.swift`.
 Unknown preference names and unsupported schema versions are rejected rather than
 silently ignored. The retired Auto Learn provider, model and review schedule names
-are still accepted but ignored, and the next save removes them.
+are still accepted and ignored; saves leave them in place, so delete them by hand.
 
 API keys remain in Keychain and must be configured separately on another machine.
 The file does not contain downloaded models, custom sound files, History, audio,
