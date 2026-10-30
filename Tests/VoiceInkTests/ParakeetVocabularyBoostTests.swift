@@ -156,6 +156,36 @@ final class ParakeetVocabularyBoostTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testOptInInstalledModelsBoostTheAppTranscript() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let samplePath = environment["VOICEINK_VOCAB_SAMPLE"], let term = environment["VOICEINK_VOCAB_TERM"] else {
+            throw XCTSkip("Set VOICEINK_VOCAB_SAMPLE (16 kHz WAV) and VOICEINK_VOCAB_TERM for the installed-model check")
+        }
+        guard AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: .ultra), version: .ultra),
+              ParakeetCTCModel.isInstalled() else {
+            throw XCTSkip("Parakeet Ultra or the CTC vocabulary model is not installed")
+        }
+        let model = try XCTUnwrap(TranscriptionModelRegistry.models.first { $0.name == "parakeet-ultra" })
+        let audio = URL(fileURLWithPath: samplePath)
+        let context = TranscriptionRequestContext(languages: ["es"])
+        let terms: @MainActor @Sendable () -> [VocabularyBoostTerm] = { [VocabularyBoostTerm(text: term, aliases: [])] }
+        let plainService = FluidAudioTranscriptionService()
+        let boostedService = FluidAudioTranscriptionService(
+            vocabularyBoost: ParakeetVocabularyBoost(isEnabled: { true }, terms: terms)
+        )
+
+        let plain = try await plainService.transcribe(audioURL: audio, model: model, context: context)
+        await boostedService.prepareVocabularyBoost(for: model)
+        let boosted = try await boostedService.transcribe(audioURL: audio, model: model, context: context)
+        await plainService.cleanup()
+        await boostedService.cleanup()
+
+        // Choose a sample whose plain transcript misspells the term.
+        XCTAssertFalse(plain.contains(term), plain)
+        XCTAssertTrue(boosted.contains(term), boosted)
+    }
+
     func testOnlyBatchParakeetModelsSupportBoosting() {
         func model(_ name: String) -> FluidAudioModel {
             FluidAudioModel(name: name, displayName: name, description: "Fixture", size: "1 GB", speed: 1, accuracy: 1,
