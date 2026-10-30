@@ -50,8 +50,8 @@ struct SystemHotKeyTests {
         withExtendedLifetime(replacement) {}
     }
 
-    @Test @MainActor func failedMonitorStartReleasesSuccessfulRegistrations() {
-        let monitor = ShortcutMonitor(createEventTap: { _, _ in nil })
+    @Test @MainActor func incompleteMonitorStartKeepsSuccessfulRegistrationsForTapRecovery() {
+        let monitor = ShortcutMonitor(makeEventTap: Self.unavailableEventTap)
         let keyCode = UInt16(kVK_F18)
         let modifiers = UInt32(controlKey | optionKey | cmdKey)
 
@@ -63,15 +63,20 @@ struct SystemHotKeyTests {
             onShortcutDown: { _, _ in },
             onShortcutUp: { _, _ in }
         )
-        let replacement = SystemHotKey(keyCode: keyCode, modifiers: modifiers) { _, _ in }
+        let duplicate = SystemHotKey(keyCode: keyCode, modifiers: modifiers) { _, _ in }
 
         #expect(!started)
+        #expect(monitor.isMonitoring(.primaryRecording))
+        #expect(!monitor.isMonitoring(.secondaryRecording))
+        #expect(duplicate == nil)
+        monitor.stop()
+        let replacement = SystemHotKey(keyCode: keyCode, modifiers: modifiers) { _, _ in }
         #expect(replacement != nil)
         withExtendedLifetime((monitor, replacement)) {}
     }
 
     @Test @MainActor func fullyRegisteredMonitorHoldsItsRegistrationWithoutAnEventTap() {
-        let monitor = ShortcutMonitor(createEventTap: { _, _ in nil })
+        let monitor = ShortcutMonitor(makeEventTap: Self.unavailableEventTap)
         let keyCode = UInt16(kVK_F18)
         let modifiers = UInt32(controlKey | optionKey | cmdKey)
 
@@ -90,8 +95,9 @@ struct SystemHotKeyTests {
     @Test @MainActor func eventTapInterruptionDoesNotReleaseSystemHotKey() async {
         let recorder = TransitionRecorder()
         let monitor = ShortcutMonitor(
-            createEventTap: { _, _ in nil },
-            allowsShortcutHandling: { true }
+            makeEventTap: Self.unavailableEventTap,
+            allowsInput: { true },
+            allowsDispatch: { true }
         )
         let started = monitor.start(
             shortcuts: [.primaryRecording: .key(keyCode: UInt16(kVK_F18), modifierFlags: [.control, .option, .command])],
@@ -102,7 +108,7 @@ struct SystemHotKeyTests {
         guard started else { return }
 
         monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 1)
-        monitor.resetPressedShortcutsAfterTapInterruption()
+        monitor.recoverEventTap(reason: "test-interruption")
         await flushDispatchedEvents()
         #expect(recorder.transitions == ["down"])
 
@@ -111,38 +117,48 @@ struct SystemHotKeyTests {
         #expect(recorder.transitions == ["down", "up"])
     }
 
-    @Test @MainActor func systemHotKeyStopsAtLockedSessionBoundary() async {
+    @Test @MainActor func systemHotKeyResetsAtLockedSessionBoundary() async {
         let recorder = TransitionRecorder()
         let session = TestSession()
         let monitor = ShortcutMonitor(
-            createEventTap: { _, _ in nil },
-            allowsShortcutHandling: { session.allowsShortcuts }
+            makeEventTap: Self.unavailableEventTap,
+            allowsInput: { session.allowsShortcuts },
+            allowsDispatch: { session.allowsShortcuts }
         )
         let started = monitor.start(
             shortcuts: [.primaryRecording: .key(keyCode: UInt16(kVK_F18), modifierFlags: [.control, .option, .command])],
             onShortcutDown: { _, _ in recorder.transitions.append("down") },
-            onShortcutUp: { _, _ in recorder.transitions.append("up") }
+            onShortcutUp: { _, _ in recorder.transitions.append("up") },
+            onMonitoringReset: { _ in recorder.transitions.append("reset") }
         )
         #expect(started)
         guard started else { return }
 
         monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 1)
+        await flushDispatchedEvents()
         session.allowsShortcuts = false
         monitor.handleSystemHotKey(action: .primaryRecording, isDown: false, eventTime: 2)
         monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 3)
         await flushDispatchedEvents()
-        #expect(recorder.transitions == ["down", "up"])
+        #expect(recorder.transitions == ["down", "reset"])
 
         session.allowsShortcuts = true
         monitor.handleSystemHotKey(action: .primaryRecording, isDown: true, eventTime: 4)
         monitor.handleSystemHotKey(action: .primaryRecording, isDown: false, eventTime: 5)
         await flushDispatchedEvents()
-        #expect(recorder.transitions == ["down", "up", "down", "up"])
+        #expect(recorder.transitions == ["down", "reset", "down", "up"])
+    }
+
+    private static let unavailableEventTap: ShortcutMonitor.EventTapFactory = { _, _ in
+        throw ShortcutEventTapError.creationFailed
     }
 
     @MainActor private func flushDispatchedEvents() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            DispatchQueue.main.async { continuation.resume() }
+        for _ in 0..<2 {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+            await Task.yield()
         }
     }
 

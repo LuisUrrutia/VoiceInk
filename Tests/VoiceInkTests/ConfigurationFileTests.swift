@@ -589,6 +589,31 @@ final class ConfigurationFileTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "localCLICommandTemplate"), "printf '%s' hello")
     }
 
+    func testRetiredAutoLearnReviewKeysLoadWithoutApplyingAndNewPreferencesRoundTrip() throws {
+        try write("""
+        {"schemaVersion":1,"preferences":{
+          "AutoLearnDictionaryProvider":"OpenAI","AutoLearnDictionaryModel":"gpt","AutoLearnDictionaryReviewSchedule":"daily",
+          "SmartPunctuationEnabled":true,"IsAutomaticVocabularyCorrectionEnabled":false,
+          "AutoLearnDictionaryMinimumCorrections":2,"audioInputChannelsByDeviceUID":{"usb-uid":[2]}
+        }}
+        """)
+        let service = store()
+
+        service.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        for key in ["AutoLearnDictionaryProvider", "AutoLearnDictionaryModel", "AutoLearnDictionaryReviewSchedule"] {
+            XCTAssertNil(defaults.object(forKey: key), key)
+        }
+        XCTAssertTrue(defaults.bool(forKey: "SmartPunctuationEnabled"))
+        XCTAssertFalse(defaults.bool(forKey: "IsAutomaticVocabularyCorrectionEnabled"))
+        XCTAssertEqual(defaults.integer(forKey: "AutoLearnDictionaryMinimumCorrections"), 2)
+        XCTAssertEqual(defaults.audioInputChannelsByDeviceUID, ["usb-uid": [2]])
+        let captured = try ConfigurationPreferences.capture(from: defaults)
+        XCTAssertNil(captured["AutoLearnDictionaryProvider"])
+        XCTAssertEqual(captured["audioInputChannelsByDeviceUID"], .object(["usb-uid": .array([.number(2)])]))
+    }
+
     func testModesPromptsModelsMicrophoneRequirementsAndShortcutsRoundTrip() throws {
         let prompt = CustomPrompt(title: "Technical", promptText: "Keep names unchanged.")
         let mode = ModeConfig(name: "Code", isAIEnhancementEnabled: true, selectedPrompt: prompt.id.uuidString,

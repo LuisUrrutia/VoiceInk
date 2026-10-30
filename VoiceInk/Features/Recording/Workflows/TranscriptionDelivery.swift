@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import os
 
@@ -56,7 +57,8 @@ final class TranscriptionDelivery {
         }
 
         if let text = request.text {
-            await paste(text, sendAfterPaste: request.sendAfterPaste, session: request.deliverySession, actions: actions)
+            let sendKey = request.sendAfterPaste ? FinishAndSendSettings.selectedKey : request.output.autoSendKey
+            await paste(text, sendKey: sendKey, session: request.deliverySession, actions: actions)
         } else {
             await actions.dismiss()
         }
@@ -190,7 +192,7 @@ final class TranscriptionDelivery {
     }
 
     private func paste(
-        _ text: String, sendAfterPaste: Bool, session: RecordingDeliverySession?, actions: Actions
+        _ text: String, sendKey: FinishAndSendKey, session: RecordingDeliverySession?, actions: Actions
     ) async {
         let appendSpace = UserDefaults.standard.bool(forKey: "AppendTrailingSpace")
         let pastedText = text + (appendSpace ? " " : "")
@@ -198,8 +200,7 @@ final class TranscriptionDelivery {
         await actions.dismiss()
         guard !Task.isCancelled, session?.isCancelled != true else { return }
 
-        let finishAndSendKey: FinishAndSendKey = sendAfterPaste ? FinishAndSendSettings.selectedKey : .none
-        let pasteTask = CursorPaster.startPasteAtCursor(pastedText, deliverySession: session, sendKey: finishAndSendKey)
+        let pasteTask = CursorPaster.startPasteAtCursor(pastedText, deliverySession: session, sendKey: sendKey)
         _ = await withTaskCancellationHandler {
             await pasteTask.value
         } onCancel: {

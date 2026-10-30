@@ -29,7 +29,6 @@ import XCTest
             XCTAssertEqual(resolution.deviceID, 2, "\(mode)")
             XCTAssertEqual(manager.getCurrentDevice(), 2, "\(mode)")
             XCTAssertTrue(resolution.internalMicrophoneBlockedByClosedLid, "\(mode)")
-            XCTAssertTrue(resolution.fellBackFromClosedInternalMicrophone, "\(mode)")
         }
     }
 
@@ -41,7 +40,6 @@ import XCTest
 
             XCTAssertEqual(resolution.deviceID, 1, "\(mode)")
             XCTAssertFalse(resolution.internalMicrophoneBlockedByClosedLid, "\(mode)")
-            XCTAssertFalse(resolution.fellBackFromClosedInternalMicrophone, "\(mode)")
         }
     }
 
@@ -129,7 +127,6 @@ import XCTest
         let resolution = manager.resolveCurrentRecordingDevice()
 
         XCTAssertEqual(resolution.deviceID, 3)
-        XCTAssertFalse(resolution.fellBackFromClosedInternalMicrophone)
         XCTAssertEqual(manager.systemDefaultDeviceID, 3)
     }
 

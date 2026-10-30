@@ -1,15 +1,6 @@
 {
-  "originHash" : "15c38058afe4ec7fe9d718e5c988a04a0d0f495adc1485cf989bdc8b7a560ab7",
+  "originHash" : "163750358c88af348c911c09427e0c8ba41e8670801b0d8bbca13a3d95abcdbf",
   "pins" : [
-    {
-      "identity" : "axswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tisfeng/AXSwift.git",
-      "state" : {
-        "revision" : "d737b605c99f6e0f6a21448d0836110bd15b7710",
-        "version" : "0.3.7"
-      }
-    },
     {
       "identity" : "eventsource",
       "kind" : "remoteSourceControl",
@@ -29,20 +20,11 @@
       }
     },
     {
-      "identity" : "keysender",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jordanbaird/KeySender",
-      "state" : {
-        "revision" : "99584bf1a03ab600cc44be89a2dcd98b2dbeb9de",
-        "version" : "0.0.5"
-      }
-    },
-    {
       "identity" : "llmkit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Beingpax/LLMkit.git",
       "state" : {
-        "revision" : "37100b22033674f183af0b6e18f81db071ea6320"
+        "revision" : "1fb15b5771e6faff94f4dbe5c48cf74b7e91a74b"
       }
     },
     {
@@ -78,15 +60,6 @@
       "state" : {
         "revision" : "2849f5323265386e200484b0d0f896e73c3411b9",
         "version" : "6.0.1"
-      }
-    },
-    {
-      "identity" : "selectedtextkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Beingpax/SelectedTextKit.git",
-      "state" : {
-        "branch" : "performance/off-main-menu-action",
-        "revision" : "05a3e5177300d800c2785be83ba2ba7fa775e41a"
       }
     },
     {
@@ -243,12 +216,12 @@
       }
     },
     {
-      "identity" : "zip",
+      "identity" : "zipfoundation",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/marmelroy/Zip",
+      "location" : "https://github.com/weichsel/ZIPFoundation.git",
       "state" : {
-        "revision" : "67fa55813b9e7b3b9acee9c0ae501def28746d76",
-        "version" : "2.1.2"
+        "revision" : "22787ffb59de99e5dc1fbfe80b19c97a904ad48d",
+        "version" : "0.9.20"
       }
     }
   ],

@@ -103,18 +103,22 @@ final class DictationShortcutTests: XCTestCase {
         var now: TimeInterval = 0
         var visible = false
         var toggles = 0
+        var held = false
         lazy var handler = RecordingShortcutModeHandler(
             canHandleShortcutAction: { true }, isRecorderVisible: { self.visible },
             recordingState: { self.visible ? .recording : .idle },
+            isShortcutHeld: { _ in self.held }, finishHeldRecording: {},
             toggleRecorderPanel: { _ in self.visible.toggle(); self.toggles += 1 },
             cancelRecording: { self.visible = false }, now: { self.now }
         )
         func down(at time: TimeInterval, mode: RecordingShortcutManager.Mode) async {
             now = time
+            held = true
             await handler.handleShortcutDown(action: .primaryRecording, eventTime: time, mode: mode)
         }
         func up(at time: TimeInterval, mode: RecordingShortcutManager.Mode) async {
             now = time
+            held = false
             await handler.handleShortcutUp(action: .primaryRecording, eventTime: time, mode: mode)
         }
     }

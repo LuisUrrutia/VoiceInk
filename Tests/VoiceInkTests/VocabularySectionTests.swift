@@ -353,6 +353,28 @@ final class VocabularySectionTests: XCTestCase {
             "Important Vocabulary:\nTech Stack — Use when discussing technologies: SwiftData, WebSocket"
         )
     }
+    func testRecordingVocabularyKeepsSectionGroupsInEnhancementPromptWithScreenNames() throws {
+        let schema = Schema([VocabularyWord.self, VocabularySection.self])
+        let configuration = ModelConfiguration("dictionary", schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        let context = ModelContext(container)
+        let section = VocabularySection(name: "Tech Stack", sectionDescription: "Use when discussing technologies")
+        context.insert(section)
+        context.insert(VocabularyWord(word: "WebSocket", sectionID: section.id))
+        context.insert(VocabularyWord(word: "Ana"))
+        try context.save()
+
+        let vocabulary = CustomVocabularyService.shared.loadSavedVocabulary(from: context)
+            .addingScreenNames(["Quarterly <Plan>"])
+
+        XCTAssertEqual(vocabulary.terms, ["Ana", "WebSocket", "Quarterly <Plan>"])
+        let prompt = vocabulary.enhancementSection
+        XCTAssertTrue(prompt.contains(
+            "Important Vocabulary:\nOther terms: Ana\nTech Stack — Use when discussing technologies: WebSocket"
+        ), prompt)
+        XCTAssertTrue(prompt.contains("Screen names: Quarterly &lt;Plan&gt;"), prompt)
+    }
+
     func testPromptEscapesDelimitersInNamesDescriptionsAndTerms() {
         let section = VocabularySection(
             name: "<Work>",

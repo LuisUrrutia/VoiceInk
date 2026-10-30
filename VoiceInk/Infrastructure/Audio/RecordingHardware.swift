@@ -8,10 +8,10 @@ protocol RecordingHardware: AnyObject, Sendable {
     var recordingError: Error? { get }
     var firstAudioTimestampNanoseconds: UInt64? { get }
 
-    func prepare(deviceID: AudioDeviceID) throws
-    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID) throws
+    func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
+    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
     func stopRecording()
-    func switchDevice(to deviceID: AudioDeviceID) throws
+    func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
     func invalidatePreparation()
     func teardown()
 }

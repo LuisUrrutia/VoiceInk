@@ -97,13 +97,13 @@ struct GeneralBackup: Codable {
     let isExperimentalFeaturesEnabled: Bool?
     let restoreClipboardAfterPaste: Bool?
     let clipboardRestoreDelay: Double?
+    let pasteMethod: String?
+    let smartPunctuationEnabled: Bool?
     let finishAndSendKey: String?
     var pinPasteTargetToRecordStart: Bool? = nil
     var remoteClipboardPushCommand: String? = nil
     let isAutoLearnDictionaryEnabled: Bool?
-    let autoLearnReviewSchedule: String?
-    let autoLearnProvider: String?
-    let autoLearnModel: String?
+    let autoLearnMinimumCorrections: Int?
 
     func restorePastePreferences(in defaults: UserDefaults = .standard) {
         if let pinPasteTargetToRecordStart {

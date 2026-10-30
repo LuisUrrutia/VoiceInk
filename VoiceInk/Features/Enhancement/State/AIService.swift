@@ -66,7 +66,7 @@ enum AIProvider: String, CaseIterable {
         case .gemini:
             return "gemini-3.8-flash"
         case .anthropic:
-            return "claude-sonnet-5"
+            return "claude-sonnet-5-5"
         case .openAI:
             return "gpt-6-luna"
         case .mistral:
@@ -120,8 +120,8 @@ enum AIProvider: String, CaseIterable {
             ]
         case .anthropic:
             return [
-                "claude-sonnet-5",
-                "claude-haiku-4-5",
+                "claude-sonnet-5-5",
+                "claude-haiku-5-5",
             ]
         case .openAI:
             return [
@@ -142,6 +142,7 @@ enum AIProvider: String, CaseIterable {
             return [
                 "mistral-small-latest",
                 "mistral-medium-latest",
+                "mistral-large-4",
                 "mistral-large-latest",
             ]
         case .elevenLabs:
@@ -249,7 +250,6 @@ class AIService: ObservableObject {
     private lazy var ollamaService = OllamaService()
     private lazy var localCLIService = LocalCLIService()
     private var apiKeyChangeObserver: NSObjectProtocol?
-    private var settingsChangeObserver: NSObjectProtocol?
     private var voiceInkRefineObserver: AnyCancellable?
 
     @Published private var openRouterModels: [String] = []
@@ -371,7 +371,6 @@ class AIService: ObservableObject {
 
         loadSavedModelSelections()
         loadSavedOpenRouterModels()
-        initializeAutoLearnSelectionIfNeeded()
 
         // Observe installation state without forwarding every progress update to the entire scene.
         voiceInkRefineObserver = voiceInkRefineService.$isDownloaded
@@ -388,10 +387,6 @@ class AIService: ObservableObject {
                         }
                     }
 
-                    if self.voiceInkRefineService.isAvailableInModes {
-                        self.initializeAutoLearnSelectionIfNeeded()
-                    }
-
                     self.objectWillChange.send()
                 }
             }
@@ -404,25 +399,13 @@ class AIService: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.reloadSelectedProviderConfiguration()
-                self.initializeAutoLearnSelectionIfNeeded()
             }
-        }
-
-        settingsChangeObserver = NotificationCenter.default.addObserver(
-            forName: .AppSettingsDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.initializeAutoLearnSelectionIfNeeded()
         }
     }
 
     deinit {
         if let apiKeyChangeObserver {
             NotificationCenter.default.removeObserver(apiKeyChangeObserver)
-        }
-        if let settingsChangeObserver {
-            NotificationCenter.default.removeObserver(settingsChangeObserver)
         }
         voiceInkRefineObserver?.cancel()
     }
@@ -458,37 +441,6 @@ class AIService: ObservableObject {
                 isAPIKeyValid = true
             }
         }
-    }
-
-    private func initializeAutoLearnSelectionIfNeeded() {
-        if let selectedProvider = AutoLearnSettings.selectedProvider,
-            AutoLearnProviderPolicy.isSupported(selectedProvider)
-        {
-            return
-        }
-
-        let availableProviders = connectedProviders.filter {
-            AutoLearnProviderPolicy.isSupported($0)
-                && ($0 != .ollama || !availableModels(for: $0).isEmpty)
-        }
-        let provider = availableProviders.contains(selectedProvider)
-            ? selectedProvider
-            : availableProviders.first
-        guard let provider else { return }
-
-        AutoLearnSettings.initializeSelectionIfNeeded(
-            provider: provider,
-            model: initialAutoLearnModel(for: provider)
-        )
-    }
-
-    private func initialAutoLearnModel(for provider: AIProvider) -> String {
-        let selectedModel = selectedModel(for: provider)
-        let availableModels = availableModels(for: provider)
-        return provider.supportsCustomModelID || availableModels.contains(selectedModel)
-            ? selectedModel
-            : (availableModels.contains(provider.defaultModel) ? provider.defaultModel : availableModels.first)
-                ?? selectedModel
     }
 
     private func loadSavedModelSelections() {
@@ -760,34 +712,24 @@ class AIService: ObservableObject {
         }
     }
 
-    func enhanceWithOllama(text: String, systemPrompt: String, model: String? = nil, timeout: TimeInterval = 30)
-        async throws -> String
-    {
-        try await ollamaService.enhance(text, withSystemPrompt: systemPrompt, model: model, timeout: timeout)
-    }
-
-    func enhanceWithVoiceInkRefine(transcript: String) async throws -> String {
-        try await voiceInkRefineService.enhance(transcript: transcript)
-    }
-
-    func reviewAutoLearnCandidates(
-        payload: String,
+    func enhanceWithOllama(
+        text: String,
         systemPrompt: String,
-        provider: AIProvider,
-        modelName: String?
+        model: String? = nil,
+        timeout: TimeInterval = 30,
+        retryOnTimeout: Bool = false
     ) async throws -> String {
-        guard AutoLearnProviderPolicy.isSupported(provider) else {
-            throw EnhancementError.notConfigured
-        }
+        try await ollamaService.enhance(
+            text,
+            withSystemPrompt: systemPrompt,
+            model: model,
+            timeout: timeout,
+            retryOnTimeout: retryOnTimeout
+        )
+    }
 
-        return try await performChatCompletion(
-            provider: provider,
-            modelName: modelName,
-            messages: [.user(payload)],
-            systemPrompt: systemPrompt,
-            localUserPrompt: payload,
-            timeout: EnhancementRequestSettings.timeout
-        ).text
+    func enhanceWithVoiceInkRefine(transcript: String, vocabulary: RecordingVocabulary) async throws -> String {
+        try await voiceInkRefineService.enhance(transcript: transcript, vocabulary: vocabulary)
     }
 
     func updateOllamaBaseURL(_ newURL: String) {

@@ -15,14 +15,13 @@ enum ConfigurationPreferences {
                 "PrewarmModelOnWake", "SkipShortEnhancement", "EnhancementRetryOnTimeout",
                 "IsAutoLearnDictionaryEnabled", "IsTranscriptionCleanupEnabled", "IsAudioCleanupEnabled",
                 "isExperimentalFeaturesEnabled", "useClipboardContext", "useSelectedTextContext",
-                "useScreenCaptureContext",
+                "useScreenCaptureContext", "SmartPunctuationEnabled", "IsAutomaticVocabularyCorrectionEnabled",
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",
                 "pasteMethod", "remoteClipboardPushCommand", "CurrentTranscriptionModel", "SelectedLanguage",
                 "selectedAIProvider", "selectedPromptId", "activeConfigurationId",
                 "ollamaBaseURL", "ollamaSelectedModel", "customProviderBaseURL", "customProviderModel",
-                "AutoLearnDictionaryProvider", "AutoLearnDictionaryModel", "AutoLearnDictionaryReviewSchedule",
                 "localCLICommandTemplate", "localCLISelectedTemplate",
                 "primaryRecordingShortcut", "secondaryRecordingShortcut",
                 "primaryRecordingShortcutMode", "secondaryRecordingShortcutMode",
@@ -35,11 +34,14 @@ enum ConfigurationPreferences {
             (.number, ["clipboardRestoreDelay", "audioResumptionDelay", "localCLITimeoutSeconds", "audioPlaybackRate"]),
             (.integer, [
                 "CloudTranscriptionTimeout", "ShortEnhancementWordThreshold", "EnhancementTimeoutSeconds",
-                "TranscriptionRetentionMinutes", "AudioRetentionPeriod",
+                "TranscriptionRetentionMinutes", "AudioRetentionPeriod", "AutoLearnDictionaryMinimumCorrections",
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
             (.stringMap, ["CustomLanguagePrompts"]),
-            (.json, ["modeConfigurationsV2", "customPrompts", "customCloudModels", "customAIProviders", "prioritizedDevices"]),
+            (.json, [
+                "modeConfigurationsV2", "customPrompts", "customCloudModels", "customAIProviders", "prioritizedDevices",
+                "audioInputChannelsByDeviceUID",
+            ]),
         ]
         for (kind, keys) in groups {
             for key in keys { result[key] = kind }
@@ -50,6 +52,11 @@ enum ConfigurationPreferences {
         }
         return result
     }()
+
+    /// Removed by Auto Learn's local review; older files stay valid. Values are ignored, never applied or captured.
+    private static let retiredKeys: Set<String> = [
+        "AutoLearnDictionaryProvider", "AutoLearnDictionaryModel", "AutoLearnDictionaryReviewSchedule",
+    ]
 
     private static func kind(for key: String) -> Kind? {
         if let kind = kinds[key] { return kind }
@@ -96,7 +103,7 @@ enum ConfigurationPreferences {
     }
 
     static func validate(_ values: [String: ConfigurationValue], defaults: UserDefaults? = nil) throws {
-        for (key, value) in values { try validate(value, key: key) }
+        for (key, value) in values where !retiredKeys.contains(key) { try validate(value, key: key) }
         let modes: [ModeConfig]
         if let value = values["modeConfigurationsV2"], value != .null {
             modes = try value.decoded(as: [ModeConfig].self)
@@ -177,6 +184,8 @@ enum ConfigurationPreferences {
                 try requireUnique(value.decoded(as: [CustomAIProviderConfig].self).map(\.id), key: key)
             case "prioritizedDevices":
                 try requireUnique(value.decoded(as: [PrioritizedDevice].self).map(\.id), key: key)
+            case "audioInputChannelsByDeviceUID":
+                _ = try value.decoded(as: [String: [UInt32]].self)
             default:
                 let shortcut = try value.decoded(as: Shortcut.self)
                 guard let action = shortcutAction(for: key),
@@ -194,7 +203,7 @@ enum ConfigurationPreferences {
     static func apply(_ values: [String: ConfigurationValue], to defaults: UserDefaults) throws {
         // Prepare every serialized value before changing any preference.
         let encoded = try values.mapValues { try $0.data() }
-        for (key, value) in values {
+        for (key, value) in values where !retiredKeys.contains(key) {
             if value == .null { defaults.removeObject(forKey: key) }
             else if kind(for: key) == .json { defaults.set(encoded[key], forKey: key) }
             else { defaults.set(value.propertyList, forKey: key) }

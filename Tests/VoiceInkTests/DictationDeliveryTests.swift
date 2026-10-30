@@ -104,7 +104,9 @@ final class DictationDeliveryTests: XCTestCase {
             if cancel { session.cancel() }
             let request = TranscriptionDelivery.Request(
                 transcription: Transcription(text: "fixture", duration: 1, transcriptionStatus: .completed),
-                text: nil, output: OutputRuntimeConfiguration(mode: nil, outputMode: .paste, customCommand: nil),
+                text: nil, output: OutputRuntimeConfiguration(
+                    mode: nil, outputMode: .paste, autoSendKey: .none, customCommand: nil
+                ),
                 responseConfig: nil, responseError: nil, isAssistantFollowUp: false, sendAfterPaste: false,
                 deliverySession: session
             )

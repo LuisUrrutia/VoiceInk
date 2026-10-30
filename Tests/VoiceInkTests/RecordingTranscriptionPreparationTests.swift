@@ -50,7 +50,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
             retireAutoLearn: { await autoLearnGate.wait(); retired = true },
             prepareModel: { _ in modelEntered.fulfill() },
             prepareSession: { configuration in
-                _ = try await session.prepare(configuration: configuration)
+                _ = try await session.prepare(configuration: configuration, vocabulary: RecordingVocabulary())
                 sessionEntered.fulfill()
                 return session
             }
@@ -199,7 +199,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
             resolveConfiguration: { self.makeConfiguration(realtime: true) }, retireAutoLearn: {},
             prepareModel: { _ in },
             prepareSession: { configuration in
-                _ = try await session.prepare(configuration: configuration)
+                _ = try await session.prepare(configuration: configuration, vocabulary: RecordingVocabulary())
                 return session
             }
         )
@@ -221,7 +221,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         XCTAssertGreaterThan(provider.disconnectCount, 0)
         XCTAssertTrue(fallback.requests.isEmpty)
         do {
-            _ = try await session.transcribe(audioURL: URL(fileURLWithPath: "/unused.wav"))
+            _ = try await session.transcribe(audioURL: URL(fileURLWithPath: "/unused.wav"), vocabulary: RecordingVocabulary())
             XCTFail("Canceled streaming must not enter batch fallback")
         } catch { XCTAssertTrue(error is CancellationError) }
     }
@@ -231,13 +231,13 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         let provider = HeldPreparationProvider(connectGate: connectGate)
         let fallback = PreparationFallback()
         let session = try makeStreamingSession(provider: provider, fallback: fallback)
-        let callback = try await session.prepare(configuration: makeConfiguration(realtime: true))
+        let callback = try await session.prepare(configuration: makeConfiguration(realtime: true), vocabulary: RecordingVocabulary())
         callback?(Data([1, 2]))
         await connectGate.waitUntilEntered()
         var stopped = false
 
         let stopping = Task {
-            let text = try await session.transcribe(audioURL: URL(fileURLWithPath: "/unused.wav"))
+            let text = try await session.transcribe(audioURL: URL(fileURLWithPath: "/unused.wav"), vocabulary: RecordingVocabulary())
             stopped = true
             return text
         }
@@ -260,11 +260,11 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         let fallback = PreparationFallback()
         let session = try makeStreamingSession(provider: provider, fallback: fallback)
         let configuration = makeConfiguration(languages: ["es", "en"], modelName: "ggml-medium", realtime: true)
-        _ = try await session.prepare(configuration: configuration)
+        _ = try await session.prepare(configuration: configuration, vocabulary: RecordingVocabulary())
         await connectGate.waitUntilEntered()
         let url = URL(fileURLWithPath: "/closed-recording.wav")
 
-        let stopping = Task { try await session.transcribe(audioURL: url) }
+        let stopping = Task { try await session.transcribe(audioURL: url, vocabulary: RecordingVocabulary()) }
         connectGate.open()
         let text = try await stopping.value
 
@@ -280,12 +280,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
     private func makeStreamingSession(
         provider: HeldPreparationProvider, fallback: PreparationFallback
     ) throws -> StreamingTranscriptionSession {
-        let container = try ModelContainer(
-            for: Transcription.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true)
-        )
-        let service = StreamingTranscriptionService(
-            modelContext: ModelContext(container), providerFactory: { _ in provider }
-        )
+        let service = StreamingTranscriptionService(providerFactory: { _ in provider })
         return StreamingTranscriptionSession(streamingService: service, fallbackService: fallback)
     }
 
@@ -378,7 +373,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
                 try await registry.prepareForRecording($0, recordingID: owner.recordingID, whisperModelManager: whisper)
             },
             prepareSession: {
-                _ = try await session.prepare(configuration: $0)
+                _ = try await session.prepare(configuration: $0, vocabulary: RecordingVocabulary())
                 return session
             },
             releaseResources: { await registry.releaseRecordingPreparation(recordingID: owner.recordingID, configuration: $0) }
@@ -536,11 +531,13 @@ private final class PreparationSession: TranscriptionSession {
     var configurations: [TranscriptionRuntimeConfiguration] = []
     var cancelCount = 0
 
-    func prepare(configuration: TranscriptionRuntimeConfiguration) async throws -> ((Data) -> Void)? {
+    func prepare(
+        configuration: TranscriptionRuntimeConfiguration, vocabulary: RecordingVocabulary
+    ) async throws -> ((Data) -> Void)? {
         configurations.append(configuration)
         return { _ in }
     }
-    func transcribe(audioURL: URL) async throws -> String { "Fixture transcription" }
+    func transcribe(audioURL: URL, vocabulary: RecordingVocabulary) async throws -> String { "Fixture transcription" }
     func cancel() { cancelCount += 1 }
 }
 

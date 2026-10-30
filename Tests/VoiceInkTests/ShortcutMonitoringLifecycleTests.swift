@@ -58,7 +58,7 @@ struct ShortcutMonitoringLifecycleTests {
             notificationCenter: notificationCenter,
             hasFinishedLaunching: false
         )
-        let monitor = ShortcutMonitor(createEventTap: { _, _ in nil })
+        let monitor = ShortcutMonitor(makeEventTap: { _, _ in throw ShortcutEventTapError.creationFailed })
         let modifiers = UInt32(controlKey | optionKey | cmdKey)
         let initialKeyCode = UInt16(kVK_F20)
         let latestKeyCode = UInt16(kVK_F17)

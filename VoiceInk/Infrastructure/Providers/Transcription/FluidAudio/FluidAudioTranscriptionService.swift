@@ -3,8 +3,16 @@ import Foundation
 import os.log
 
 class FluidAudioTranscriptionService: TranscriptionService {
+    @MainActor private(set) lazy var unifiedStreamingModels = UnifiedModelCache {
+        StreamingUnifiedAsrManager(
+            config: FluidAudioModelManager.parakeetUnifiedStreamingConfig,
+            encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision
+        )
+    }
+    @MainActor private lazy var unifiedBatchModels = UnifiedModelCache {
+        UnifiedAsrManager(encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision)
+    }
     private var asrManager: AsrManager?
-    private var unifiedAsrManager: UnifiedAsrManager?
     private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
     private let vadCache: FluidAudioVADCache
     private var activeVersion: AsrModelVersion?
@@ -37,6 +45,15 @@ class FluidAudioTranscriptionService: TranscriptionService {
         await vadCache.release(recordingID: recordingID)
     }
 
+    @MainActor
+    func prewarmUnifiedModel(isRealtime: Bool) async throws {
+        if isRealtime {
+            _ = try await unifiedStreamingModels.getOrLoad()
+        } else {
+            _ = try await unifiedBatchModels.getOrLoad()
+        }
+    }
+
     private func version(for model: any TranscriptionModel) -> AsrModelVersion {
         FluidAudioModelManager.asrVersion(for: model.name)
     }
@@ -48,12 +65,11 @@ class FluidAudioTranscriptionService: TranscriptionService {
         return FluidAudioModelManager.languageHint(from: selectedLanguage, for: model.name)
     }
 
+    // Unified managers retain their models independently of per-recording resources.
     private func cleanupLoadedManagers() async {
-        await unifiedAsrManager?.cleanup()
         await nemotronAsrManager?.cleanup()
         await asrManager?.cleanup()
 
-        unifiedAsrManager = nil
         nemotronAsrManager = nil
         asrManager = nil
         activeVersion = nil
@@ -74,18 +90,6 @@ class FluidAudioTranscriptionService: TranscriptionService {
         try await manager.loadModels(models)
         self.asrManager = manager
         self.activeVersion = version
-    }
-
-    private func ensureUnifiedModelsLoaded() async throws {
-        if unifiedAsrManager != nil {
-            return
-        }
-
-        await cleanupLoadedManagers()
-
-        let manager = UnifiedAsrManager(encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision)
-        try await manager.loadModels(from: FluidAudioModelManager.parakeetUnifiedCacheDirectory())
-        self.unifiedAsrManager = manager
     }
 
     private func ensureNemotronModelsLoaded(named modelName: String) async throws {
@@ -152,7 +156,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
         }
 
         if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
-            try await ensureUnifiedModelsLoaded()
+            try await prewarmUnifiedModel(isRealtime: false)
             return
         }
 
@@ -163,15 +167,11 @@ class FluidAudioTranscriptionService: TranscriptionService {
         -> String
     {
         if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
-            try await ensureUnifiedModelsLoaded()
-            guard let unifiedAsrManager else {
-                throw ASRError.notInitialized
+            return try await unifiedBatchModels.withModel { manager in
+                let samples = try await preparedSpeechAudio(from: audioURL)
+                try Task.checkCancellation()
+                return samples.isEmpty ? "" : try await manager.transcribe(samples)
             }
-
-            let speechAudio = try await preparedSpeechAudio(from: audioURL)
-            guard !speechAudio.isEmpty else { return "" }
-            let text = try await unifiedAsrManager.transcribe(speechAudio)
-            return text
         }
 
         if FluidAudioModelManager.isNemotronModel(named: model.name) {

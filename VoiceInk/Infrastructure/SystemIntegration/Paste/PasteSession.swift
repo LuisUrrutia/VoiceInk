@@ -8,13 +8,17 @@ struct PastePolicy: Equatable {
     static func resolve(for application: PasteApplication, preferredMethod: PasteMethod, pushedClipboard: Bool = false)
         -> PastePolicy
     {
-        let remote = application.bundleIdentifier == "com.apple.ScreenSharing"
-        let localSettleDelay: TimeInterval = preferredMethod == .standard ? 0.02 : 0.05
-        return PastePolicy(
-            method: remote ? .appleScript : preferredMethod,
-            settleDelay: remote ? (pushedClipboard ? 0.2 : 0.8) : localSettleDelay,
-            usesRemoteClipboard: remote
-        )
+        // Remote typing is meant for remote viewers, so it bypasses clipboard synchronization.
+        if application.bundleIdentifier == "com.apple.ScreenSharing", preferredMethod != .remoteTyping {
+            return PastePolicy(method: .appleScript, settleDelay: pushedClipboard ? 0.2 : 0.8, usesRemoteClipboard: true)
+        }
+        let settleDelay: TimeInterval
+        switch preferredMethod {
+        case .standard, .directTyping: settleDelay = 0.02
+        case .appleScript: settleDelay = 0.05
+        case .remoteTyping: settleDelay = 0.2
+        }
+        return PastePolicy(method: preferredMethod, settleDelay: settleDelay, usesRemoteClipboard: false)
     }
 }
 
@@ -27,6 +31,10 @@ final class PasteSession {
         var wait: (TimeInterval) async throws -> Void
         var pushClipboard: (String, String) async throws -> Void
         var postPaste: (PasteMethod, @escaping () -> Bool) async -> Bool
+        /// Typing methods return their result and an optional cause for the failure notification.
+        var typeText: (PasteMethod, String, FinishAndSendKey, @escaping () -> Bool) async
+            -> (result: CursorPaster.PasteResult, failure: String?) = { _, _, _, _ in (.commandNotPosted, nil) }
+        var adjustText: (String, PasteApplication, PasteMethod) async -> String = { text, _, _ in text }
         var autoLearn: (String, pid_t, Bool) async -> UInt64?
         var cancelAutoLearn: (UInt64) async -> Void
         var send: (FinishAndSendKey, PastePolicy) -> Void
@@ -44,6 +52,7 @@ final class PasteSession {
     private let environment: Environment
     private var ownership: ClipboardOwnership?
     private var pendingRemotePush: Task<Void, Error>?
+    private var latestRequest: UInt64 = 0
 
     init(pasteboard: NSPasteboard, environment: Environment) {
         self.pasteboard = pasteboard
@@ -74,26 +83,46 @@ final class PasteSession {
         let canceled = { Task.isCancelled || shouldCancel() }
         guard !canceled() else { return finish(.cancelled) }
 
-        let previousContents = ownership.flatMap { owns($0) ? $0.savedContents : nil } ?? snapshot()
-        let id = UUID().uuidString
-        guard ClipboardManager.setClipboard(text, transient: restoreClipboard, sessionID: id, on: pasteboard) else {
-            environment.reportFailure(String(localized: "Could not copy the transcription to the clipboard."))
-            return finish(.commandNotPosted)
+        latestRequest &+= 1
+        let request = latestRequest
+        var owner: ClipboardOwnership?
+        func takeClipboard(_ value: String) -> Bool {
+            let previousContents = ownership.flatMap { owns($0) ? $0.savedContents : nil } ?? snapshot()
+            let id = UUID().uuidString
+            guard ClipboardManager.setClipboard(value, transient: restoreClipboard, sessionID: id, on: pasteboard) else {
+                return false
+            }
+            let newOwner = ClipboardOwnership(id: id, changeCount: pasteboard.changeCount, savedContents: previousContents)
+            owner = newOwner
+            ownership = newOwner
+            return true
         }
-        let owner = ClipboardOwnership(id: id, changeCount: pasteboard.changeCount, savedContents: previousContents)
-        ownership = owner
+        let copyFailure = String(localized: "Could not copy the transcription to the clipboard.")
+        if preferredMethod.usesClipboard {
+            guard takeClipboard(text) else {
+                environment.reportFailure(copyFailure)
+                return finish(.commandNotPosted)
+            }
+        }
         let supersededPush = pendingRemotePush
         supersededPush?.cancel()
 
-        func mayContinue() -> Bool { !canceled() && owns(owner) }
-        func fail(_ result: CursorPaster.PasteResult) -> CursorPaster.PasteOutcome {
-            if owns(owner) {
+        func mayContinue() -> Bool {
+            !canceled() && request == latestRequest && (owner.map { owns($0) } ?? true)
+        }
+        func fail(_ result: CursorPaster.PasteResult, cause: String? = nil) -> CursorPaster.PasteOutcome {
+            if let owner {
+                if owns(owner) {
+                    ClipboardManager.setClipboard(text, on: pasteboard)
+                    ownership = nil
+                }
+            } else if result != .cancelled {
+                // Typing leaves the clipboard untouched, so failures need the same recovery copy.
                 ClipboardManager.setClipboard(text, on: pasteboard)
-                ownership = nil
             }
             if result != .cancelled {
                 environment.reportFailure(
-                    String(localized: "Could not paste into the destination application. The transcription is on the clipboard.")
+                    cause ?? String(localized: "Could not paste into the destination application. The transcription is on the clipboard.")
                 )
             }
             return finish(result)
@@ -131,19 +160,29 @@ final class PasteSession {
             timing?.mark(.destinationReady)
 
             var policy = PastePolicy.resolve(for: target, preferredMethod: preferredMethod)
+            if policy.method.usesClipboard, owner == nil {
+                // Screen Sharing replaces a typing preference with clipboard delivery.
+                guard takeClipboard(text) else { return fail(.commandNotPosted, cause: copyFailure) }
+            }
+            let deliveredText = await environment.adjustText(text, target, policy.method)
+            guard mayContinue() else { return fail(.cancelled) }
+            if deliveredText != text, owner != nil {
+                guard takeClipboard(deliveredText) else { return fail(.commandNotPosted, cause: copyFailure) }
+            }
+
             if policy.usesRemoteClipboard,
                 let command = remotePushCommand?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !command.isEmpty
             {
                 do {
-                    let push = Task { try await environment.pushClipboard(command, text) }
+                    let push = Task { try await environment.pushClipboard(command, deliveredText) }
                     pendingRemotePush = push
                     try await withTaskCancellationHandler {
                         try await push.value
                     } onCancel: {
                         push.cancel()
                     }
-                    if owns(owner) { pendingRemotePush = nil }
+                    if mayContinue() { pendingRemotePush = nil }
                     policy = PastePolicy.resolve(for: target, preferredMethod: preferredMethod, pushedClipboard: true)
                 } catch is CancellationError {
                     return fail(.cancelled)
@@ -161,11 +200,20 @@ final class PasteSession {
             }
             guard canPost() else { return fail(.targetUnavailable) }
             timing?.mark(.clipboardSettled)
-            let posted = await environment.postPaste(policy.method, canPost)
-            guard posted else { return fail(canceled() ? .cancelled : .commandNotPosted) }
+            if policy.method.usesClipboard {
+                let posted = await environment.postPaste(policy.method, canPost)
+                guard posted else { return fail(canceled() ? .cancelled : .commandNotPosted) }
+            } else {
+                let typed = await environment.typeText(policy.method, deliveredText, sendKey, canPost)
+                guard typed.result == .commandPosted else {
+                    // Partial typing is always reported because part of the text may have been inserted.
+                    let interrupted = typed.result == .commandNotPosted && !mayContinue()
+                    return fail(interrupted ? .cancelled : typed.result, cause: typed.failure)
+                }
+            }
             timing?.mark(.pasteCommandPosted)
 
-            let generation = await environment.autoLearn(text, target.processID, posted)
+            let generation = await environment.autoLearn(deliveredText, target.processID, true)
             if sendKey.isEnabled {
                 try await environment.wait(0.15)
                 if canPost() {
@@ -173,11 +221,11 @@ final class PasteSession {
                     if canPost() { environment.send(sendKey, policy) }
                 }
             }
-            if restoreClipboard { scheduleRestore(owner, delay: restoreDelay) }
+            if restoreClipboard, let owner { scheduleRestore(owner, delay: restoreDelay) }
             unreachedOutcome = .skipped
             return CursorPaster.PasteOutcome(result: .commandPosted, autoLearnGeneration: generation, target: target)
         } catch {
-            if restoreClipboard { scheduleRestore(owner, delay: restoreDelay) }
+            if restoreClipboard, let owner { scheduleRestore(owner, delay: restoreDelay) }
             return finish(.cancelled)
         }
     }
@@ -199,7 +247,7 @@ final class PasteSession {
 
     private func scheduleRestore(_ owner: ClipboardOwnership, delay: TimeInterval) {
         Task { @MainActor in
-            do { try await environment.wait(max(delay, 0.25)) } catch { return }
+            do { try await environment.wait(min(max(delay, 0.25), 5)) } catch { return }
             guard owns(owner) else { return }
             pasteboard.clearContents()
             let items = owner.savedContents.map { contents in

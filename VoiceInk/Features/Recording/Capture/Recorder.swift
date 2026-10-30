@@ -11,6 +11,7 @@ class Recorder: NSObject, ObservableObject {
     let deviceManager: AudioDeviceManager
     private var lifecycleCancellable: AnyCancellable?
     var recordingDeviceChangeObserver: NSObjectProtocol?
+    var recordingDeviceNotificationTask: Task<Void, Never>?
     private let mediaController = MediaController.shared
     private let playbackController = PlaybackController.shared
     /// Dedicated serial queue for hardware setup.
@@ -38,6 +39,7 @@ class Recorder: NSObject, ObservableObject {
     enum RecorderError: Error {
         case couldNotStartRecording
         case noUsableMicrophone(internalMicrophoneBlockedByClosedLid: Bool)
+        case audioSystemNotRunning
     }
 
     init(hardware: (any RecordingHardware)? = nil, deviceManager: AudioDeviceManager = .shared) {
@@ -63,7 +65,7 @@ class Recorder: NSObject, ObservableObject {
         await recordingFinalization.waitUntilFinished()
         try Task.checkCancellation()
         recordingError = nil
-        var resolution = deviceManager.resolveCurrentRecordingDevice()
+        let resolution = deviceManager.resolveCurrentRecordingDevice()
         guard var deviceID = resolution.deviceID else {
             onAudioChunk = nil
             throw RecorderError.noUsableMicrophone(
@@ -103,15 +105,13 @@ class Recorder: NSObject, ObservableObject {
                 }
 
                 deviceID = fallbackDeviceID
-                resolution = retryResolution
                 deviceManager.beginRecordingSetup(deviceID: fallbackDeviceID)
                 try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: fallbackDeviceID)
             }
 
             guard recordingStartID == playbackSessionID else { throw CancellationError() }
             deviceManager.recordingDidStart(deviceID: deviceID)
-            showRecordingDeviceNotification(for: deviceID, resolution: resolution)
-            UserDefaults.standard.set(String(deviceID), forKey: "lastUsedMicrophoneDeviceID")
+            showRecordingDeviceNotification(for: deviceID)
             resetAudioMeter()
         } catch {
             guard recordingStartID == playbackSessionID else { throw CancellationError() }
@@ -119,6 +119,9 @@ class Recorder: NSObject, ObservableObject {
                 "Failed to start recording deviceID=\(deviceID, privacy: .public) file=\(url.lastPathComponent, privacy: .public) error=\(error, privacy: .public)"
             )
             await stopRecording()
+            if (error as? CoreAudioRecorderError)?.status == kAudioHardwareNotRunningError {
+                throw RecorderError.audioSystemNotRunning
+            }
             throw error
         }
     }
@@ -130,6 +133,8 @@ class Recorder: NSObject, ObservableObject {
         }
         defer { recordingFinalization.finish(finalizationID) }
 
+        recordingDeviceNotificationTask?.cancel()
+        recordingDeviceNotificationTask = nil
         guard !hasStoppedRecording else { return }
         hasStoppedRecording = true
         recordingStartID = nil
@@ -196,9 +201,10 @@ class Recorder: NSObject, ObservableObject {
         coreAudioRecorder.onAudioChunk = onAudioChunk
         recorder = coreAudioRecorder
 
+        let selectedChannels = deviceManager.selectedInputChannels(for: deviceID)
         audioSetupQueue.async { [logger] in
             do {
-                try coreAudioRecorder.prepare(deviceID: deviceID)
+                try coreAudioRecorder.prepare(deviceID: deviceID, selectedInputChannels: selectedChannels)
             } catch {
                 logger.warning(
                     "Recorder prepare failed reason=\(reason, privacy: .public) deviceID=\(deviceID, privacy: .public) error=\(error, privacy: .public)"
@@ -268,6 +274,7 @@ class Recorder: NSObject, ObservableObject {
     // MARK: - Cleanup
 
     deinit {
+        recordingDeviceNotificationTask?.cancel()
         audioMuteTask?.cancel()
         mediaPauseTask?.cancel()
         audioRestorationTask?.cancel()
