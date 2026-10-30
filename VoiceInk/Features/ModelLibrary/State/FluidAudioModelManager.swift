@@ -39,7 +39,11 @@ class FluidAudioModelManager: ObservableObject {
         case parakeet(AsrModelVersion)
         case parakeetUnified
         case nemotron(NemotronVariant)
+        case vocabularyCTC
     }
+
+    /// Download identity of the CTC model used by Parakeet vocabulary boosting; not a catalog model.
+    nonisolated static let vocabularyBoostModelName = "parakeet-ctc-110m"
 
     nonisolated static func asrVersion(for modelName: String) -> AsrModelVersion {
         modelVersionMap[modelName] ?? .v3
@@ -104,6 +108,10 @@ class FluidAudioModelManager: ObservableObject {
     }
 
     nonisolated private static func modelKind(for modelName: String) -> FluidAudioModelKind {
+        if modelName == vocabularyBoostModelName {
+            return .vocabularyCTC
+        }
+
         if let nemotronVariant = NemotronVariant(modelName: modelName) {
             return .nemotron(nemotronVariant)
         }
@@ -168,6 +176,8 @@ class FluidAudioModelManager: ObservableObject {
         case .parakeet(let version):
             return AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: version), version: version)
                 && Self.vadModelFilesExist()
+        case .vocabularyCTC:
+            return ParakeetCTCModel.isInstalled()
         }
     }
 
@@ -176,34 +186,49 @@ class FluidAudioModelManager: ObservableObject {
     }
 
     func isFluidAudioModelDownloading(_ model: FluidAudioModel) -> Bool {
-        downloadStatuses[model.name] != nil
+        isModelDownloading(named: model.name)
+    }
+
+    func isModelDownloading(named modelName: String) -> Bool {
+        downloadStatuses[modelName] != nil
     }
 
     func downloadStatus(for model: FluidAudioModel) -> FluidAudioDownloadStatus? {
-        downloadStatuses[model.name]
+        downloadStatus(named: model.name)
+    }
+
+    func downloadStatus(named modelName: String) -> FluidAudioDownloadStatus? {
+        downloadStatuses[modelName]
     }
 
     // MARK: - Download
 
     func startDownload(_ model: FluidAudioModel) {
-        guard activeDownloadTasks[model.name] == nil else { return }
-        activeDownloadTasks[model.name] = Task { [weak self] in
+        startDownload(named: model.name)
+    }
+
+    func startDownload(named modelName: String) {
+        guard activeDownloadTasks[modelName] == nil else { return }
+        activeDownloadTasks[modelName] = Task { [weak self] in
             guard let self else { return }
-            await self.downloadFluidAudioModel(model)
-            self.activeDownloadTasks[model.name] = nil
+            await self.downloadFluidAudioModel(named: modelName)
+            self.activeDownloadTasks[modelName] = nil
         }
     }
 
     func cancelDownload(_ model: FluidAudioModel) {
-        activeDownloadTasks[model.name]?.cancel()
+        cancelDownload(named: model.name)
     }
 
-    private func downloadFluidAudioModel(_ model: FluidAudioModel) async {
-        if isFluidAudioModelDownloaded(model) || isFluidAudioModelDownloading(model) {
+    func cancelDownload(named modelName: String) {
+        activeDownloadTasks[modelName]?.cancel()
+    }
+
+    private func downloadFluidAudioModel(named modelName: String) async {
+        if isFluidAudioModelDownloaded(named: modelName) || isModelDownloading(named: modelName) {
             return
         }
 
-        let modelName = model.name
         let downloadID = UUID()
         activeDownloadIDs[modelName] = downloadID
         activeNetworkProgressIDs[modelName] = downloadID
@@ -300,13 +325,25 @@ class FluidAudioModelManager: ObservableObject {
                 try Task.checkCancellation()
                 _ = try await VadManager()
                 try Task.checkCancellation()
+            case .vocabularyCTC:
+                let directory = ParakeetCTCModel.defaultDirectory
+                try await ModelHub.download(
+                    ParakeetCTCModel.variant.repo,
+                    to: directory.deletingLastPathComponent(),
+                    progressHandler: Self.downloadOnlyProgressHandler(forwarding: progressHandler)
+                )
+                preserveModelFiles = true
+                try Task.checkCancellation()
+                beginModelPreparation(for: modelName, downloadID: downloadID)
+                _ = try await ParakeetCTCModel.load(from: directory)
+                try Task.checkCancellation()
             }
             try Task.checkCancellation()
             modelStateRevision += 1
         } catch {
             if error is CancellationError || Task.isCancelled {
                 if !preserveModelFiles {
-                    try? FileManager.default.removeItem(at: cacheDirectory(for: model))
+                    try? FileManager.default.removeItem(at: cacheDirectory(for: modelName))
                 }
                 modelStateRevision += 1
             } else {
@@ -356,7 +393,11 @@ class FluidAudioModelManager: ObservableObject {
     // MARK: - Delete
 
     func deleteFluidAudioModel(_ model: FluidAudioModel) {
-        let cacheDirectory = cacheDirectory(for: model)
+        deleteModel(named: model.name)
+    }
+
+    func deleteModel(named modelName: String) {
+        let cacheDirectory = cacheDirectory(for: modelName)
 
         do {
             if FileManager.default.fileExists(atPath: cacheDirectory.path) {
@@ -368,7 +409,7 @@ class FluidAudioModelManager: ObservableObject {
 
         // Notify TranscriptionModelManager to clear currentTranscriptionModel if it matches
         modelStateRevision += 1
-        onModelDeleted?(model.name)
+        onModelDeleted?(modelName)
     }
 
     // MARK: - Finder
@@ -395,6 +436,8 @@ class FluidAudioModelManager: ObservableObject {
             return Self.parakeetUnifiedCacheDirectory()
         case .parakeet(let version):
             return cacheDirectory(for: version)
+        case .vocabularyCTC:
+            return ParakeetCTCModel.defaultDirectory
         }
     }
 

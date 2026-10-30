@@ -17,7 +17,8 @@ class TranscriptionServiceRegistry {
     private(set) lazy var cloudTranscriptionService = CloudTranscriptionService(modelContext: modelContext)
     private(set) lazy var nativeAppleTranscriptionService = NativeAppleTranscriptionService()
     private let providedFluidAudioService: FluidAudioTranscriptionService?
-    private(set) lazy var fluidAudioTranscriptionService = providedFluidAudioService ?? FluidAudioTranscriptionService()
+    private(set) lazy var fluidAudioTranscriptionService = providedFluidAudioService
+        ?? FluidAudioTranscriptionService(vocabularyBoost: .dictionary(in: modelContext))
     private var cachedTranscribeCppTranscriptionService: TranscribeCppTranscriptionService?
 
     var transcribeCppTranscriptionService: TranscribeCppTranscriptionService {
@@ -109,6 +110,10 @@ class TranscriptionServiceRegistry {
         try Task.checkCancellation()
         if model.provider == .fluidAudio {
             _ = try await fluidAudioTranscriptionService.prepareVAD(recordingID: recordingID, model: model)
+        }
+        if model.provider == .fluidAudio, !configuration.isRealtimeEnabled {
+            // Realtime loads the CTC model lazily if it falls back to batch transcription.
+            await fluidAudioTranscriptionService.prepareVocabularyBoost(for: model)
         }
     }
 
