@@ -9,6 +9,7 @@ class CursorPaster {
     enum PasteResult: Equatable {
         case commandPosted
         case commandNotPosted
+        case commandPartiallyPosted
         case targetUnavailable
         case cancelled
 
@@ -22,6 +23,9 @@ class CursorPaster {
     }
 
     private static let pasteShortcutEventDelay: TimeInterval = 0.01
+    // Smart punctuation reads the focused field, which needs settled focus.
+    private static let smartPunctuationFocusDelay: TimeInterval = 0.20
+    private static let textContextReader = PasteTextContextReader()
 
     @MainActor private static let session = PasteSession(
         pasteboard: .general,
@@ -38,8 +42,25 @@ class CursorPaster {
             },
             postPaste: { method, canPost in
                 guard canPost() else { return false }
-                if method == .appleScript { return pasteUsingAppleScript() }
-                return await pasteFromClipboard(canPost: canPost).didPostPasteCommand
+                return await deliverWithDiagnostics(method) { sessionID in
+                    if method == .appleScript {
+                        return pasteUsingAppleScript(sessionID: sessionID) ? .commandPosted : .commandNotPosted
+                    }
+                    return await pasteFromClipboard(sessionID: sessionID, canPost: canPost)
+                }.didPostPasteCommand
+            },
+            typeText: { method, text, sendKey, canPost in
+                guard canPost() else { return (.commandNotPosted, nil) }
+                var failure: String?
+                let result = await deliverWithDiagnostics(method) { _ in
+                    let typed = await typeText(text, method: method, sendKey: sendKey, canContinue: canPost)
+                    failure = typed.failure
+                    return typed.result
+                }
+                return (result, failure)
+            },
+            adjustText: { text, target, method in
+                await adjustedText(text, target: target, method: method)
             },
             autoLearn: { text, processID, posted in
                 guard AutoLearnSettings.isEnabled else { return nil }
@@ -85,6 +106,84 @@ class CursorPaster {
         return task
     }
 
+    /// Text for the resolved destination; the saved transcript stays unchanged.
+    @MainActor
+    private static func adjustedText(_ text: String, target: PasteApplication, method: PasteMethod) async -> String {
+        var result = method.usesClipboard ? text : DirectTextTyper.normalizedText(text)
+        if UserDefaults.standard.bool(forKey: SmartPunctuation.settingsKey) {
+            await wait(smartPunctuationFocusDelay)
+            if let snapshot = await textContextReader.read(processID: target.processID) {
+                let adjusted = SmartPunctuation.adjusted(result, context: snapshot.context)
+                if adjusted != result {
+                    let current = await textContextReader.read(processID: target.processID)
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processID,
+                        PasteTextContextReader.matches(snapshot, current) {
+                        result = adjusted
+                    }
+                }
+            }
+        }
+        if method == .remoteTyping, let prepared = RemoteTextTyper.textForTyping(result) {
+            // Auto Learn should observe what was actually typed.
+            result = prepared
+        }
+        return result
+    }
+
+    @MainActor
+    private static func deliverWithDiagnostics(
+        _ method: PasteMethod, _ deliver: (String) async -> PasteResult
+    ) async -> PasteResult {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let sessionID = UUID().uuidString
+        let application = NSWorkspace.shared.frontmostApplication
+        let appIdentifier = application?.bundleIdentifier ?? "unknown"
+        let focusDiagnostics = PasteFocusDiagnostics(sessionID: sessionID)
+        focusDiagnostics.captureAroundPaste(processID: application?.processIdentifier, appIdentifier: appIdentifier)
+        let result = await deliver(sessionID)
+        focusDiagnostics.captureAfterPaste(
+            commandPosted: result.didPostPasteCommand,
+            commandProcessID: application?.processIdentifier
+        )
+        logger.notice(
+            "Paste id=\(sessionID, privacy: .public) app=\(appIdentifier, privacy: .public) method=\(method.rawValue, privacy: .public) commandPosted=\(result.didPostPasteCommand, privacy: .public) elapsedMs=\(elapsedMilliseconds(since: startedAt), privacy: .public)"
+        )
+        return result
+    }
+
+    @MainActor
+    private static func typeText(
+        _ text: String, method: PasteMethod, sendKey: FinishAndSendKey, canContinue: () -> Bool
+    ) async -> (result: PasteResult, failure: String?) {
+        switch method {
+        case .remoteTyping:
+            switch await RemoteTextTyper.type(text, sendKey: sendKey, canContinue: canContinue) {
+            case .posted:
+                return (.commandPosted, nil)
+            case .notPosted:
+                let failure = text.isEmpty
+                    ? nil : String(localized: "Remote typing could not start. Check Accessibility access and keyboard layout.")
+                return (.commandNotPosted, failure)
+            case .unsupportedCharacters:
+                return (.commandNotPosted, String(localized: "Remote typing could not find any characters it can type."))
+            case .partiallyPosted:
+                return (
+                    .commandPartiallyPosted,
+                    String(localized: "Remote typing was interrupted. Check the destination before retrying.")
+                )
+            }
+        case .directTyping:
+            // Never retry partial typing: a retry could duplicate text.
+            switch await DirectTextTyper.type(text, canContinue: canContinue) {
+            case .posted: return (.commandPosted, nil)
+            case .notPosted: return (.commandNotPosted, nil)
+            case .partiallyPosted: return (.commandPartiallyPosted, nil)
+            }
+        case .standard, .appleScript:
+            return (.commandNotPosted, nil)
+        }
+    }
+
     // MARK: - AppleScript paste
 
     // "X – QWERTY ⌘" layouts remap to QWERTY when Command is held, so keystroke "v" resolves
@@ -109,16 +208,16 @@ class CursorPaster {
     }
 
     @MainActor
-    private static func pasteUsingAppleScript() -> Bool {
+    private static func pasteUsingAppleScript(sessionID: String) -> Bool {
         guard let script = layoutSwitchesToQWERTYOnCommand ? pasteScriptKeyCode : pasteScriptKeystroke else {
-            logger.error("AppleScript paste script is unavailable")
+            logger.error("AppleScript paste script is unavailable id=\(sessionID, privacy: .public)")
             return false
         }
 
         var error: NSDictionary?
         script.executeAndReturnError(&error)
         if let error {
-            logger.error("AppleScript paste failed: \(String(describing: error), privacy: .public)")
+            logger.error("AppleScript paste failed id=\(sessionID, privacy: .public): \(String(describing: error), privacy: .public)")
         }
         return error == nil
     }
@@ -127,9 +226,9 @@ class CursorPaster {
 
     // Posts Cmd+V via CGEvent without modifying the active input source.
     @MainActor
-    private static func pasteFromClipboard(canPost: () -> Bool) async -> PasteResult {
+    private static func pasteFromClipboard(sessionID: String, canPost: () -> Bool) async -> PasteResult {
         guard AXIsProcessTrusted() else {
-            logger.error("Accessibility permission is required to paste with simulated key events")
+            logger.error("Accessibility permission is required to paste with simulated key events id=\(sessionID, privacy: .public)")
             return .commandNotPosted
         }
 
@@ -140,13 +239,14 @@ class CursorPaster {
             let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false),
             let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
         else {
-            logger.error("Failed to create Cmd+V keyboard events")
+            logger.error("Failed to create Cmd+V keyboard events id=\(sessionID, privacy: .public)")
             return .commandNotPosted
         }
 
         cmdDown.flags = .maskCommand
         vDown.flags = .maskCommand
         vUp.flags = .maskCommand
+        cmdUp.flags = []
 
         guard canPost() else { return .commandNotPosted }
         cmdDown.post(tap: .cghidEventTap)
@@ -159,6 +259,10 @@ class CursorPaster {
         await wait(pasteShortcutEventDelay)
 
         return .commandPosted
+    }
+
+    private static func elapsedMilliseconds(since start: TimeInterval) -> Int {
+        Int((ProcessInfo.processInfo.systemUptime - start) * 1_000)
     }
 
     private static func wait(_ seconds: TimeInterval) async {

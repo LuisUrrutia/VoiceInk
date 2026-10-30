@@ -7,11 +7,15 @@ final class RecordingAudioWriter {
     private var converter: ContinuousAudioConverter
     var onAudioChunk: ((Data) -> Void)?
     private(set) var failure: Error?
+    private var writtenFrameCount = 0
+
+    var writtenDuration: TimeInterval { Double(writtenFrameCount) / Self.outputSampleRate }
+    private static let outputSampleRate: Double = 16_000
 
     init(url: URL, sampleRate: Double, channelCount: UInt32) throws {
         converter = try ContinuousAudioConverter(sampleRate: sampleRate, channelCount: channelCount)
         var format = AudioStreamBasicDescription(
-            mSampleRate: 16_000,
+            mSampleRate: Self.outputSampleRate,
             mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
             mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
@@ -88,6 +92,7 @@ final class RecordingAudioWriter {
             return ExtAudioFileWrite(file, UInt32(bytes.count / MemoryLayout<Int16>.size), &buffers)
         }
         guard status == noErr else { throw RecordingAudioError.fileOperation("write", status) }
+        writtenFrameCount += data.count / MemoryLayout<Int16>.size
         onAudioChunk?(data)
     }
 }

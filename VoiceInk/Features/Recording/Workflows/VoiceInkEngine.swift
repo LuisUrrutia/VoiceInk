@@ -93,7 +93,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
     }
 
-    @Published var recordingState: RecordingState = .idle
+    @Published var recordingState: RecordingState = .idle {
+        didSet {
+            guard oldValue != recordingState else { return }
+            ShortcutDiagnostics.notice("recording-state old=\(oldValue) new=\(recordingState) visible=\(recorderUIManager?.isRecorderPanelVisible ?? false) startID=\(activeRecordingStartID?.uuidString ?? "none")")
+        }
+    }
     @Published var shouldCancelRecording = false
     @Published var partialTranscript: String = ""
     @Published private(set) var recordingError: String?
@@ -114,7 +119,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
     private var activeRecordingDelivery: RecordingDeliverySession?
     private var activePipelineDelivery: RecordingDeliverySession?
-    private var activeRecordingStartID: UUID?
+    private(set) var activeRecordingStartID: UUID?
     var activeRecordingPreparation: RecordingTranscriptionPreparation?
     private var activePipelinePreparation: RecordingTranscriptionPreparation?
     private let recordingFinalization = RecordingFinalization()
@@ -281,7 +286,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     await runPipeline(
                         on: transcription,
                         audioURL: recordedFile,
-                        contextStore: context?.store,
+                        context: context,
                         deliverySession: delivery,
                         preparation: preparation,
                         sendAfterPaste: sendAfterPaste
@@ -378,7 +383,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
                 self.recordingState = .recording
                 preparation.timing.mark(.audioStarted)
-                self.startRecordingContextCapture(recordingID: startID)
+                let contextStore = self.startRecordingContextCapture(recordingID: startID)
                 preparation.timing.mark(.contextStarted)
 
                 let registry = self.serviceRegistry
@@ -386,7 +391,13 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 let whisper = self.whisperModelManager
                 preparation.start(
                     resolveConfiguration: {
-                        ModeRuntimeResolver.transcriptionConfiguration(transcriptionModelManager: models)
+                        let configuration = ModeRuntimeResolver.transcriptionConfiguration(
+                            transcriptionModelManager: models
+                        )
+                        contextStore.resolveRecognitionLanguage(
+                            configuration.map { TranscriptionLanguageSupport.recognitionLanguage(for: $0.languages) }
+                        )
+                        return configuration
                     },
                     retireAutoLearn: {
                         if AutoLearnSettings.isEnabled {
@@ -415,7 +426,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
                             }
                         )
                         do {
-                            let callback = try await session.prepare(configuration: configuration)
+                            let callback = try await session.prepare(
+                                configuration: configuration,
+                                vocabulary: contextStore.vocabularyPreparation.current
+                            )
                             try Task.checkCancellation()
                             if let callback {
                                 let dropped = realtimeAudioGate.activate(callback)
@@ -599,8 +613,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     // MARK: - Recording Context
 
-    private func startRecordingContextCapture(recordingID: UUID) {
-        recordingContextCapture.start(recordingID: recordingID)
+    private func startRecordingContextCapture(recordingID: UUID) -> RecordingContextSnapshotStore {
+        recordingContextCapture.start(
+            recordingID: recordingID,
+            savedVocabulary: CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
+        )
     }
 
     private func clearActiveRecordingContext(recordingID: UUID? = nil) {
@@ -617,7 +634,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private func runPipeline(
         on transcription: Transcription,
         audioURL: URL,
-        contextStore: RecordingContextSnapshotStore?,
+        context: RecordingContextCapture.Session?,
         deliverySession: RecordingDeliverySession?,
         preparation: RecordingTranscriptionPreparation?,
         sendAfterPaste: Bool
@@ -654,6 +671,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return
         }
 
+        let vocabularyPreparation = context?.store.vocabularyPreparation ?? RecordingVocabularyPreparation(
+            savedVocabulary: CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
+        )
+
         await pipeline.run(
             transcription: transcription,
             audioURL: audioURL,
@@ -677,10 +698,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     aiService: aiService
                 )
             },
+            vocabularyPreparation: vocabularyPreparation,
             recordingContextSnapshot: {
-                await MainActor.run {
-                    contextStore?.snapshot
-                }
+                context?.store.snapshot
+            },
+            cancelContextCapture: {
+                context?.cancelCapture()
             },
             outputConfiguration: {
                 ModeRuntimeResolver.outputConfiguration()
@@ -1023,9 +1046,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let preparationTask = voiceInkRefinePreparationTask
         voiceInkRefinePreparationTask = nil
         preparationTask?.cancel()
-        await preparationTask?.value
-
         enhancementService?.clearCapturedContexts()
+
+        await preparationTask?.value
         await enhancementService?
             .getAIService()?
             .voiceInkRefineService

@@ -99,6 +99,10 @@ struct AudioSetupView: View {
                 .labelsHidden()
             }
             .pickerStyle(.menu)
+
+            if let deviceID = audioDeviceManager.resolveCurrentRecordingDevice().deviceID {
+                AudioInputChannelsView(deviceID: deviceID)
+            }
         }
 
         Button {
@@ -181,69 +185,75 @@ struct AudioSetupView: View {
         let isActive = device.map { audioDeviceManager.getCurrentDevice() == $0.id } ?? false
         let unmet = audioDeviceManager.unmetMicrophoneRequirements(for: prioritizedDevice)
 
-        return HStack(spacing: 8) {
-            Text("\(prioritizedDevice.priority + 1)")
-                .font(.body.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 22, alignment: .leading)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("\(prioritizedDevice.priority + 1)")
+                    .font(.body.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(prioritizedDevice.name)
-                    .foregroundStyle(isAvailable ? .primary : .secondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(prioritizedDevice.name)
+                        .foregroundStyle(isAvailable ? .primary : .secondary)
+                        .lineLimit(1)
 
-                if !isAvailable {
-                    Text("Unavailable")
+                    if !isAvailable {
+                        Text("Unavailable")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(unmet, id: \.self) { reason in
+                        Text(reason).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                if isActive {
+                    Label("Active", appSymbol: "checkmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .labelStyle(.titleAndIcon)
                 }
-                ForEach(unmet, id: \.self) { reason in
-                    Text(reason).font(.caption).foregroundStyle(.secondary)
+
+                HStack(spacing: 4) {
+                    Button {
+                        requirementsMicrophone = prioritizedDevice
+                    } label: {
+                        Image(appSymbol: "gearshape")
+                    }
+                    .help("Configure microphone requirements")
+                    .accessibilityLabel("Requirements for \(prioritizedDevice.name)")
+                    Button {
+                        movePrioritizedDeviceUp(prioritizedDevice)
+                    } label: {
+                        Image(appSymbol: "chevron.up")
+                    }
+                    .disabled(prioritizedDevice.id == prioritizedDevicesInDisplayOrder.first?.id)
+                    .help("Move up")
+
+                    Button {
+                        movePrioritizedDeviceDown(prioritizedDevice)
+                    } label: {
+                        Image(appSymbol: "chevron.down")
+                    }
+                    .disabled(prioritizedDevice.id == prioritizedDevicesInDisplayOrder.last?.id)
+                    .help("Move down")
+
+                    Button {
+                        audioDeviceManager.removePrioritizedDevice(id: prioritizedDevice.id)
+                    } label: {
+                        Image(appSymbol: "minus.circle")
+                    }
+                    .help("Remove")
                 }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
             }
 
-            Spacer()
-
-            if isActive {
-                Label("Active", appSymbol: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
+            if let device {
+                AudioInputChannelsView(deviceID: device.id)
             }
-
-            HStack(spacing: 4) {
-                Button {
-                    requirementsMicrophone = prioritizedDevice
-                } label: {
-                    Image(appSymbol: "gearshape")
-                }
-                .help("Configure microphone requirements")
-                .accessibilityLabel("Requirements for \(prioritizedDevice.name)")
-                Button {
-                    movePrioritizedDeviceUp(prioritizedDevice)
-                } label: {
-                    Image(appSymbol: "chevron.up")
-                }
-                .disabled(prioritizedDevice.id == prioritizedDevicesInDisplayOrder.first?.id)
-                .help("Move up")
-
-                Button {
-                    movePrioritizedDeviceDown(prioritizedDevice)
-                } label: {
-                    Image(appSymbol: "chevron.down")
-                }
-                .disabled(prioritizedDevice.id == prioritizedDevicesInDisplayOrder.last?.id)
-                .help("Move down")
-
-                Button {
-                    audioDeviceManager.removePrioritizedDevice(id: prioritizedDevice.id)
-                } label: {
-                    Image(appSymbol: "minus.circle")
-                }
-                .help("Remove")
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
         }
     }
 

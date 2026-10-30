@@ -89,7 +89,9 @@ final class RemoteClipboardProcessTests: XCTestCase {
         await TranscriptionDelivery().deliver(
             .init(
                 transcription: Transcription(text: "custom output", duration: 1, transcriptionStatus: .completed),
-                text: "custom output", output: .init(mode: nil, outputMode: .customCommand, customCommand: .init(command: command)),
+                text: "custom output", output: .init(
+                    mode: nil, outputMode: .customCommand, autoSendKey: .none, customCommand: .init(command: command)
+                ),
                 responseConfig: nil, responseError: nil, isAssistantFollowUp: false, sendAfterPaste: false,
                 deliverySession: session
             ),

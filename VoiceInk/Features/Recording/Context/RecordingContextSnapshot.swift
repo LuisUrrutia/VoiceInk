@@ -11,6 +11,13 @@ struct RecordingContextSnapshot {
 @MainActor
 final class RecordingContextSnapshotStore {
     private(set) var snapshot = RecordingContextSnapshot()
+    let vocabularyPreparation: RecordingVocabularyPreparation
+    private var recognitionLanguage: String?
+    private var isRecognitionLanguageResolved = false
+
+    init(savedVocabulary: RecordingVocabulary = RecordingVocabulary()) {
+        vocabularyPreparation = RecordingVocabularyPreparation(savedVocabulary: savedVocabulary)
+    }
 
     func updateSelectedText(_ text: String?) {
         snapshot.selectedText = Self.normalized(text)
@@ -22,6 +29,20 @@ final class RecordingContextSnapshotStore {
 
     func updateScreenText(_ text: String?) {
         snapshot.screenText = Self.normalized(text)
+        prepareScreenNamesIfReady()
+    }
+
+    /// Capture starts before mode resolution, so screen names wait for the recording's language.
+    func resolveRecognitionLanguage(_ language: String?) {
+        guard !isRecognitionLanguageResolved else { return }
+        isRecognitionLanguageResolved = true
+        recognitionLanguage = language
+        prepareScreenNamesIfReady()
+    }
+
+    private func prepareScreenNamesIfReady() {
+        guard isRecognitionLanguageResolved, let text = snapshot.screenText else { return }
+        vocabularyPreparation.prepareScreenNames(in: text, language: recognitionLanguage)
     }
 
     private static func normalized(_ text: String?) -> String? {
@@ -34,11 +55,12 @@ final class RecordingContextSnapshotStore {
 @MainActor
 enum RecordingContextCaptureService {
     static func startCapture(into store: RecordingContextSnapshotStore) -> [Task<Void, Never>] {
-        store.updateClipboardText(NSPasteboard.general.string(forType: .string))
+        // Snapshot the clipboard before a selected-text Copy fallback can replace it.
+        store.updateClipboardText(SelectedTextService.captureClipboardText())
         return [
             Task { @MainActor in
                 guard !Task.isCancelled else { return }
-                let selectedText = await SelectedTextService.fetchSelectedText()
+                let selectedText = await SelectedTextService.fetchSelectedText(isEnabled: true)
                 guard !Task.isCancelled else { return }
                 store.updateSelectedText(selectedText)
             },
@@ -58,16 +80,26 @@ final class RecordingContextCapture {
     @MainActor
     final class Session {
         let recordingID: UUID
-        let store = RecordingContextSnapshotStore()
+        let store: RecordingContextSnapshotStore
         private let tasks: [Task<Void, Never>]
 
-        init(recordingID: UUID, capture: @MainActor (RecordingContextSnapshotStore) -> [Task<Void, Never>]) {
+        init(
+            recordingID: UUID, store: RecordingContextSnapshotStore,
+            capture: @MainActor (RecordingContextSnapshotStore) -> [Task<Void, Never>]
+        ) {
             self.recordingID = recordingID
+            self.store = store
             tasks = capture(store)
         }
 
-        func cancel() {
+        /// Stops unfinished capture while keeping already prepared vocabulary usable.
+        func cancelCapture() {
             tasks.forEach { $0.cancel() }
+        }
+
+        func cancel() {
+            cancelCapture()
+            store.vocabularyPreparation.finish()
         }
     }
 
@@ -80,9 +112,18 @@ final class RecordingContextCapture {
         self.capture = capture
     }
 
-    func start(recordingID: UUID) {
+    @discardableResult
+    func start(
+        recordingID: UUID, savedVocabulary: RecordingVocabulary = RecordingVocabulary()
+    ) -> RecordingContextSnapshotStore {
         clear()
-        session = Session(recordingID: recordingID, capture: capture)
+        let session = Session(
+            recordingID: recordingID,
+            store: RecordingContextSnapshotStore(savedVocabulary: savedVocabulary),
+            capture: capture
+        )
+        self.session = session
+        return session.store
     }
 
     func clear(recordingID: UUID? = nil) {

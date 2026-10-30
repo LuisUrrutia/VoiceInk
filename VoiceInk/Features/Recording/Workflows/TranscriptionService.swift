@@ -4,6 +4,7 @@ struct TranscriptionRequestContext {
     let languages: [String]
     let language: String?
     let prompt: String?
+    var vocabulary: RecordingVocabulary? = nil
 
     init(languages: [String], model: (any TranscriptionModel)? = nil) {
         let selection = model.map { TranscriptionLanguageSupport.validLanguagesOrFallback(languages, for: $0) }
@@ -17,11 +18,19 @@ struct TranscriptionRequestContext {
         TranscriptionRequestContext(languages: UserDefaults.standard.selectedTranscriptionLanguages)
     }
 
+    func withVocabulary(_ vocabulary: RecordingVocabulary) -> TranscriptionRequestContext {
+        var context = self
+        context.vocabulary = vocabulary
+        return context
+    }
+
     func scoped(to model: any TranscriptionModel) -> TranscriptionRequestContext {
         let selection = TranscriptionLanguageSupport.validLanguagesOrFallback(languages, for: model)
         let scopedPrompt = model.provider == .whisper
             ? (selection == languages ? prompt : WhisperPrompt.resolvedPrompt(for: selection)) : nil
-        return TranscriptionRequestContext(languages: selection, prompt: scopedPrompt)
+        var context = TranscriptionRequestContext(languages: selection, prompt: scopedPrompt)
+        context.vocabulary = vocabulary
+        return context
     }
 
     private init(languages: [String], prompt: String?) {

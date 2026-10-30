@@ -372,7 +372,7 @@ private final class HeldRecordingHardware: RecordingHardware, @unchecked Sendabl
         state = OSAllocatedUnfairLock(initialState: initial)
     }
 
-    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID) throws {
+    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
         state.withLock { $0.startCount += 1 }
     }
 
@@ -397,8 +397,8 @@ private final class HeldRecordingHardware: RecordingHardware, @unchecked Sendabl
     }
 
     func releaseStop() { stopGate.signal() }
-    func prepare(deviceID: AudioDeviceID) throws {}
-    func switchDevice(to deviceID: AudioDeviceID) throws {}
+    func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
+    func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
     func invalidatePreparation() {}
     func teardown() {}
 

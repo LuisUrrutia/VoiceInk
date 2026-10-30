@@ -361,8 +361,8 @@ private final class DiagnosticWAVHardware: RecordingHardware, @unchecked Sendabl
     }
     var averagePower: Float { -60 }
     var peakPower: Float { -60 }
-    func prepare(deviceID: AudioDeviceID) throws {}
-    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID) throws {
+    func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
+    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
         if failStart { throw Recorder.RecorderError.couldNotStartRecording }
         let file = try makeAudioFile(url, sampleRate: 16_000)
         state.withLock { $0.file = file; $0.deviceID = deviceID }
@@ -374,7 +374,7 @@ private final class DiagnosticWAVHardware: RecordingHardware, @unchecked Sendabl
             if failStop { state.failure = MicrophoneDiagnosticError.invalidAudio }
         }
     }
-    func switchDevice(to deviceID: AudioDeviceID) throws {}
+    func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
     func invalidatePreparation() {}
     func teardown() {}
 }

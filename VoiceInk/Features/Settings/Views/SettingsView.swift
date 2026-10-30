@@ -22,6 +22,7 @@ struct SettingsView: View {
     @AppStorage(PasteTargetSettings.remoteClipboardPushCommandKey) private var remoteClipboardPushCommand = ""
     @AppStorage("restoreClipboardAfterPaste") private var restoreClipboardAfterPaste = true
     @AppStorage("clipboardRestoreDelay") private var clipboardRestoreDelay = 2.0
+    @AppStorage(SmartPunctuation.settingsKey) private var smartPunctuationEnabled = false
     @AppStorage(PasteMethod.userDefaultsKey) private var pasteMethodRawValue = PasteMethod.standard.rawValue
     @AppStorage(AppAppearancePreference.userDefaultsKey) private var appAppearancePreference = AppAppearancePreference
         .system
@@ -218,7 +219,7 @@ struct SettingsView: View {
                         isEnabled: $restoreClipboardAfterPaste,
                         label: "Keep Clipboard Content",
                         infoMessage:
-                            "VoiceInk temporarily uses the clipboard to paste transcription. When enabled, it restores your previous clipboard content after the selected delay. When disabled, the pasted transcription stays on your clipboard."
+                            "Default and AppleScript temporarily use the clipboard to paste transcription. When enabled, this restores your previous clipboard content after the selected delay. Both typing methods leave the clipboard unchanged."
                     ) {
                         LabeledContent("Restore Delay") {
                             Picker("Restore Delay", selection: $clipboardRestoreDelay) {
@@ -233,6 +234,14 @@ struct SettingsView: View {
                             .labelsHidden()
                         }
                     }
+                    .disabled(!(PasteMethod(rawValue: pasteMethodRawValue)?.usesClipboard ?? true))
+
+                    Toggle(isOn: $smartPunctuationEnabled) {
+                        HStack(spacing: 4) {
+                            Text("Smart Punctuation")
+                            InfoTip(LocalizedStringKey("Adjust capitalization, punctuation, and spacing to fit the surrounding text when pasting. If context is unavailable, your text is pasted unchanged."))
+                        }
+                    }
 
                     LabeledContent {
                         Picker("Paste Method", selection: $pasteMethodRawValue) {
@@ -245,7 +254,7 @@ struct SettingsView: View {
                         HStack(spacing: 4) {
                             Text("Paste Method")
                             InfoTip(
-                                "Default uses simulated Cmd+V key events. AppleScript can help when custom keyboard layouts do not paste correctly."
+                                "Default uses Cmd+V. AppleScript offers another way to paste. Direct Typing enters text without using the clipboard and may not work in every app. Remote Desktop Typing is for remote desktops and virtual machines. Characters it cannot type are simplified or skipped."
                             )
                         }
                     }
