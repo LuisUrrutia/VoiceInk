@@ -124,10 +124,21 @@ segment text need not equal `text`: replacements and normalization that cross cu
 boundaries only apply to the complete transcript. The command does not claim word
 alignment for edited text.
 
+## Vocabulary boost evaluation
+
+`voiceink-vocab-eval` (`make vocab-eval`) compares plain and CTC-boosted Parakeet
+transcripts for a manifest of recordings. It defaults to Parakeet Ultra and the
+app's conservative rescoring settings, loads only installed Parakeet, VAD and CTC
+models, and reports changed transcripts, expected-term hits, unexpected term
+insertions, nondeterminism and timing. See `docs/parakeet-vocabulary-boost.md`
+for the manifest format and the recording method.
+
 ## Shared implementation and checks
 
 The package's `TranscriptionText` sources are symlinks to the app's pure defaults,
-filter, formatter, replacement plan, variant parser, and persistence namespace policy. Keep them as links so both
+filter, formatter, replacement plan, variant parser, and persistence namespace policy.
+`ParakeetCLI/ParakeetVocabularyBoost.swift` links to the app's vocabulary term
+mapping and CTC rescorer. Keep them as links so both
 callers compile the same algorithms. No AppKit launch or GUI singleton is required.
 `make test-cli` covers parsing/exit codes, snapshots/defaults/flags, Unicode,
 SRT ordering, VAD time mapping, resampling duration/tail, corrupt/empty inputs,

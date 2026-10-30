@@ -2,6 +2,14 @@ import CoreML
 import FluidAudio
 import Foundation
 
+/// Decoder input after VAD and the result whose token timings use that input's clock.
+struct DecodedSpeech {
+    let samples: [Float]
+    let result: ASRResult
+    let timeline: SpeechTimeline
+    let vadApplied: Bool
+}
+
 final class Transcriber {
     let manager: AsrManager
     let settings: Settings
@@ -10,12 +18,16 @@ final class Transcriber {
     var vad: VadManager?
     var attemptedVAD = false
 
-    init(options: Options, settings: Settings, log: @escaping (String) -> Void) async throws {
+    convenience init(options: Options, settings: Settings, log: @escaping (String) -> Void) async throws {
+        try await self.init(model: options.model, modelDirectory: options.modelDirectory, settings: settings, log: log)
+    }
+
+    init(model: String, modelDirectory: URL?, settings: Settings, log: @escaping (String) -> Void) async throws {
         ModelHub.offlineMode = true
-        let version: AsrModelVersion = options.model == "v2" ? .v2 : .v3
-        let directory = options.modelDirectory ?? AsrModels.defaultCacheDirectory(for: version)
+        let version: AsrModelVersion = model == "v2" ? .v2 : model == "ultra" ? .ultra : .v3
+        let directory = modelDirectory ?? AsrModels.defaultCacheDirectory(for: version)
         guard AsrModels.modelsExist(at: directory, version: version) else {
-            throw CLIError.message("Parakeet \(options.model) is missing or incomplete at \(directory.path). Install it in VoiceInk Models first; this command never downloads models.")
+            throw CLIError.message("Parakeet \(model) is missing or incomplete at \(directory.path). Install it in VoiceInk Models first; this command never downloads models.")
         }
         let models = try AsrModels.loadLocal(from: directory, version: version, encoderPrecision: .int8)
         manager = AsrManager(config: .default)
@@ -26,11 +38,17 @@ final class Transcriber {
     }
 
     func transcribe(_ samples: [Float]) async throws -> Transcript {
-        guard !samples.isEmpty else { throw CLIError.message("Audio is empty") }
         let duration = Double(samples.count) / 16_000
-        if samples.allSatisfy({ abs($0) <= 1e-10 }) {
+        guard let decoded = try await decode(samples) else {
             return Transcript(text: "", segments: [], duration: duration, speechDuration: 0, vadApplied: false)
         }
+        return transcript(decoded.result.text, decoded: decoded, duration: duration)
+    }
+
+    /// Nil for digital silence; a decoded result with empty text when VAD finds no speech.
+    func decode(_ samples: [Float]) async throws -> DecodedSpeech? {
+        guard !samples.isEmpty else { throw CLIError.message("Audio is empty") }
+        if samples.allSatisfy({ abs($0) <= 1e-10 }) { return nil }
         var ranges = [0..<samples.count]
         var vadApplied = false
         if settings.vadEnabled, let vad = await cachedVAD() {
@@ -47,15 +65,25 @@ final class Transcriber {
         }
         let timeline = try SpeechTimeline(ranges: ranges, originalCount: samples.count)
         guard timeline.speechCount > 0 else {
-            return Transcript(text: "", segments: [], duration: duration, speechDuration: 0, vadApplied: vadApplied)
+            let empty = ASRResult(text: "", confidence: 0, duration: 0, processingTime: 0)
+            return DecodedSpeech(samples: [], result: empty, timeline: timeline, vadApplied: vadApplied)
         }
         var speech = vadApplied ? ranges.flatMap { Array(samples[$0]) } : samples
         let minimum = ASRConstants.minimumRequiredSamples(forSampleRate: ASRConstants.sampleRate)
         if speech.count < minimum { speech += [Float](repeating: 0, count: minimum - speech.count) }
         var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
         let result = try await manager.transcribe(speech, decoderState: &state, language: language)
-        let text = settings.process(TextNormalizer.shared.normalizeSentence(result.text))
-        let tokens = result.tokenTimings ?? []
+        return DecodedSpeech(samples: speech, result: result, timeline: timeline, vadApplied: vadApplied)
+    }
+
+    func transcript(_ rawText: String, decoded: DecodedSpeech, duration: Double) -> Transcript {
+        let timeline = decoded.timeline
+        let vadApplied = decoded.vadApplied
+        guard timeline.speechCount > 0 else {
+            return Transcript(text: "", segments: [], duration: duration, speechDuration: 0, vadApplied: vadApplied)
+        }
+        let text = settings.process(TextNormalizer.shared.normalizeSentence(rawText))
+        let tokens = decoded.result.tokenTimings ?? []
         var segments: [TimedSegment] = []
         var group: [TokenTiming] = []
         func flush() {
