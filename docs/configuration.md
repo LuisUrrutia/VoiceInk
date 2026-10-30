@@ -98,7 +98,9 @@ generated file to keep the complete structure and stable UUIDs.
 
 - **Speech models:** `CurrentTranscriptionModel`, `SelectedLanguages`,
   `SelectedLanguage`, `IsVADEnabled`, `CustomLanguagePrompts`,
-  `CloudTranscriptionTimeout`, `PrewarmModelOnWake` and text formatting.
+  `CloudTranscriptionTimeout`, `PrewarmModelOnWake`,
+  `IsParakeetVocabularyBoostEnabled` and text formatting. The vocabulary boost
+  model files remain in the FluidAudio model cache, outside this file.
   Keep the generated provider-qualified model selection key.
 - **Enhancement:** provider-specific `SelectedModel` and `CustomModelID` values,
   `selectedAIProvider`, `customPrompts`, `customCloudModels`, `customAIProviders`,

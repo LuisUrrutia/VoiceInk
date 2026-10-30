@@ -79,6 +79,8 @@ private struct TranscriptionModelSettingsView: View {
 
             FillerWordsSettingsSection()
 
+            VocabularyBoostSettingsSection()
+
             AdvancedModelSettingsSection()
         }
         .formStyle(.grouped)
@@ -251,6 +253,65 @@ private struct EnhancementModelSettingsView: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct VocabularyBoostSettingsSection: View {
+    @EnvironmentObject private var fluidAudioModelManager: FluidAudioModelManager
+    @AppStorage(ParakeetVocabularyBoost.enabledKey) private var isEnabled = false
+    private let modelName = FluidAudioModelManager.vocabularyBoostModelName
+
+    var body: some View {
+        Section {
+            Toggle(isOn: $isEnabled) {
+                HStack(spacing: 4) {
+                    Text("Dictionary Boost for Parakeet (Experimental)")
+                    InfoTip(
+                        "Uses your Dictionary vocabulary to correct final Parakeet v2, v3 and Ultra transcriptions with a separate English model (about 100 MB). It can replace words that were said correctly. Realtime text that is already confirmed is not changed."
+                    )
+                }
+            }
+            .toggleStyle(.switch)
+            .onChange(of: isEnabled) { _, enabled in
+                if enabled, !fluidAudioModelManager.isFluidAudioModelDownloaded(named: modelName) {
+                    fluidAudioModelManager.startDownload(named: modelName)
+                }
+            }
+
+            if isEnabled {
+                modelStatus
+            }
+        } header: {
+            Text("Vocabulary Boost")
+        }
+    }
+
+    @ViewBuilder
+    private var modelStatus: some View {
+        if let status = fluidAudioModelManager.downloadStatus(named: modelName) {
+            HStack(spacing: 10) {
+                if status.isIndeterminate {
+                    ProgressView().controlSize(.small)
+                } else {
+                    ProgressView(value: status.fractionCompleted).frame(maxWidth: 120)
+                }
+                Text(status.message)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") { fluidAudioModelManager.cancelDownload(named: modelName) }
+            }
+        } else if fluidAudioModelManager.isFluidAudioModelDownloaded(named: modelName) {
+            LabeledContent("Vocabulary model") {
+                HStack(spacing: 10) {
+                    Text("Installed").foregroundStyle(.secondary)
+                    Button("Delete") { fluidAudioModelManager.deleteModel(named: modelName) }
+                }
+            }
+        } else {
+            LabeledContent("Vocabulary model") {
+                Button("Download") { fluidAudioModelManager.startDownload(named: modelName) }
+            }
+        }
     }
 }
 

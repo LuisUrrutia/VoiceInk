@@ -7,6 +7,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
     private var unifiedAsrManager: UnifiedAsrManager?
     private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
     private let vadCache: FluidAudioVADCache
+    private let vocabularyBoost: ParakeetVocabularyBoost
     private var activeVersion: AsrModelVersion?
     private var activeNemotronModelName: String?
     private var cachedModels: AsrModels?
@@ -14,8 +15,21 @@ class FluidAudioTranscriptionService: TranscriptionService {
     private let audioConverter = AudioConverter()
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "FluidAudioTranscriptionService")
 
-    init(vadCache: FluidAudioVADCache = FluidAudioVADCache()) {
+    init(vadCache: FluidAudioVADCache = FluidAudioVADCache(), vocabularyBoost: ParakeetVocabularyBoost = .disabled) {
         self.vadCache = vadCache
+        self.vocabularyBoost = vocabularyBoost
+    }
+
+    /// Only the batch Parakeet path (`AsrManager`) supports vocabulary boosting.
+    static func supportsVocabularyBoost(_ model: any TranscriptionModel) -> Bool {
+        model.provider == .fluidAudio
+            && !FluidAudioModelManager.isParakeetUnifiedModel(named: model.name)
+            && !FluidAudioModelManager.isNemotronModel(named: model.name)
+    }
+
+    func prepareVocabularyBoost(for model: any TranscriptionModel) async {
+        guard Self.supportsVocabularyBoost(model) else { return }
+        await vocabularyBoost.prepare()
     }
 
     func prepareVAD(recordingID: UUID, model: any TranscriptionModel) async throws -> Bool {
@@ -214,11 +228,20 @@ class FluidAudioTranscriptionService: TranscriptionService {
         )
         var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
         let result: ASRResult
+        // Rescoring needs the exact samples behind the token timings.
+        let decodedAudio: [Float]?
         if UserDefaults.standard.bool(forKey: "IsVADEnabled") {
             let speechAudio = try await preparedSpeechAudio(from: audioURL)
             guard !speechAudio.isEmpty else { return "" }
+            decodedAudio = speechAudio
+        } else if vocabularyBoost.isEnabled() {
+            decodedAudio = try loadAudioSamples(from: audioURL)
+        } else {
+            decodedAudio = nil
+        }
+        if let decodedAudio {
             result = try await asrManager.transcribe(
-                speechAudio,
+                decodedAudio,
                 decoderState: &decoderState,
                 language: languageHint
             )
@@ -230,7 +253,10 @@ class FluidAudioTranscriptionService: TranscriptionService {
             )
         }
 
-        return result.text
+        guard let decodedAudio else { return result.text }
+        return try await vocabularyBoost.apply(
+            to: result.text, tokenTimings: result.tokenTimings, audioSamples: decodedAudio
+        )
     }
 
     private func loadAudioSamples(from audioURL: URL) throws -> [Float] {

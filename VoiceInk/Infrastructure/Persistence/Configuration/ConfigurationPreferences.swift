@@ -15,7 +15,7 @@ enum ConfigurationPreferences {
                 "PrewarmModelOnWake", "SkipShortEnhancement", "EnhancementRetryOnTimeout",
                 "IsAutoLearnDictionaryEnabled", "IsTranscriptionCleanupEnabled", "IsAudioCleanupEnabled",
                 "isExperimentalFeaturesEnabled", "useClipboardContext", "useSelectedTextContext",
-                "useScreenCaptureContext",
+                "useScreenCaptureContext", "IsParakeetVocabularyBoostEnabled",
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",
