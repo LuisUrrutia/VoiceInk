@@ -109,7 +109,7 @@ generated file to keep the complete structure and stable UUIDs.
   realtime settings, context capture and output commands. `activeConfigurationId`
   retains the selected mode. `userAddedEmojis` retains custom icons.
 - **Audio:** input mode, saved microphone UID/model UID, `prioritizedDevices`
-  including microphone/application requirements, recording sound selections,
+  including microphone/application requirements, per-device input channels, recording sound selections,
   mute/pause preferences and resume delay. Temporary microphone overrides remain
   temporary.
 - **Shortcuts:** primary/secondary selections and recording modes, plus
@@ -123,14 +123,15 @@ generated file to keep the complete structure and stable UUIDs.
   its binding or clear flag to `null` removes the current override, allowing an
   older profile's legacy binding or flag to return during migration.
 - **Other settings:** appearance/language, Dock/menu-bar visibility, recorder
-  style/live text, paste method and original target, clipboard restoration and
-  remote push command, Auto Send, Auto Learn provider/model/schedule, dictionary
-  sorting, retention preferences, automatic update checks, announcements and playback rate.
+  style/live text, paste method and original target, clipboard restoration,
+  smart punctuation and remote push command, Auto Send, Auto Learn and its
+  minimum corrections, automatic vocabulary correction, dictionary sorting, retention preferences, automatic update checks, announcements and playback rate.
 
 The supported names and value types are defined in
 `VoiceInk/Infrastructure/Persistence/Configuration/ConfigurationPreferences.swift`.
 Unknown preference names and unsupported schema versions are rejected rather than
-silently ignored.
+silently ignored. The retired Auto Learn provider, model and review schedule names
+are still accepted but ignored, and the next save removes them.
 
 API keys remain in Keychain and must be configured separately on another machine.
 The file does not contain downloaded models, custom sound files, History, audio,
