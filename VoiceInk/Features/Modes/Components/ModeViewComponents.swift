@@ -493,8 +493,7 @@ struct ConfigurationRow: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 16)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .modifier(ModeCardSurface(isSelected: isEditing))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 
     var body: some View {
@@ -513,6 +512,9 @@ struct ConfigurationRow: View {
             }
         }
         .opacity(config.isEnabled ? 1.0 : 0.70)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        // Keep the switch inside the card glass; as a container sibling, its glass merges into the card's.
+        .modifier(ModeCardSurface(isSelected: isEditing))
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
                 isHovering = hovering
