@@ -205,6 +205,10 @@ struct VoiceInkApp: App {
 
         AppShortcuts.updateAppShortcutParameters()
 
+        if NSClassFromString("XCTestCase") == nil {
+            HistoryAccessController.shared.configure(container: resolvedContainer)
+        }
+
         let statsMigrationTask = SessionMetricMigrationService.shared.runStatsMigrationIfNeeded(
             modelContainer: resolvedContainer)
         let mainContext = resolvedContainer.mainContext
