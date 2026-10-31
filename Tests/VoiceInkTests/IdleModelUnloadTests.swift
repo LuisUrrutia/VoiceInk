@@ -409,6 +409,25 @@ final class IdleModelUnloadTests: XCTestCase {
         XCTAssertEqual(probe.log.events, ["load asr", "load batch", "load streaming", "load asr", "load batch"])
     }
 
+    func testFluidAudioIdleUnloadReleasesTheParakeetManagerThatPrewarmLeavesLoaded() async throws {
+        let probe = ModelRuntimeProbe()
+        let service = probe.makeService()
+        let v3 = FluidAudioModel(
+            name: "parakeet-tdt-0.6b-v3", displayName: "Parakeet V3", description: "Fixture", size: "",
+            speed: 1, accuracy: 1, ramUsage: 1, supportedLanguages: ["en": "English"]
+        )
+        try await service.loadModel(for: v3)
+        try await service.loadModel(for: v3)
+        XCTAssertNotNil(probe.asrModel)
+
+        await service.unloadIdleModels()
+        XCTAssertNil(probe.asrModel, "the loaded AsrManager must not keep the models alive")
+        try await service.loadModel(for: v3)
+
+        XCTAssertNotNil(probe.asrModel)
+        XCTAssertEqual(probe.log.events, ["load asr", "load asr"])
+    }
+
     func testAppDispatchUnloadsEngineAndPrewarmModelsOnceTheEngineIsIdle() async throws {
         let coordinator = makeProductionCoordinator(minutes: 15)
         let engineProbe = ModelRuntimeProbe()
