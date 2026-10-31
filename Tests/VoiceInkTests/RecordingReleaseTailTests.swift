@@ -153,6 +153,47 @@ final class RecordingReleaseTailTests: XCTestCase {
         XCTAssertEqual(engine.recordingState, .idle)
     }
 
+    func testShortcutAndProgrammaticStopsPlayTheSessionStopToneOnce() async throws {
+        for tail in [RecordingReleaseTail.now(), nil] {
+            let directory = try makeDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let url = directory.appendingPathComponent("tone.wav")
+            let hardware = try StreamingTailHardware(url: url)
+            let (engine, _) = try makeRecordingEngine(hardware: hardware, directory: directory, url: url)
+            var stopToneAt: [UInt64] = []
+            engine.activeRecordingDelivery = RecordingDeliverySession(
+                destination: .currentApplication,
+                playFeedback: { if $0 == .stop { stopToneAt.append(DispatchTime.now().uptimeNanoseconds) } }
+            )
+
+            await engine.toggleRecord(releaseTail: tail)
+            for _ in 0..<1_000 where stopToneAt.isEmpty { try await Task.sleep(for: .milliseconds(1)) }
+
+            XCTAssertEqual(stopToneAt.count, 1, "tail=\(tail != nil)")
+            if tail == nil {
+                // Release-tone timing is covered by testRecorderPlaysToneAtReleaseAndKeepsCapturingThroughTail.
+                XCTAssertGreaterThan(try XCTUnwrap(stopToneAt.first), try XCTUnwrap(hardware.stoppedAt))
+            }
+        }
+    }
+
+    func testCancelBeforeTheProgrammaticStopToneKeepsItSilent() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("cancel-tone.wav")
+        let hardware = try StreamingTailHardware(url: url)
+        let (engine, _) = try makeRecordingEngine(hardware: hardware, directory: directory, url: url)
+        var tones: [DictationFeedback.Tone] = []
+        engine.activeRecordingDelivery = RecordingDeliverySession(
+            destination: .currentApplication, playFeedback: { tones.append($0) }
+        )
+
+        await engine.cancelRecording()
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(tones, [])
+    }
+
     func testCancelWhileRecordingHasNoTail() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

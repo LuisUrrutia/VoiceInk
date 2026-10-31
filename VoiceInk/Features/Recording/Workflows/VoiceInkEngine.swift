@@ -254,7 +254,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let context = recordingContextCapture.take()
             pipelineContextCapture = context
             defer {
-                delivery?.cancel()
+                delivery?.completePipeline()
                 if activePipelineDelivery === delivery { activePipelineDelivery = nil }
                 context?.cancel()
                 if pipelineContextCapture === context {
@@ -268,17 +268,21 @@ class VoiceInkEngine: NSObject, ObservableObject {
             partialTranscript = ""
             // The release is the user-visible boundary; the tail stays invisible capture.
             recordingState = .transcribing
+            // Canceled and failed recordings play no stop tone.
+            let playStopTone: @MainActor () -> Void = { [weak self] in
+                guard let self, !self.shouldCancelRecording, self.recorder.recordingError == nil else { return }
+                delivery?.recordingStopped()
+            }
             if let releaseTail {
                 preparation?.timing.mark(.shortcutReleased, at: releaseTail.releasedAtNanoseconds)
-                delivery?.playedStopToneAtRelease = true
                 let outcome = await recorder.stopRecording(
                     after: releaseTail,
-                    playReleaseTone: { SoundManager.shared.playStopSound() },
+                    playReleaseTone: playStopTone,
                     shouldEndTailEarly: { [weak self] in self?.shouldCancelRecording ?? true }
                 )
                 recordReleaseTailTiming(outcome, timing: preparation?.timing)
             } else {
-                await recorder.stopRecording()
+                await recorder.stopRecording(playStopTone: playStopTone)
             }
             recordClosedAudioTiming(preparation?.timing)
 
@@ -299,8 +303,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         transcription.text = error.localizedDescription
                         transcription.transcriptionStatus = TranscriptionStatus.failed.rawValue
                         try? modelContext.save()
+                        delivery?.dictationFailed()
                         NotificationManager.shared.showNotification(
-                            title: error.localizedDescription, type: .error
+                            title: error.localizedDescription, type: .error, playsSound: false
                         )
                         cancelCurrentSession()
                         self.recordedFile = nil
@@ -359,7 +364,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 assistantSession.reset()
             }
 
-            guard await passesRecordingPreflight(), !microphoneDiagnostic.isBusy,
+            guard await passesRecordingPreflight(delivery: capturedDelivery), !microphoneDiagnostic.isBusy,
                 recordingState == .idle, !Task.isCancelled
             else { return }
 
@@ -494,9 +499,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     let resolution = ModeRuntimeResolver.transcriptionModelResolution(transcriptionModelManager: models)
                     let failure = self.recordingModelFailure(for: resolution)
                     self.recordingError = failure.title
+                    capturedDelivery.dictationFailed()
                     NotificationManager.shared.showNotification(
                         title: failure.title, type: .error, duration: 7.0,
-                        actionButton: (failure.actionLabel, failure.action)
+                        actionButton: (failure.actionLabel, failure.action), playsSound: false
                     )
                     self.endFailedRecordingDelivery(capturedDelivery)
                     guard let finalizationID = self.recordingFinalization.begin() else { return }
@@ -524,6 +530,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             } catch {
                 preparation.cancel()
                 guard self.activeRecordingStartID == startID else { return }
+                // Ending the delivery silences it, so a start failure plays its error tone first.
+                if !self.shouldCancelRecording { capturedDelivery.dictationFailed() }
                 self.endFailedRecordingDelivery(capturedDelivery)
                 guard let finalizationID = self.recordingFinalization.begin() else { return }
                 defer { self.recordingFinalization.finish(finalizationID) }
@@ -551,11 +559,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         title: failure.title,
                         type: .error,
                         duration: 7.0,
-                        actionButton: (failure.actionLabel, failure.action)
+                        actionButton: (failure.actionLabel, failure.action),
+                        playsSound: false
                     )
                 } else {
                     NotificationManager.shared.showNotification(
-                        title: String(localized: "Recording failed to start"), type: .error)
+                        title: String(localized: "Recording failed to start"), type: .error, playsSound: false)
                 }
                 await self.recorderUIManager?.dismissRecorderPanel()
             }
@@ -612,13 +621,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     /// Checks requirements that do not depend on asynchronous app and URL mode resolution.
     @MainActor
-    private func passesRecordingPreflight() async -> Bool {
+    private func passesRecordingPreflight(delivery: RecordingDeliverySession) async -> Bool {
         captureReadiness.refreshSnapshot()
         if let issue = captureReadiness.snapshot.issues(for: .microphoneTest).first {
             await failRecordingPreflight(
                 title: issue.message,
                 actionLabel: String(localized: "Audio Settings"),
-                action: AudioSetupNavigator.openAudioSettings
+                action: AudioSetupNavigator.openAudioSettings,
+                delivery: delivery
             )
             return false
         }
@@ -626,7 +636,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             await failRecordingPreflight(
                 title: String(localized: "No mode configured"),
                 actionLabel: String(localized: "Manage Modes"),
-                action: ModeSetupNavigator.openModesSettings
+                action: ModeSetupNavigator.openModesSettings,
+                delivery: delivery
             )
             return false
         }
@@ -638,16 +649,19 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private func failRecordingPreflight(
         title: String,
         actionLabel: String,
-        action: @escaping () -> Void
+        action: @escaping () -> Void,
+        delivery: RecordingDeliverySession
     ) async {
         logger.error("❌ Recording preflight failed: \(title, privacy: .public)")
         recordingState = .idle
         recordingError = title
+        delivery.dictationFailed()
         NotificationManager.shared.showNotification(
             title: title,
             type: .error,
             duration: 7.0,
-            actionButton: (actionLabel, action)
+            actionButton: (actionLabel, action),
+            playsSound: false
         )
         await recorderUIManager?.dismissRecorderPanel()
     }
@@ -706,6 +720,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 recordingError = String(localized: "Transcription failed. Select a model for this mode.")
                 transcription.text = String(localized: "Transcription Failed: No model selected")
                 transcription.transcriptionStatus = TranscriptionStatus.failed.rawValue
+                deliverySession?.dictationFailed()
             }
             try? modelContext.save()
             await finishPipeline(transcription, preparation: preparation)

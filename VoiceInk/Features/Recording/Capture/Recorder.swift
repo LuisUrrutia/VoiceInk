@@ -185,7 +185,12 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func stopRecording() async {
-        await finishRecording(releaseTail: nil)
+        await finishRecording(releaseTail: nil, playStopTone: nil)
+    }
+
+    /// Plays the stop tone once muted or lowered output is restored, before paused media resumes.
+    func stopRecording(playStopTone: @escaping @MainActor () -> Void) async {
+        await finishRecording(releaseTail: nil, playStopTone: playStopTone)
     }
 
     /// Restores output and plays the release tone now, then keeps capturing through the tail.
@@ -196,7 +201,7 @@ class Recorder: NSObject, ObservableObject {
         shouldEndTailEarly: @escaping @MainActor () -> Bool
     ) async -> RecordingReleaseTail.Outcome? {
         await finishRecording(
-            releaseTail: (releaseTail, playReleaseTone, shouldEndTailEarly)
+            releaseTail: (releaseTail, playReleaseTone, shouldEndTailEarly), playStopTone: nil
         )
     }
 
@@ -205,7 +210,8 @@ class Recorder: NSObject, ObservableObject {
             tail: RecordingReleaseTail,
             playTone: @MainActor () -> Void,
             shouldEndEarly: @MainActor () -> Bool
-        )?
+        )?,
+        playStopTone: (@MainActor () -> Void)?
     ) async -> RecordingReleaseTail.Outcome? {
         guard let finalizationID = recordingFinalization.begin() else {
             await recordingFinalization.waitUntilFinished()
@@ -248,7 +254,7 @@ class Recorder: NSObject, ObservableObject {
         resetAudioMeter()
 
         if releaseTail == nil {
-            restoreRecordingAudio(sessionID: playbackSessionID, afterOutputUnmuted: nil)
+            restoreRecordingAudio(sessionID: playbackSessionID, afterOutputUnmuted: playStopTone)
         }
         deviceManager.recordingDidStop()
         updateIdleCapture(reason: "recording-stopped")

@@ -2208,6 +2208,72 @@
         }
       }
     },
+    "Audio file is %.1f seconds long. Please use an audio file that is %.0f seconds or shorter for feedback sounds." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Audiodatei ist %.1f Sekunden lang. Bitte verwende für Rückmeldetöne eine Audiodatei, die %.0f Sekunden oder kürzer ist."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le fichier audio dure %.1f secondes. Veuillez utiliser un fichier audio d'une durée de %.0f secondes ou moins pour les sons de retour."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音频文件长度为 %.1f 秒。请为反馈提示音使用 %.0f 秒或更短的音频文件。"
+          }
+        }
+      }
+    },
+    "Done Sound" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fertigklang"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Son de fin"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成提示音"
+          }
+        }
+      }
+    },
+    "Error Sound" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fehlerklang"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Son d'erreur"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误提示音"
+          }
+        }
+      }
+    },
     "Hide Both" : {
       "localizations" : {
         "de" : {
@@ -2452,6 +2518,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sections"
+          }
+        }
+      }
+    },
+    "Soft Tone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sanfter Ton"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tonalité douce"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "柔和提示音"
+          }
+        }
+      }
+    },
+    "The done sound plays only when text is pasted at least 2 seconds after the stop sound. The error sound plays when a dictation or paste fails, including an empty transcript." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Fertigklang ertönt nur, wenn Text mindestens 2 Sekunden nach dem Stoppklang eingefügt wird. Der Fehlerklang ertönt, wenn ein Diktat oder das Einfügen fehlschlägt, auch bei einem leeren Transkript."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le son de fin n'est joué que lorsque le texte est collé au moins 2 secondes après le son d'arrêt. Le son d'erreur est joué en cas d'échec d'une dictée ou du collage, y compris pour une transcription vide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅当文本在停止提示音之后至少 2 秒才粘贴时，才会播放完成提示音。听写或粘贴失败（包括转录为空）时会播放错误提示音。"
           }
         }
       }
@@ -6084,28 +6194,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "音频设备已不可用"
-          }
-        }
-      }
-    },
-    "Audio file is %.1f seconds long. Please use an audio file that is %.0f seconds or shorter for start and stop sounds." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die Audiodatei ist %.1f Sekunden lang. Bitte verwende für Start- und Stopptöne eine Audiodatei, die %.0f Sekunden oder kürzer ist."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le fichier audio dure %.1f secondes. Veuillez utiliser un fichier audio d'une durée de %.0f secondes ou moins pour les sons de démarrage et d'arrêt."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "音频文件长度为 %.1f 秒。请为开始和停止提示音使用 %.0f 秒或更短的音频文件。"
           }
         }
       }

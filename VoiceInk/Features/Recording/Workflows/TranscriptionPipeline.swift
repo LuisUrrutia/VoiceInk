@@ -284,7 +284,8 @@ class TranscriptionPipeline {
                     NotificationManager.shared.showNotification(
                         title: errorDescription,
                         type: .error,
-                        duration: 5.0
+                        duration: 5.0,
+                        playsSound: deliverySession == nil
                     )
                 }
             }

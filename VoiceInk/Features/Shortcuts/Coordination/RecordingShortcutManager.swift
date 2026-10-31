@@ -131,6 +131,9 @@ class RecordingShortcutManager: ObservableObject {
             },
             cancelRecording: {
                 await recorderUIManager.cancelRecording()
+            },
+            retractStartSound: {
+                SoundManager.shared.retractStartSound()
             }
         )
 
@@ -389,6 +392,7 @@ final class RecordingShortcutModeHandler {
     private let finishHeldRecording: @MainActor () -> Void
     private let toggleRecorderPanel: @MainActor (UUID?, TimeInterval) async -> Void
     private let cancelRecording: @MainActor () async -> Void
+    private let retractStartSound: @MainActor () -> Void
 
     private var shortcutPressStartTime: TimeInterval?
     private var isHandsFreeRecording = false
@@ -406,6 +410,8 @@ final class RecordingShortcutModeHandler {
     private let shortcutPressCooldown: TimeInterval = 0.25
     private let hybridPressThreshold: TimeInterval = 0.5
     private let doubleTapThreshold: TimeInterval = 0.7
+    /// A push-to-talk release sooner than this is an accidental start, not a dictation.
+    static let shortTapThreshold: TimeInterval = 0.3
 
     init(
         canHandleShortcutAction: @escaping @MainActor () -> Bool,
@@ -415,6 +421,7 @@ final class RecordingShortcutModeHandler {
         finishHeldRecording: @escaping @MainActor () -> Void,
         toggleRecorderPanel: @escaping @MainActor (UUID?, TimeInterval) async -> Void,
         cancelRecording: @escaping @MainActor () async -> Void,
+        retractStartSound: @escaping @MainActor () -> Void = {},
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.canHandleShortcutAction = canHandleShortcutAction
@@ -424,6 +431,7 @@ final class RecordingShortcutModeHandler {
         self.finishHeldRecording = finishHeldRecording
         self.toggleRecorderPanel = toggleRecorderPanel
         self.cancelRecording = cancelRecording
+        self.retractStartSound = retractStartSound
         self.now = now
     }
 
@@ -600,6 +608,7 @@ final class RecordingShortcutModeHandler {
         }
         guard let pressedAt = shortcutPressStartTime, eventTime >= pressedAt else { return }
         let pressDuration = eventTime - pressedAt
+        let pressStartedRecording = activeShortcutCanCancelAccidentalStart
         heldShortcut.withLock { $0 = nil }
         shortcutPressStartTime = nil
         isShortcutPressed = false
@@ -619,6 +628,12 @@ final class RecordingShortcutModeHandler {
             if isRecorderVisible() {
                 guard canHandleShortcutAction() else {
                     logDecision(action, phase: "recording", result: "ignored-engine-state")
+                    return
+                }
+                if pressStartedRecording && pressDuration < Self.shortTapThreshold {
+                    logDecision(action, phase: "up", result: "discard-short-tap", detail: "mode=pushToTalk duration=\(String(format: "%.3f", pressDuration))")
+                    retractStartSound()
+                    await cancelRecording()
                     return
                 }
                 logDecision(action, phase: "up", result: "stop-recording", detail: "mode=pushToTalk")
@@ -699,6 +714,7 @@ final class RecordingShortcutModeHandler {
 
         logDecision(action, phase: "interrupted", result: "cancel-accidental-start")
         reset()
+        retractStartSound()
         await cancelRecording()
     }
 

@@ -16,7 +16,8 @@ final class NotificationManager {
         type: AppNotificationView.NotificationType,
         duration: TimeInterval = 3.0,
         onTap: (() -> Void)? = nil,
-        actionButton: (label: String, action: () -> Void)? = nil
+        actionButton: (label: String, action: () -> Void)? = nil,
+        playsSound: Bool = true
     ) {
         dismissTimer?.invalidate()
         dismissTimer = nil
@@ -29,7 +30,7 @@ final class NotificationManager {
         }
 
         // Play esc sound for error notifications
-        if type == .error {
+        if type == .error, playsSound {
             SoundManager.shared.playEscSound()
         }
 

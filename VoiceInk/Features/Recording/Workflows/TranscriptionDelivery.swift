@@ -5,6 +5,14 @@ import os
 @MainActor
 final class TranscriptionDelivery {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionDelivery")
+    typealias StartPaste = @MainActor (String, RecordingDeliverySession?, FinishAndSendKey) -> Task<CursorPaster.PasteOutcome, Never>
+    private let startPaste: StartPaste
+
+    init(startPaste: StartPaste? = nil) {
+        self.startPaste = startPaste ?? { text, session, sendKey in
+            CursorPaster.startPasteAtCursor(text, deliverySession: session, sendKey: sendKey)
+        }
+    }
 
     struct Request {
         let transcription: Transcription
@@ -35,6 +43,9 @@ final class TranscriptionDelivery {
         }
         guard !Task.isCancelled, request.deliverySession?.isCancelled != true else { return }
         guard request.transcription.transcriptionStatus == TranscriptionStatus.completed.rawValue else {
+            if request.transcription.transcriptionStatus == TranscriptionStatus.failed.rawValue {
+                request.deliverySession?.dictationFailed()
+            }
             await actions.dismiss()
             return
         }
@@ -65,11 +76,10 @@ final class TranscriptionDelivery {
     }
 
     private func deliverFollowUp(_ item: Request, actions: Actions) async {
-        playStopSound(for: item.deliverySession)
-
         guard let text = item.text?.trimmingCharacters(in: .whitespacesAndNewlines),
             !text.isEmpty
         else {
+            item.deliverySession?.dictationFailed()
             return
         }
 
@@ -78,15 +88,15 @@ final class TranscriptionDelivery {
     }
 
     private func deliverResponse(_ item: Request, actions: Actions) async {
-        playStopSound(for: item.deliverySession)
-
         if let responseError = item.responseError {
+            item.deliverySession?.dictationFailed()
             await actions.failResponse("Enhancement failed: \(responseError)")
         } else if let text = item.text,
             item.responseConfig != nil
         {
             await actions.showResponse(text, item.transcription.aiRequestSystemMessage)
         } else {
+            item.deliverySession?.dictationFailed()
             await actions.failResponse("No response was generated.")
         }
     }
@@ -94,7 +104,7 @@ final class TranscriptionDelivery {
     private func deliverCustomCommand(_ item: Request, actions: Actions) async {
         guard let text = item.text else {
             notifyCustomCommandFailure(CustomCommandDeliveryError.noTextToDeliver)
-            playStopSound(for: item.deliverySession)
+            item.deliverySession?.dictationFailed()
             await actions.dismiss()
             return
         }
@@ -103,13 +113,12 @@ final class TranscriptionDelivery {
             let command = customCommand.trimmedCommand
         else {
             notifyCustomCommandFailure(CustomCommandDeliveryError.commandNotConfigured)
-            playStopSound(for: item.deliverySession)
+            item.deliverySession?.dictationFailed()
             await actions.dismiss()
             return
         }
 
         let finishAndSendKey: FinishAndSendKey = item.sendAfterPaste ? FinishAndSendSettings.selectedKey : .none
-        playStopSound(for: item.deliverySession)
         await actions.dismiss()
 
         let target = PasteApplication.frontmost
@@ -173,6 +182,7 @@ final class TranscriptionDelivery {
             return
         } catch {
             notifyCustomCommandFailure(error, duration: Date().timeIntervalSince(startTime))
+            if !Task.isCancelled { session?.dictationFailed() }
         }
     }
 
@@ -187,11 +197,6 @@ final class TranscriptionDelivery {
         }
     }
 
-    private func playStopSound(for session: RecordingDeliverySession?) {
-        guard session?.playedStopToneAtRelease != true else { return }
-        SoundManager.shared.playStopSound()
-    }
-
     private static func formattedDuration(_ duration: TimeInterval) -> String {
         String(format: "%.3f", duration)
     }
@@ -199,17 +204,24 @@ final class TranscriptionDelivery {
     private func paste(
         _ text: String, sendKey: FinishAndSendKey, session: RecordingDeliverySession?, actions: Actions
     ) async {
+        // An empty transcript is a failed dictation, not a lone trailing space.
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            session?.dictationFailed()
+            await actions.dismiss()
+            return
+        }
         let appendSpace = UserDefaults.standard.bool(forKey: "AppendTrailingSpace")
         let pastedText = text + (appendSpace ? " " : "")
-        playStopSound(for: session)
         await actions.dismiss()
         guard !Task.isCancelled, session?.isCancelled != true else { return }
 
-        let pasteTask = CursorPaster.startPasteAtCursor(pastedText, deliverySession: session, sendKey: sendKey)
-        _ = await withTaskCancellationHandler {
+        let pasteTask = startPaste(pastedText, session, sendKey)
+        let outcome = await withTaskCancellationHandler {
             await pasteTask.value
         } onCancel: {
             pasteTask.cancel()
         }
+        guard !Task.isCancelled else { return }
+        session?.pasteFinished(outcome.result)
     }
 }

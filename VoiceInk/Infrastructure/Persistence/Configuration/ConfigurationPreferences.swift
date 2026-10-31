@@ -32,6 +32,9 @@ enum ConfigurationPreferences {
                 "selectedStartSoundSelection", "selectedStopSoundSelection",
                 "selectedStartBuiltInSound", "selectedStopBuiltInSound",
                 "customStartSoundFilename", "customStopSoundFilename",
+                "selectedDoneSoundSelection", "selectedErrorSoundSelection",
+                "selectedDoneBuiltInSound", "selectedErrorBuiltInSound",
+                "customDoneSoundFilename", "customErrorSoundFilename",
                 "vocabularySortMode", "wordReplacementSortMode",
             ]),
             (.number, [

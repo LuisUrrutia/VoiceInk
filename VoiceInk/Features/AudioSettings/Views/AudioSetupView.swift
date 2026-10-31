@@ -37,6 +37,8 @@ struct AudioSetupView: View {
                     CustomSoundSettingsView()
                 } header: {
                     Text("Recording Sounds")
+                } footer: {
+                    Text("The done sound plays only when text is pasted at least 2 seconds after the stop sound. The error sound plays when a dictation or paste fails, including an empty transcript.")
                 }
 
                 Section {

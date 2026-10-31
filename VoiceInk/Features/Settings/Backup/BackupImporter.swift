@@ -211,6 +211,9 @@ enum BackupImporter {
         }
         general.restorePastePreferences()
         general.restoreMicrophonePreferences()
+        if let feedbackSounds = general.feedbackSounds {
+            CustomSoundManager.shared.restore(feedbackSounds)
+        }
         if let method = general.pasteMethod.flatMap(PasteMethod.init(rawValue:)) {
             PasteMethod.setCurrent(method)
         }

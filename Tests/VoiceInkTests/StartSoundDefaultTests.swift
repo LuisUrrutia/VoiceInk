@@ -31,10 +31,10 @@ final class StartSoundDefaultTests: XCTestCase {
         let manager = makeManager()
 
         XCTAssertEqual(manager.soundSelection(for: .start), .builtIn(.hexClassicStart))
-        XCTAssertEqual(manager.builtInSoundURL(for: .start)?.lastPathComponent, "hexClassicStart.wav")
+        XCTAssertEqual(manager.builtInSound(for: .start)?.url?.lastPathComponent, "hexClassicStart.wav")
         XCTAssertTrue(manager.isDefaultSelection(for: .start))
         XCTAssertEqual(manager.soundSelection(for: .stop), .builtIn(.sound6))
-        XCTAssertEqual(manager.builtInSoundURL(for: .stop)?.lastPathComponent, "sound6.mp3")
+        XCTAssertEqual(manager.builtInSound(for: .stop)?.url?.lastPathComponent, "sound6.mp3")
     }
 
     func testAppRegistersHexClassicAsStartDefaultAndKeepsStopDefault() throws {
@@ -51,7 +51,7 @@ final class StartSoundDefaultTests: XCTestCase {
         let manager = makeManager()
 
         XCTAssertEqual(manager.soundSelection(for: .start), .builtIn(.sound5))
-        XCTAssertEqual(manager.builtInSoundURL(for: .start)?.lastPathComponent, "sound5.mp3")
+        XCTAssertEqual(manager.builtInSound(for: .start)?.url?.lastPathComponent, "sound5.mp3")
         XCTAssertFalse(manager.isDefaultSelection(for: .start))
     }
 
@@ -122,11 +122,11 @@ final class StartSoundDefaultTests: XCTestCase {
 
     func testEveryBuiltInSoundIsBundledAndPlayable() throws {
         for sound in Sound.allCases {
-            let url = try XCTUnwrap(sound.bundleURL, "\(sound.rawValue) is missing from the app bundle")
+            let url = try XCTUnwrap(sound.url, "\(sound.rawValue) is missing from the app bundle")
             XCTAssertNoThrow(try AVAudioPlayer(contentsOf: url), sound.rawValue)
         }
 
-        let file = try AVAudioFile(forReading: try XCTUnwrap(Sound.hexClassicStart.bundleURL))
+        let file = try AVAudioFile(forReading: try XCTUnwrap(Sound.hexClassicStart.url))
         let duration = Double(file.length) / file.fileFormat.sampleRate
         XCTAssertEqual(file.fileFormat.sampleRate, 44_100)
         XCTAssertEqual(file.fileFormat.channelCount, 2)

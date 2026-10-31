@@ -5,7 +5,15 @@ from Hex (https://github.com/anomalyco/hex, commit 9fd14700, git blob d541d989, 
 dev 1980a8b3), copied byte-for-byte. Hex decoded, trimmed and leveled it from
 Hex/Resources/Audio/startRecording.mp3, committed by Kit Langton in the original Swift Hex
 (https://github.com/kitlangton/Hex, commit 5128349). Neither repository credits another author
-for the sound. Both repositories are distributed under the MIT License below.
+for the sound.
+
+Soft Tone done sound
+
+VoiceInk/Resources/Sounds/soft-done.wav is resources/audio/sounds/soft/done.wav from Hex
+(https://github.com/anomalyco/hex, commit 9fd14700, git blob 6699edf0, unchanged at dev
+1980a8b3), copied byte-for-byte.
+
+Both repositories are distributed under the MIT License below.
 
 MIT License
 
