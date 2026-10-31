@@ -87,7 +87,8 @@ enum AppDefaults {
             // Model
             "PrewarmModelOnWake": true,
 
-        ].merging(TranscriptionTextDefaults.preferences) { _, shared in shared })
+        ].merging(TranscriptionTextDefaults.preferences) { _, shared in shared }
+            .merging(Labs.registeredDefaults()) { current, _ in current })
 
         PasteMethod.migrateLegacyUserDefaultIfNeeded()
     }

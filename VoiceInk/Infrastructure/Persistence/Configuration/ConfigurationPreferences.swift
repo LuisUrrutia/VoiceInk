@@ -55,6 +55,7 @@ enum ConfigurationPreferences {
         for (kind, keys) in groups {
             for key in keys { result[key] = kind }
         }
+        for feature in LabsFeature.all { result[feature.defaultsKey] = .boolean }
         for provider in AIProvider.allCases {
             result["\(provider.rawValue)SelectedModel"] = .string
             result["\(provider.rawValue)CustomModelID"] = .string
@@ -66,6 +67,11 @@ enum ConfigurationPreferences {
     private static let retiredKeys: Set<String> = [
         "AutoLearnDictionaryProvider", "AutoLearnDictionaryModel", "AutoLearnDictionaryReviewSchedule",
     ]
+
+    /// Retired keys and `labs.` keys of features no longer in Labs load without being applied or captured.
+    private static func isIgnored(_ key: String) -> Bool {
+        retiredKeys.contains(key) || Labs.isRetiredKey(key)
+    }
 
     private static func kind(for key: String) -> Kind? {
         if let kind = kinds[key] { return kind }
@@ -112,7 +118,7 @@ enum ConfigurationPreferences {
     }
 
     static func validate(_ values: [String: ConfigurationValue], defaults: UserDefaults? = nil) throws {
-        for (key, value) in values where !retiredKeys.contains(key) { try validate(value, key: key) }
+        for (key, value) in values where !isIgnored(key) { try validate(value, key: key) }
         let modes: [ModeConfig]
         if let value = values["modeConfigurationsV2"], value != .null {
             modes = try value.decoded(as: [ModeConfig].self)
@@ -212,7 +218,7 @@ enum ConfigurationPreferences {
     static func apply(_ values: [String: ConfigurationValue], to defaults: UserDefaults) throws {
         // Prepare every serialized value before changing any preference.
         let encoded = try values.mapValues { try $0.data() }
-        for (key, value) in values where !retiredKeys.contains(key) {
+        for (key, value) in values where !isIgnored(key) {
             if value == .null { defaults.removeObject(forKey: key) }
             else if kind(for: key) == .json { defaults.set(encoded[key], forKey: key) }
             else { defaults.set(value.propertyList, forKey: key) }

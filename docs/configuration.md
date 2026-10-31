@@ -133,12 +133,15 @@ generated file to keep the complete structure and stable UUIDs.
   style/live text, paste method and original target, clipboard restoration,
   smart punctuation and remote push command, Auto Send, Auto Learn and its
   minimum corrections, automatic vocabulary correction, dictionary sorting, retention preferences, automatic update checks, announcements and playback rate.
+- **Labs:** one `labs.<feature>` boolean per feature listed in the Labs page,
+  `false` until you turn it on.
 
 The supported names and value types are defined in
 `VoiceInk/Infrastructure/Persistence/Configuration/ConfigurationPreferences.swift`.
 Unknown preference names and unsupported schema versions are rejected rather than
 silently ignored. The retired Auto Learn provider, model and review schedule names
 are still accepted and ignored; saves leave them in place, so delete them by hand.
+The same applies to a `labs.<feature>` name whose feature has left Labs.
 
 API keys remain in Keychain and must be configured separately on another machine.
 The file does not contain downloaded models, custom sound files, History, audio,

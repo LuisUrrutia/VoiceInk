@@ -110,6 +110,8 @@ struct GeneralBackup: Codable {
     let isAutoLearnDictionaryEnabled: Bool?
     let autoLearnMinimumCorrections: Int?
     var keepMicrophoneReady: Bool? = nil
+    /// Keyed by Labs feature identifier; see `Labs.restore`.
+    var labsFeatures: [String: Bool]? = nil
 
     func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {
         if let keepMicrophoneReady {
