@@ -15,6 +15,8 @@ actor WhisperContext {
     private var prompt: String?
     private var promptCString: [CChar]?
     private var vadModelPath: String?
+    /// Benchmark seam; nil keeps `defaultThreadCount`.
+    private var threadCountOverride: Int32?
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "WhisperContext")
 
     private init() {}
@@ -50,7 +52,6 @@ actor WhisperContext {
     func fullTranscribe(samples: [Float]) -> Bool {
         guard let context = context else { return false }
 
-        let maxThreads = max(1, min(8, cpuCount() - 2))
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
 
         let selectedLanguage = language ?? "auto"
@@ -79,7 +80,7 @@ actor WhisperContext {
         params.print_timestamps = true
         params.print_special = false
         params.translate = false
-        params.n_threads = Int32(maxThreads)
+        params.n_threads = threadCountOverride ?? Self.defaultThreadCount()
         params.offset_ms = 0
         params.no_context = true
         params.single_segment = false
@@ -176,8 +177,12 @@ actor WhisperContext {
     func setLanguage(_ language: String?) {
         self.language = language
     }
-}
 
-fileprivate func cpuCount() -> Int {
-    ProcessInfo.processInfo.processorCount
+    func setThreadCount(_ count: Int32?) {
+        threadCountOverride = count
+    }
+
+    static func defaultThreadCount(processorCount: Int = ProcessInfo.processInfo.processorCount) -> Int32 {
+        Int32(max(1, min(8, processorCount - 2)))
+    }
 }
