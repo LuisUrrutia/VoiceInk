@@ -19,6 +19,7 @@ enum ConfigurationPreferences {
                 NoSpeechGateSettings.isEnabledKey,
                 UserDefaults.Keys.keepMicrophoneReady,
                 UserDefaults.Keys.avoidsBluetoothDefaultMicrophone,
+                IdleModelUnloadSettings.isEnabledKey,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",
@@ -44,6 +45,7 @@ enum ConfigurationPreferences {
             (.integer, [
                 "CloudTranscriptionTimeout", "ShortEnhancementWordThreshold", "EnhancementTimeoutSeconds",
                 "TranscriptionRetentionMinutes", "AudioRetentionPeriod", "AutoLearnDictionaryMinimumCorrections",
+                IdleModelUnloadSettings.minutesKey,
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
             (.stringMap, ["CustomLanguagePrompts"]),
@@ -174,6 +176,8 @@ enum ConfigurationPreferences {
         case (.number, .number(let number)): valid = number.isFinite && (0...Double(Int32.max)).contains(number)
         case (.integer, .number(let number)):
             valid = number.isFinite && (0...Double(Int32.max)).contains(number) && number.rounded() == number
+                && (key != IdleModelUnloadSettings.minutesKey
+                    || IdleModelUnloadSettings.minuteChoices.contains(Int(number)))
         case (.strings, .array(let array)):
             valid = array.allSatisfy { if case .string = $0 { return true }; return false }
                 && (key != "SelectedLanguages" || !array.isEmpty)

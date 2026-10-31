@@ -112,6 +112,18 @@ struct GeneralBackup: Codable {
     var keepMicrophoneReady: Bool? = nil
     /// Keyed by Labs feature identifier; see `Labs.restore`.
     var labsFeatures: [String: Bool]? = nil
+    var unloadsModelWhenIdle: Bool? = nil
+    var modelIdleUnloadMinutes: Int? = nil
+
+    /// Missing fields keep the current choice; minutes outside the offered choices are ignored.
+    func restoreIdleModelUnload(in defaults: UserDefaults = .standard) {
+        if let unloadsModelWhenIdle {
+            defaults.set(unloadsModelWhenIdle, forKey: IdleModelUnloadSettings.isEnabledKey)
+        }
+        if let modelIdleUnloadMinutes, IdleModelUnloadSettings.minuteChoices.contains(modelIdleUnloadMinutes) {
+            defaults.set(modelIdleUnloadMinutes, forKey: IdleModelUnloadSettings.minutesKey)
+        }
+    }
 
     func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {
         if let keepMicrophoneReady {

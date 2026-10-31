@@ -507,6 +507,11 @@ class WhisperModelManager: ObservableObject {
         logger.notice("WhisperModelManager.cleanupResources: completed")
     }
 
+    func unloadIdleModel() async {
+        guard !isModelLoading, whisperContext != nil else { return }
+        await cleanupResources()
+    }
+
     // MARK: - Import Local Model
 
     func importWhisperModel(from sourceURL: URL) async {

@@ -15,12 +15,20 @@ extension StreamingUnifiedAsrManager: UnifiedModel {}
 @MainActor
 final class UnifiedModelCache<Manager: UnifiedModel> {
     private var modelTask: Task<Manager, Error>?
+    private var loadedManager: Manager?
     private let access = UnifiedModelAccess()
     private let makeManager: () -> Manager
+    private let load: @MainActor (Manager) async throws -> Void
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "UnifiedModelCache")
 
-    init(makeManager: @escaping () -> Manager) {
+    init(
+        makeManager: @escaping () -> Manager,
+        load: @escaping @MainActor (Manager) async throws -> Void = {
+            try await $0.loadModels(from: FluidAudioModelManager.parakeetUnifiedCacheDirectory())
+        }
+    ) {
         self.makeManager = makeManager
+        self.load = load
     }
 
     func getOrLoad() async throws -> Manager {
@@ -30,17 +38,28 @@ final class UnifiedModelCache<Manager: UnifiedModel> {
             let loaded = makeManager()
             let start = Date()
             do {
-                try await loaded.loadModels(from: FluidAudioModelManager.parakeetUnifiedCacheDirectory())
+                try await load(loaded)
             } catch {
                 modelTask = nil
                 await loaded.cleanup()
                 throw error
             }
+            loadedManager = loaded
             logger.notice("Unified \(String(describing: Manager.self), privacy: .public) loaded in \(Date().timeIntervalSince(start), format: .fixed(precision: 3), privacy: .public)s")
             return loaded
         }
         modelTask = task
         return try await task.value
+    }
+
+    /// Frees a loaded model unless a recording holds it or a load is in flight; the next use loads again.
+    @discardableResult
+    func unloadIfIdle() async -> Bool {
+        guard !access.isHeld, let loaded = loadedManager else { return false }
+        modelTask = nil
+        loadedManager = nil
+        await loaded.cleanup()
+        return true
     }
 
     func acquire() async throws -> Manager {
@@ -81,6 +100,7 @@ final class UnifiedModelCache<Manager: UnifiedModel> {
             try await usedManager.reset()
         } catch {
             modelTask = nil
+            if loadedManager === usedManager { loadedManager = nil }
             await usedManager.cleanup()
             logger.error("Unified reset failed: \(error, privacy: .public)")
             throw error
@@ -93,6 +113,8 @@ final class UnifiedModelCache<Manager: UnifiedModel> {
 final class UnifiedModelAccess {
     private var isLocked = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    var isHeld: Bool { isLocked }
 
     func lock() async {
         if isLocked {

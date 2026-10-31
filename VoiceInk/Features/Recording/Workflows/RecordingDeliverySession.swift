@@ -55,6 +55,7 @@ final class RecordingDeliverySession {
     private var completedPipeline = false
     private var cancelPendingTask: (() -> Void)?
     private var idleSleepHold: IdleSleepPrevention.Hold?
+    private var modelUseLease: IdleModelUnloadCoordinator.Lease?
     private let playFeedback: @MainActor (DictationFeedback.Tone) -> Void
     private let now: () -> TimeInterval
 
@@ -98,6 +99,13 @@ final class RecordingDeliverySession {
         idleSleepHold = hold
     }
 
+    /// Keeps local models from an idle unload until this session ends, like the idle-sleep hold.
+    func holdModelUse(_ lease: IdleModelUnloadCoordinator.Lease) {
+        guard !isCancelled else { return lease.release() }
+        modelUseLease?.release()
+        modelUseLease = lease
+    }
+
     /// Ends the session like `cancel()`, but a stop tone still waiting for restored output plays.
     func completePipeline() {
         if !isCancelled { completedPipeline = true }
@@ -110,6 +118,8 @@ final class RecordingDeliverySession {
         cancelPendingTask = nil
         idleSleepHold?.release()
         idleSleepHold = nil
+        modelUseLease?.release()
+        modelUseLease = nil
     }
 
     // Canceled and superseded sessions stay silent.

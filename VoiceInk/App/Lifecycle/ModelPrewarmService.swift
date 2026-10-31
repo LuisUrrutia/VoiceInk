@@ -5,28 +5,45 @@ import os
 
 @MainActor
 final class ModelPrewarmService: ObservableObject {
-    private let transcriptionModelManager: TranscriptionModelManager
     private let whisperModelManager: WhisperModelManager
     private let modelContext: ModelContext
     private let fluidAudioService: FluidAudioTranscriptionService
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "ModelPrewarm")
-    private lazy var serviceRegistry = TranscriptionServiceRegistry(
-        modelProvider: whisperModelManager,
-        modelsDirectory: whisperModelManager.modelsDirectory,
-        modelContext: modelContext
-    )
+    private let idleUnload: IdleModelUnloadCoordinator
+    private let serviceRegistry: TranscriptionServiceRegistry
+    private let defaults: UserDefaults
+    private let resolveConfiguration: @MainActor () -> TranscriptionRuntimeConfiguration?
     private let prewarmAudioURL = Bundle.main.url(forResource: "sound7", withExtension: "wav")
     private let prewarmEnabledKey = "PrewarmModelOnWake"
     private var lifecycleCancellable: AnyCancellable?
 
+    /// The defaults, registry service, resolver and scheduling parameters let tests replace app state.
     init(
         transcriptionModelManager: TranscriptionModelManager, whisperModelManager: WhisperModelManager,
-        modelContext: ModelContext, fluidAudioService: FluidAudioTranscriptionService
+        modelContext: ModelContext, fluidAudioService: FluidAudioTranscriptionService,
+        idleUnload: IdleModelUnloadCoordinator? = nil, defaults: UserDefaults = .standard,
+        registryFluidAudioService: FluidAudioTranscriptionService? = nil,
+        resolveConfiguration: (@MainActor () -> TranscriptionRuntimeConfiguration?)? = nil,
+        schedulesPrewarm: Bool = true
     ) {
-        self.transcriptionModelManager = transcriptionModelManager
+        let idleUnload = idleUnload ?? .shared
+        self.idleUnload = idleUnload
         self.whisperModelManager = whisperModelManager
         self.modelContext = modelContext
         self.fluidAudioService = fluidAudioService
+        self.defaults = defaults
+        self.resolveConfiguration = resolveConfiguration ?? {
+            ModeRuntimeResolver.transcriptionConfiguration(transcriptionModelManager: transcriptionModelManager)
+        }
+        serviceRegistry = TranscriptionServiceRegistry(
+            modelProvider: whisperModelManager,
+            modelsDirectory: whisperModelManager.modelsDirectory,
+            modelContext: modelContext,
+            fluidAudioService: registryFluidAudioService,
+            idleUnload: idleUnload,
+            activity: .maintenance
+        )
+        guard schedulesPrewarm else { return }
         lifecycleCancellable = LifecycleObserver.shared.publisher(for: .systemDidWake).sink {
             [weak self] _ in
             Task { @MainActor in
@@ -43,7 +60,7 @@ final class ModelPrewarmService: ObservableObject {
         logger.notice("App launched, scheduling prewarm")
         Task {
             try? await Task.sleep(for: .seconds(3))
-            await performPrewarm()
+            await prewarm()
         }
     }
 
@@ -52,20 +69,16 @@ final class ModelPrewarmService: ObservableObject {
         logger.notice("Mac woke from sleep, scheduling prewarm")
         Task {
             try? await Task.sleep(for: .seconds(3))
-            await performPrewarm()
+            await prewarm()
         }
     }
 
     // MARK: - Core Prewarming Logic
 
-    private func performPrewarm() async {
+    func prewarm() async {
         guard shouldPrewarm() else { return }
 
-        guard
-            let transcriptionConfiguration = ModeRuntimeResolver.transcriptionConfiguration(
-                transcriptionModelManager: transcriptionModelManager
-            )
-        else {
+        guard let transcriptionConfiguration = resolveConfiguration() else {
             logger.notice("No model selected, skipping prewarm")
             return
         }
@@ -78,9 +91,11 @@ final class ModelPrewarmService: ObservableObject {
             if currentModel.provider == .fluidAudio,
                 FluidAudioModelManager.isParakeetUnifiedModel(named: currentModel.name)
             {
-                try await fluidAudioService.prewarmUnifiedModel(
-                    isRealtime: transcriptionConfiguration.isRealtimeEnabled
-                )
+                try await idleUnload.perform(.maintenance) {
+                    try await fluidAudioService.prewarmUnifiedModel(
+                        isRealtime: transcriptionConfiguration.isRealtimeEnabled
+                    )
+                }
             } else {
                 guard let audioURL = prewarmAudioURL else {
                     logger.error("❌ Prewarm audio file (sound7.wav) not found")
@@ -103,20 +118,27 @@ final class ModelPrewarmService: ObservableObject {
 
     // MARK: - Validation
 
+    /// Frees what this service's own registry keeps resident after a prewarm.
+    func unloadIdleModels() async {
+        await serviceRegistry.unloadIdleModels()
+    }
+
     private func shouldPrewarm() -> Bool {
         // Check if user has enabled prewarming
-        let isEnabled = UserDefaults.standard.bool(forKey: prewarmEnabledKey)
+        let isEnabled = defaults.bool(forKey: prewarmEnabledKey)
         guard isEnabled else {
             logger.notice("Prewarm disabled by user")
             return false
         }
 
+        // Launch and wake are not uses: the next dictation reloads a model the idle timer freed.
+        guard idleUnload.allowsPrewarm else {
+            logger.notice("Skipping prewarm - the model was unloaded after being idle")
+            return false
+        }
+
         // Prewarm only local runtimes that benefit from retained preparation.
-        guard
-            let model = ModeRuntimeResolver.transcriptionConfiguration(
-                transcriptionModelManager: transcriptionModelManager
-            )?.model
-        else {
+        guard let model = resolveConfiguration()?.model else {
             return false
         }
 

@@ -29,14 +29,20 @@ class TranscriptionServiceRegistry {
         return service
     }
 
+    private let idleUnload: IdleModelUnloadCoordinator
+    private let activity: IdleModelUnloadCoordinator.Activity
+
     init(
         modelProvider: any WhisperModelProvider, modelsDirectory: URL, modelContext: ModelContext,
-        fluidAudioService: FluidAudioTranscriptionService? = nil
+        fluidAudioService: FluidAudioTranscriptionService? = nil,
+        idleUnload: IdleModelUnloadCoordinator? = nil, activity: IdleModelUnloadCoordinator.Activity = .use
     ) {
         self.modelProvider = modelProvider
         self.modelsDirectory = modelsDirectory
         self.modelContext = modelContext
         self.providedFluidAudioService = fluidAudioService
+        self.idleUnload = idleUnload ?? .shared
+        self.activity = activity
     }
 
     func service(for provider: ModelProvider) -> TranscriptionService {
@@ -62,9 +68,11 @@ class TranscriptionServiceRegistry {
             "Transcribing with \(model.displayName, privacy: .public) using \(String(describing: type(of: service)), privacy: .public)"
         )
         let vocabulary = context.vocabulary ?? CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
-        return try await service.transcribe(
-            audioURL: audioURL, model: model, context: context.withVocabulary(vocabulary).scoped(to: model)
-        )
+        return try await idleUnload.perform(activity) {
+            try await service.transcribe(
+                audioURL: audioURL, model: model, context: context.withVocabulary(vocabulary).scoped(to: model)
+            )
+        }
     }
 
     /// Creates a streaming or file-based session for the resolved transcription configuration.
@@ -85,6 +93,15 @@ class TranscriptionServiceRegistry {
         }
     }
 
+    /// Nil for batch configurations. Waits for an idle unload in progress so the session loads a fresh model.
+    func makeRealtimeSession(
+        for configuration: TranscriptionRuntimeConfiguration, onPartialTranscript: ((String) -> Void)? = nil
+    ) async -> TranscriptionSession? {
+        await waitForPendingUnload()
+        guard shouldUseRealtimeTranscription(for: configuration) else { return nil }
+        return createSession(for: configuration, onPartialTranscript: onPartialTranscript)
+    }
+
     /// Whether the resolved transcription configuration should use real-time transcription.
     func shouldUseRealtimeTranscription(for configuration: TranscriptionRuntimeConfiguration) -> Bool {
         configuration.isRealtimeEnabled
@@ -94,6 +111,8 @@ class TranscriptionServiceRegistry {
         _ configuration: TranscriptionRuntimeConfiguration, recordingID: UUID,
         whisperModelManager: WhisperModelManager
     ) async throws {
+        try Task.checkCancellation()
+        await waitForPendingUnload()
         try Task.checkCancellation()
         let model = configuration.model
         if model.provider == .whisper {
@@ -122,5 +141,18 @@ class TranscriptionServiceRegistry {
     func cleanup() async {
         await fluidAudioTranscriptionService.cleanup()
         cachedTranscribeCppTranscriptionService?.cleanup()
+    }
+
+    func beginModelUse() -> IdleModelUnloadCoordinator.Lease {
+        idleUnload.begin(activity)
+    }
+
+    func waitForPendingUnload() async {
+        await idleUnload.waitForPendingUnload()
+    }
+
+    func unloadIdleModels() async {
+        await fluidAudioTranscriptionService.unloadIdleModels()
+        cachedTranscribeCppTranscriptionService?.unloadIdleModel()
     }
 }

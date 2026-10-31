@@ -165,7 +165,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         speechDetector: SpeechDetecting? = nil,
         isNoSpeechGateEnabled: @escaping () -> Bool = { NoSpeechGateSettings.isEnabled },
         startSoundPlayback: @escaping @MainActor () -> SoundPlayback? = { SoundManager.shared.lastStartSoundPlayback },
-        idleSleepPrevention: IdleSleepPrevention = .shared
+        idleSleepPrevention: IdleSleepPrevention = .shared,
+        idleModelUnload: IdleModelUnloadCoordinator? = nil,
+        fluidAudioService: FluidAudioTranscriptionService? = nil
     ) {
         self.modelContext = modelContext
         self.idleSleepPrevention = idleSleepPrevention
@@ -192,7 +194,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         self.serviceRegistry = TranscriptionServiceRegistry(
             modelProvider: whisperModelManager,
             modelsDirectory: whisperModelManager.modelsDirectory,
-            modelContext: modelContext
+            modelContext: modelContext,
+            fluidAudioService: fluidAudioService,
+            idleUnload: idleModelUnload
         )
         self.pipeline = TranscriptionPipeline(
             modelContext: modelContext,
@@ -374,6 +378,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             self.activeRecordingStartID = startID
             self.activeRecordingDelivery = capturedDelivery
             capturedDelivery.preventIdleSleep(idleSleepPrevention.begin())
+            capturedDelivery.holdModelUse(serviceRegistry.beginModelUse())
             let activeModeTask = ActiveWindowService.shared.beginApplyingConfiguration(modeId: modeId) {
                 [weak self] in
                 guard let self else { return false }
@@ -449,11 +454,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         )
                     },
                     prepareSession: { [weak self] configuration in
-                        guard registry.shouldUseRealtimeTranscription(for: configuration) else {
-                            _ = realtimeAudioGate.reset()
-                            return nil
-                        }
-                        let session = registry.createSession(
+                        guard let session = await registry.makeRealtimeSession(
                             for: configuration,
                             onPartialTranscript: { [weak self] partial in
                                 Task { @MainActor in
@@ -463,7 +464,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
                                     self.partialTranscript = partial
                                 }
                             }
-                        )
+                        ) else {
+                            _ = realtimeAudioGate.reset()
+                            return nil
+                        }
                         do {
                             let callback = try await session.prepare(
                                 configuration: configuration,
@@ -1247,6 +1251,16 @@ class VoiceInkEngine: NSObject, ObservableObject {
             timing?.mark(.firstAudio, at: firstAudio)
         }
         timing?.mark(.wavClosed, outcome: recorder.recordingError == nil ? .completed : .failed)
+    }
+
+    /// Capture and finalization that hold no model lease still keep the idle timer from unloading.
+    var isUsingTranscriptionModels: Bool {
+        recordingState != .idle || microphoneDiagnostic.isBusy || recordingFinalization.isRunning
+    }
+
+    func unloadIdleModels() async {
+        await whisperModelManager.unloadIdleModel()
+        await serviceRegistry.unloadIdleModels()
     }
 
     func cleanupResources() async {

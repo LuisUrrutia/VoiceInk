@@ -183,6 +183,7 @@ struct VoiceInkApp: App {
             fluidAudioService: engine.serviceRegistry.fluidAudioTranscriptionService
         )
         _prewarmService = StateObject(wrappedValue: prewarmService)
+        IdleModelUnloadCoordinator.shared.configure(engine: engine, prewarmService: prewarmService)
 
         if usesConfigurationFile {
             configurationFile.startObserving()
