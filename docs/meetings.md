@@ -79,7 +79,8 @@ Microsoft Teams and FaceTime. For each app, choose on the Meetings page:
 ## Transcripts
 
 When a meeting stops, VoiceInk transcribes it on this Mac and writes a Markdown
-file to the transcript folder. Meetings never use a cloud provider. VoiceInk uses
+file to the transcript folder. Transcription never uses a cloud provider; only
+an optional summary, below, sends transcript text to your enhancement provider. VoiceInk uses
 the current model when it is local (Parakeet or Whisper). Otherwise it uses a
 downloaded local model, and prefers one that reports word times. Recording needs
 such a model. VoiceInk loads its own copy of the model for the transcription and
@@ -109,11 +110,12 @@ Yes, loud and clear.
   offers **Copy Last Meeting Transcript**.
 
 Turn on **Add a short summary** to put a summary of at most two sentences
-above the transcript. The summary uses the AI provider selected for
-enhancement. VoiceInk Refine runs on this Mac. Other providers, Ollama on
-another computer and Local CLI commands can send the transcript elsewhere. A
-long meeting is shortened to its opening, a few middle passages and its
-ending. If the provider fails, the transcript is written without a summary.
+above the transcript. The summary sends the transcript to the AI provider
+selected for enhancement. Cloud providers, Ollama on another computer and Local
+CLI commands can send it elsewhere. VoiceInk Refine only cleans up text, so it
+cannot summarize. A long meeting is shortened to its opening, a few middle
+passages and its ending. If the provider fails or takes longer than 90 seconds,
+the transcript is written without a summary.
 
 Parakeet TDT models place turns by word. Parakeet Unified and Nemotron place
 turns by speech region, and Whisper by its segments.
