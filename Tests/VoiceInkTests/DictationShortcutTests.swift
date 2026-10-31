@@ -72,12 +72,73 @@ final class DictationShortcutTests: XCTestCase {
         await fixture.down(at: 0, mode: .pushToTalk)
         await fixture.down(at: 0.01, mode: .pushToTalk)
         await fixture.up(at: 0.02, mode: .pushToTalk)
-        XCTAssertEqual(fixture.toggles, 2)
+        XCTAssertEqual(fixture.toggles, 1)
+        XCTAssertEqual(fixture.cancels, 1)
+        XCTAssertFalse(fixture.visible)
 
         await fixture.down(at: 0.25, mode: .pushToTalk)
-        await fixture.up(at: 0.26, mode: .pushToTalk)
+        await fixture.up(at: 0.6, mode: .pushToTalk)
 
-        XCTAssertEqual(fixture.toggles, 4)
+        XCTAssertEqual(fixture.toggles, 3)
+        XCTAssertEqual(fixture.cancels, 1)
+    }
+
+    func testShortPushToTalkTapDiscardsTheRecordingAndRetractsTheStartTone() async {
+        let fixture = HandlerFixture()
+        await fixture.down(at: 0, mode: .pushToTalk)
+        await fixture.up(at: 0.299, mode: .pushToTalk)
+
+        XCTAssertEqual(fixture.toggles, 1)
+        XCTAssertEqual(fixture.cancels, 1)
+        XCTAssertEqual(fixture.retractions, 1)
+
+        await fixture.down(at: 1, mode: .pushToTalk)
+        await fixture.up(at: 1.3, mode: .pushToTalk)
+
+        XCTAssertEqual(fixture.toggles, 3)
+        XCTAssertEqual(fixture.cancels, 1)
+        XCTAssertEqual(fixture.retractions, 1)
+    }
+
+    func testToggleHybridAndDoubleTapTapsKeepTheStartTone() async {
+        let toggle = HandlerFixture()
+        await toggle.down(at: 0, mode: .toggle)
+        await toggle.up(at: 0.05, mode: .toggle)
+        let hybrid = HandlerFixture()
+        await hybrid.down(at: 0, mode: .hybrid)
+        await hybrid.up(at: 0.1, mode: .hybrid)
+        let double = HandlerFixture()
+        await double.down(at: 0, mode: .doubleTap)
+        await double.up(at: 0.05, mode: .doubleTap)
+        await double.down(at: 0.1, mode: .doubleTap)
+        await double.up(at: 0.15, mode: .doubleTap)
+
+        for fixture in [toggle, hybrid, double] {
+            XCTAssertEqual(fixture.toggles, 1)
+            XCTAssertTrue(fixture.visible)
+            XCTAssertEqual(fixture.cancels, 0)
+            XCTAssertEqual(fixture.retractions, 0)
+        }
+    }
+
+    func testChordDuringAnAccidentalStartRetractsTheStartToneInEveryMode() async {
+        for mode in [RecordingShortcutManager.Mode.toggle, .pushToTalk, .hybrid] {
+            let fixture = HandlerFixture()
+            await fixture.down(at: 0, mode: mode)
+
+            await fixture.handler.handleInterruption(action: .primaryRecording, pressedAt: 0)
+
+            XCTAssertEqual(fixture.cancels, 1, "\(mode)")
+            XCTAssertEqual(fixture.retractions, 1, "\(mode)")
+        }
+        let double = HandlerFixture()
+        await double.down(at: 0, mode: .doubleTap)
+        await double.handler.handleInterruption(action: .primaryRecording, pressedAt: 0)
+        await double.up(at: 0.05, mode: .doubleTap)
+        await double.down(at: 0.1, mode: .doubleTap)
+        await double.up(at: 0.15, mode: .doubleTap)
+        XCTAssertEqual(double.toggles, 0, "A chord clears the pending double tap before any start tone")
+        XCTAssertEqual(double.retractions, 0)
     }
 
     func testHybridHoldThresholdAndDoubleTapTimingRemainUnchanged() async {
@@ -116,13 +177,16 @@ final class DictationShortcutTests: XCTestCase {
         var visible = false
         var toggles = 0
         var eventTimes: [TimeInterval] = []
+        var cancels = 0
+        var retractions = 0
         var held = false
         lazy var handler = RecordingShortcutModeHandler(
             canHandleShortcutAction: { true }, isRecorderVisible: { self.visible },
             recordingState: { self.visible ? .recording : .idle },
             isShortcutHeld: { _ in self.held }, finishHeldRecording: {},
             toggleRecorderPanel: { _, eventTime in self.visible.toggle(); self.toggles += 1; self.eventTimes.append(eventTime) },
-            cancelRecording: { self.visible = false }, now: { self.now }
+            cancelRecording: { self.visible = false; self.cancels += 1 },
+            retractStartSound: { self.retractions += 1 }, now: { self.now }
         )
         func down(at time: TimeInterval, mode: RecordingShortcutManager.Mode) async {
             now = time
