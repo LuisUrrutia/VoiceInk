@@ -72,6 +72,7 @@ preference, retaining its other entries.
     "vocabulary": [{
       "term": "VoiceInk",
       "sectionID": "65C07CF6-82C1-43D1-990F-A0D919B6632E",
+      "soundsLike": ["voice ink", "voicing"],
     }],
     "replacements": [{
       "sources": ["voice ink", "vois ink"],
@@ -85,6 +86,12 @@ Generated dictionary entries also include `addedAt` (Unix time in seconds), and
 replacement rules include their `id`. Keep these fields when moving a file between
 machines. They are optional when adding entries by hand. Vocabulary membership
 references section UUIDs; replacement sources are separate phrases, without commas.
+A term's optional `soundsLike` lists spellings a transcript may show instead; AI
+enhancement uses them to restore the term, while transcription and word replacements
+ignore them. An omitted, `null` or empty `soundsLike` means the term has none, and
+generated files include it only when nonempty. Spellings must be nonempty, comma-free,
+unique ignoring case and different from their term, with at most 16 spellings of up
+to 64 characters each.
 Duplicate identities and duplicate sources within one rule are rejected. Legacy
 rules sharing sources or forming cycles are preserved and use the app's existing
 ordered replacement behavior. Replacement targets trim surrounding whitespace and
