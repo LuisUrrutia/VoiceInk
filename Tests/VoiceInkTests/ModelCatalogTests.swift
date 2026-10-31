@@ -137,14 +137,73 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertTrue(empty.isEmpty)
     }
 
+    private let greekCohere = TranscribeCppModel(
+        name: ModelRecommendations.cohereTranscribe, displayName: "Cohere Transcribe", description: "Speech",
+        size: "1.56 GB", speed: 0.75, accuracy: 0.95, ramUsage: 2.5,
+        publisher: "Cohere", supportedLanguages: ["el": "Greek", "en": "English"]
+    )
+    private let turbo = WhisperModel(
+        name: ModelRecommendations.whisperLargeV3Turbo, displayName: "Large v3 Turbo", size: "1.5 GB",
+        supportedLanguages: ["auto": "Auto-detect", "el": "Greek", "en": "English", "ja": "Japanese"],
+        description: "Speech", speed: 0.75, accuracy: 0.94, ramUsage: 1.8
+    )
+    private let senseVoice = TranscribeCppModel(
+        name: ModelRecommendations.senseVoiceSmall, displayName: "SenseVoice Small", description: "Speech",
+        size: "241 MB", speed: 0.99, accuracy: 0.92, ramUsage: 0.5,
+        publisher: "FunAudioLLM", supportedLanguages: ["ja": "Japanese", "en": "English"]
+    )
+
+    func testDefaultOrderPlacesRecommendationsFirstInTheirRoleOrder() {
+        let catalog: [any TranscriptionModel] = [apple, parakeet, senseVoice, tiny, turbo, greekCohere]
+
+        let japanese = models(catalog, recommendations: ModelRecommendations(languages: ["ja"]))
+        let greek = models(catalog, recommendations: ModelRecommendations(languages: ["el"]))
+
+        XCTAssertEqual(
+            japanese.map(\.name),
+            [turbo.name, senseVoice.name, "apple-speech", "parakeet", "tiny", greekCohere.name])
+        XCTAssertEqual(
+            greek.map(\.name),
+            [greekCohere.name, "apple-speech", "parakeet", senseVoice.name, "tiny", turbo.name])
+    }
+
+    func testRatingAndNameSortsIgnoreRecommendations() {
+        let catalog: [any TranscriptionModel] = [apple, tiny, turbo, greekCohere]
+        let greek = ModelRecommendations(languages: ["el"])
+
+        for order in [ModelCatalogSortOrder.speed, .accuracy, .name] {
+            XCTAssertEqual(
+                models(catalog, sortOrder: order, recommendations: greek).map(\.name),
+                models(catalog, sortOrder: order).map(\.name))
+        }
+    }
+
+    func testRecommendationsKeepInstallationFiltersAndSearch() {
+        let catalog: [any TranscriptionModel] = [tiny, senseVoice, turbo]
+        let japanese = ModelRecommendations(languages: ["ja"])
+
+        let installed = models(
+            catalog, installation: .installed, recommendations: japanese, installedNames: ["tiny", senseVoice.name])
+        let notInstalled = models(
+            catalog, installation: .notInstalled, recommendations: japanese, installedNames: ["tiny", senseVoice.name])
+        let searched = ModelCatalog.localSpeechModels(
+            from: catalog, installation: .all, sortOrder: .catalog, searchText: "Tiny", recommendations: japanese,
+            isInstalled: { _ in false })
+
+        XCTAssertEqual(installed.map(\.name), [senseVoice.name, "tiny"])
+        XCTAssertEqual(notInstalled.map(\.name), [turbo.name])
+        XCTAssertEqual(searched.map(\.name), ["tiny"])
+    }
+
     private func models(
         _ models: [any TranscriptionModel],
         installation: ModelInstallationFilter = .all,
         sortOrder: ModelCatalogSortOrder = .catalog,
+        recommendations: ModelRecommendations = .none,
         installedNames: Set<String> = []
     ) -> [any TranscriptionModel] {
         ModelCatalog.localSpeechModels(
-            from: models, installation: installation, sortOrder: sortOrder,
+            from: models, installation: installation, sortOrder: sortOrder, recommendations: recommendations,
             isInstalled: { installedNames.contains($0.name) }
         )
     }

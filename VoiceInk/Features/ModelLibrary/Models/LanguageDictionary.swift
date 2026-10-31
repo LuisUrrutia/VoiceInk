@@ -36,6 +36,12 @@ enum TranscriptionLanguageSupport {
         return languages.count > 1 ? "auto" : languages[0]
     }
 
+    /// Names a selection as the language pickers do, joined as a localized list.
+    static func displayNames(for codes: [String], in languages: [String: String] = [:]) -> String {
+        let names = codes.map { languages[$0] ?? LanguageDictionary.all[$0] ?? LanguageDictionary.appleNative[$0] ?? $0 }
+        return ListFormatter.localizedString(byJoining: names)
+    }
+
     static func languages(for model: any TranscriptionModel, realtimeEnabled: Bool? = nil) -> [String: String] {
         model.supportedLanguages
     }
