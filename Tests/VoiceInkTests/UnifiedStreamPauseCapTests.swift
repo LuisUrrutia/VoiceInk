@@ -3,8 +3,9 @@ import XCTest
 @testable import VoiceInk
 
 final class UnifiedStreamPauseCapTests: XCTestCase {
-    private let head = UnifiedStreamPauseCap.headSamples
-    private let tail = UnifiedStreamPauseCap.tailSamples
+    // The retained contract: 2.5 s of pause head and 0.3 s of tail at 16 kHz.
+    private let head = 40_000
+    private let tail = 4_800
 
     func testLongDigitalSilenceKeepsOnlyTheHeadAndTail() {
         let before = speech(seconds: 1, seed: 1)

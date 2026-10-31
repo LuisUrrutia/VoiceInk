@@ -111,6 +111,7 @@ final class UnifiedStreamPauseReproductionTests: XCTestCase {
         )
         await service.cleanup()
         try lines.joined(separator: "\n").appending("\n").write(toFile: reportPath, atomically: true, encoding: .utf8)
+        XCTAssertLessThanOrEqual(totals.streamLost, totals.batchLost, "The stream lost resumed words that batch kept")
     }
 
     private func streamedText(
