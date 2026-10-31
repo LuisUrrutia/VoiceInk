@@ -84,7 +84,50 @@ final class MeetingEchoTests: XCTestCase {
         XCTAssertEqual(frames[25], MeetingEchoEnvelope.silentDecibels)
     }
 
+    func testContinuousAudioFillsEveryFrameWithoutFalseSilence() {
+        var timeline = MeetingTrackTimeline()
+        timeline.record(frame: 0, at: 0)
+
+        let frames = MeetingEchoEnvelope.frames(of: [Float](repeating: 0.1, count: 60 * rate), timeline: timeline)
+
+        XCTAssertEqual(frames.count, 3_000)
+        XCTAssertFalse(frames.contains(MeetingEchoEnvelope.silentDecibels))
+    }
+
     // MARK: - Words
+
+    func testFuzzyTokensMatchOnlyWhenSimilarEnoughAndLongEnough() {
+        XCTAssertTrue(MeetingEchoSuppression.tokensMatch("support", "suport"))
+        XCTAssertTrue(MeetingEchoSuppression.tokensMatch("aisdk", "aick"))
+        XCTAssertFalse(MeetingEchoSuppression.tokensMatch("beta", "better"))
+        XCTAssertFalse(MeetingEchoSuppression.tokensMatch("ai", "aj"))
+        XCTAssertTrue(MeetingEchoSuppression.tokensMatch("ai", "ai"))
+    }
+
+    func testMisheardEchoIsDroppedOnlyBecauseOfFuzzyMatching() {
+        let entries = [
+            entry(.them, 2_000, 4_000, "Configuration deployment tomorrow"),
+            entry(.you, 2_100, 4_100, "Configurations deploymant tomorow"),
+        ]
+
+        let result = MeetingEchoSuppression.suppress(entries) { _, _ in nil }
+
+        XCTAssertEqual(result.dropped, 1)
+        XCTAssertEqual(result.entries.map(\.speaker), [.them])
+    }
+
+    func testManifestsWithoutAnEchoCountStillLoad() throws {
+        let manifest = MeetingManifest(title: "Old")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.meetingManifest.encode(manifest)) as? [String: Any])
+        object.removeValue(forKey: "echoSuppressedUtterances")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let decoded = try decoder.decode(MeetingManifest.self, from: JSONSerialization.data(withJSONObject: object))
+
+        XCTAssertNil(decoded.echoSuppressedUtterances)
+        XCTAssertEqual(decoded.id, manifest.id)
+    }
 
     func testSpeakerEchoOfRemoteSpeechIsDropped() {
         let entries = [
@@ -180,6 +223,27 @@ final class MeetingEchoTests: XCTestCase {
         ).transcribe(manifest, store: store)
 
         XCTAssertFalse(result.turns.isEmpty)
+        XCTAssertTrue(result.turns.allSatisfy { $0.speaker == .them })
+        XCTAssertGreaterThanOrEqual(result.echoSuppressedUtterances, 1)
+    }
+
+    func testSilencedDictationsDoNotHideSpeakerBleedElsewhere() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("MeetingEchoTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(rootURL: root)
+        var manifest = MeetingManifest(title: "Echo")
+        _ = try store.createDirectory(for: manifest.id)
+        let system = speech(seconds: 60, seed: 11)
+        try write(system, to: store.audioURL(for: manifest.id, track: .system))
+        try write(bleed(system, delayMilliseconds: 60, gain: 0.08), to: store.audioURL(for: manifest.id, track: .microphone))
+        for kind in MeetingManifest.TrackKind.allCases { manifest.updateTrack(kind) { $0.timeline.record(frame: 0, at: 0) } }
+        manifest.dictationIntervals = [.init(start: 0, end: 10), .init(start: 20, end: 30), .init(start: 40, end: 50)]
+        let model = try XCTUnwrap(TranscriptionModelRegistry.models.first { $0.name == "parakeet-tdt-0.6b-v3" })
+
+        let result = try await MeetingTranscriber(
+            transcriber: SameWordsTranscriber(), model: model, context: TranscriptionRequestContext(languages: ["en"])
+        ).transcribe(manifest, store: store)
+
         XCTAssertTrue(result.turns.allSatisfy { $0.speaker == .them })
         XCTAssertGreaterThanOrEqual(result.echoSuppressedUtterances, 1)
     }
