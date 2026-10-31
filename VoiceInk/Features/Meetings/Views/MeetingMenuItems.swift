@@ -16,6 +16,9 @@ struct MeetingMenuItems: View {
                 Button("Record Meeting") { Task { await recorder.toggle() } }
                     .disabled(recorder.isStarting)
             }
+            if let latest = recorder.meetings.first(where: { $0.transcriptPath != nil }) {
+                Button("Copy Last Meeting Transcript") { MeetingTranscriptClipboard.copy(latest) }
+            }
         }
     }
 }

@@ -51,6 +51,41 @@ While a meeting records:
 If you quit VoiceInk while a meeting records, both files are closed and the
 meeting is marked **Interrupted**.
 
+## Transcripts
+
+When a meeting stops, VoiceInk transcribes it on this Mac and writes a Markdown
+file to the transcript folder. Meetings never use a cloud provider. VoiceInk uses
+the current model when it is local (Parakeet or Whisper). Otherwise it uses a
+downloaded local model, and prefers one that reports word times. Recording needs
+such a model. VoiceInk loads its own copy of the model for the transcription and
+releases it afterwards. A dictation started during transcription runs first.
+
+```markdown
+# Meeting Oct 15, 2026 at 2:30 PM
+
+- **Date:** Thursday, October 15, 2026 at 2:30 PM
+- **Duration:** 42:10
+
+## Transcript
+
+**You** · 00:01
+Hi, can you hear me?
+
+**Them** · 00:04
+Yes, loud and clear.
+```
+
+- A file is never replaced. A second transcript of the same meeting gets
+  ` (2)` and so on.
+- The words you dictated during the meeting are left out of **You**.
+- A failed transcription keeps the audio. Use **Transcribe** on the Meetings page
+  to try again.
+- **Copy** copies the file as it is now, including your edits. The menu bar
+  offers **Copy Last Meeting Transcript**.
+
+Parakeet TDT models place turns by word. Parakeet Unified and Nemotron place
+turns by speech region, and Whisper by its segments.
+
 ## Files
 
 Audio stays in VoiceInk's own data folder. Each build has a separate folder:
@@ -72,6 +107,10 @@ Transcripts are written to the folder you choose. The default is
 ## Limits
 
 - No real call has been recorded end to end with this implementation yet.
+- Echo from speakers is not suppressed yet. With speakers, Them can also appear
+  as You.
+- A track is read into memory for transcription, about 230 MB for each hour of
+  audio.
 - The system tap captures every app's output, not only the call app.
 - The two tracks have separate clocks. Their timelines realign every 5 seconds
   and after every gap, but drift between anchors is not corrected.

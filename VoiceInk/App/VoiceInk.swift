@@ -169,6 +169,7 @@ struct VoiceInkApp: App {
         let recordingShortcutManager = RecordingShortcutManager(engine: engine, recorderUIManager: recorderUIManager)
         _recordingShortcutManager = StateObject(wrappedValue: recordingShortcutManager)
 
+        MeetingTranscriptionCoordinator.shared.configure(engine: engine)
         MeetingIndicatorController.shared.start()
 
         let menuBarManager = MenuBarManager()

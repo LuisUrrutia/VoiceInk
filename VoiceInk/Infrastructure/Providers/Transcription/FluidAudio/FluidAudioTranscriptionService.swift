@@ -310,3 +310,58 @@ extension FluidAudioTranscriptionService: SpeechDetecting {
         return try await !manager.segmentSpeech(samples, config: Self.noSpeechGateSegmentation).isEmpty
     }
 }
+
+extension FluidAudioTranscriptionService: TimedSpeechTranscribing {
+    /// Parakeet TDT reports token times; Unified and Nemotron report text only, as one segment.
+    func transcribeTimed(
+        samples: [Float], model: any TranscriptionModel, context: TranscriptionRequestContext
+    ) async throws -> [TimedTranscriptSegment] {
+        guard model.provider == .fluidAudio else { throw TimedTranscriptionError.unsupportedModel }
+        guard !samples.isEmpty else { return [] }
+        let minimumSamples = ASRConstants.minimumRequiredSamples(forSampleRate: ASRConstants.sampleRate)
+        var input = samples
+        if input.count < minimumSamples { input += [Float](repeating: 0, count: minimumSamples - input.count) }
+
+        if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
+            let text = try await unifiedBatchModels.withModel { manager in try await manager.transcribe(input) }
+            return TimedTranscriptSegment.untimed(text, sampleCount: samples.count)
+        }
+
+        if FluidAudioModelManager.isNemotronModel(named: model.name) {
+            try await ensureNemotronModelsLoaded(named: model.name)
+            guard let nemotronAsrManager else { throw ASRError.notInitialized }
+            let language = TranscriptionLanguageSupport.validLanguageOrFallback(context.language, for: model)
+            await nemotronAsrManager.setLanguage(FluidAudioModelManager.nemotronLanguageHint(from: language))
+            await nemotronAsrManager.reset()
+            _ = try await nemotronAsrManager.process(samples: input + [Float](repeating: 0, count: 16_000))
+            return TimedTranscriptSegment.untimed(try await nemotronAsrManager.finish(), sampleCount: samples.count)
+        }
+
+        try await ensureModelsLoaded(for: version(for: model))
+        guard let asrManager else { throw ASRError.notInitialized }
+        var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
+        let result = try await asrManager.transcribe(
+            input, decoderState: &decoderState, language: Self.languageHint(from: context.language, model: model)
+        )
+        guard let timings = result.tokenTimings, !timings.isEmpty else {
+            return TimedTranscriptSegment.untimed(result.text, sampleCount: samples.count)
+        }
+        let words = WordAgreementEngine.mergeTokensToWords(timings).map {
+            TimedTranscriptWord(text: $0.text, start: $0.startTime, end: $0.endTime)
+        }
+        return TimedTranscriptSegment.grouping(words)
+    }
+
+    func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? {
+        guard let segments = try await detectedSpeechSegments(in: samples) else { return nil }
+        return segments.compactMap { segment in
+            let start = max(0, Int((segment.startTime * 16_000).rounded()))
+            let end = min(samples.count, Int((segment.endTime * 16_000).rounded()))
+            return start < end ? start..<end : nil
+        }
+    }
+
+    func releaseResources() async {
+        await cleanup()
+    }
+}

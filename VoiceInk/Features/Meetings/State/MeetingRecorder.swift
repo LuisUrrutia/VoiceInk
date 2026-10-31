@@ -17,12 +17,15 @@ enum MeetingRecorderError: LocalizedError, Equatable {
     case alreadyRecording
     case microphoneNotAuthorized
     case systemAudioDenied
+    case noLocalModel
 
     var errorDescription: String? {
         switch self {
         case .featureDisabled: String(localized: "Turn on Meetings in Labs to record meetings.")
         case .alreadyRecording: String(localized: "A meeting is already recording.")
         case .microphoneNotAuthorized: String(localized: "Allow VoiceInk to use the microphone to record meetings.")
+        case .noLocalModel:
+            String(localized: "Meetings needs a downloaded local model, such as Parakeet or Whisper. Download one in Models.")
         case .systemAudioDenied:
             String(localized: "Allow VoiceInk under System Settings › Privacy & Security › Screen & System Audio Recording.")
         }
@@ -65,6 +68,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
 
     /// Called with each meeting once its audio is closed; transcription subscribes here.
     var onRecorded: ((MeetingManifest) -> Void)?
+    /// Whether a local model can transcribe a meeting; set by transcription, and nil allows recording.
+    var canTranscribe: (() -> Bool)?
 
     private var session: Session?
     /// Dictation capture is tracked whether or not a meeting records, so one that overlaps a start is not lost.
@@ -169,6 +174,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         guard Labs.isEnabled(.meetings, in: dependencies.defaults) else { throw MeetingRecorderError.featureDisabled }
         guard session == nil, !isStarting else { throw MeetingRecorderError.alreadyRecording }
         guard dependencies.isMicrophoneAuthorized() else { throw MeetingRecorderError.microphoneNotAuthorized }
+        guard canTranscribe?() ?? true else { throw MeetingRecorderError.noLocalModel }
         isStarting = true
         defer { isStarting = false }
         NotificationCenter.default.post(name: Self.willStartNotification, object: self)

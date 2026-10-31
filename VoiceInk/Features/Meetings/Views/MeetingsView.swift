@@ -123,12 +123,29 @@ private struct MeetingRow: View {
     let meeting: MeetingManifest
     let isActive: Bool
     @ObservedObject private var recorder = MeetingRecorder.shared
+    @ObservedObject private var transcription = MeetingTranscriptionCoordinator.shared
+
+    private var isTranscribing: Bool {
+        meeting.status == .transcribing || transcription.transcribingID == meeting.id
+    }
 
     var body: some View {
         LabeledContent {
             HStack {
                 if let path = meeting.transcriptPath, FileManager.default.fileExists(atPath: path) {
                     Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+                    Button {
+                        MeetingTranscriptClipboard.copy(meeting)
+                    } label: {
+                        Image(appSymbol: "doc.on.doc")
+                    }
+                    .help("Copy transcript")
+                    .accessibilityLabel("Copy transcript")
+                }
+                if !isActive, !isTranscribing, meeting.status != .recording {
+                    Button(meeting.status == .transcribed ? "Transcribe Again" : "Transcribe") {
+                        transcription.enqueue(meeting.id)
+                    }
                 }
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([recorder.store.directory(for: meeting.id)])
@@ -157,7 +174,9 @@ private struct MeetingRow: View {
     private var detail: String {
         let date = meeting.createdAt.formatted(date: .abbreviated, time: .shortened)
         let duration = Duration.seconds(meeting.duration).formatted(.time(pattern: .hourMinuteSecond))
-        return [date, isActive ? nil : duration, meeting.status.displayName].compactMap { $0 }.joined(separator: " · ")
+        let status = isTranscribing ? MeetingManifest.Status.transcribing.displayName : meeting.status.displayName
+        return [date, isActive ? nil : duration, status, meeting.status == .failed ? meeting.failure : nil]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 }
 
