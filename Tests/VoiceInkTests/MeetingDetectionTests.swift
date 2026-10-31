@@ -241,6 +241,45 @@ import XCTest
         _ = await fixture.recorder.stop()
     }
 
+    func testADeclinedMeetCallStaysSnoozedWhileItsBrowserKeepsTheMicrophone() async throws {
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["com.google.Chrome.helper"]]
+        fixture.urls[.chrome] = "https://meet.google.com/abc-defg-hij"
+        await observe(fixture, seconds: [0, 2])
+        fixture.prompt.answerOffer(.notNow)
+
+        fixture.urls[.chrome] = "https://docs.google.com/document/d/notes"
+        await observe(fixture, seconds: Array(stride(from: 4.0, through: 80, by: 4)))
+        fixture.urls[.chrome] = "https://meet.google.com/abc-defg-hij"
+        await observe(fixture, seconds: [82, 84, 86])
+        XCTAssertEqual(fixture.prompt.offers, [.meet])
+
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [90, 160])
+        fixture.processes.bundleIDs = [["com.google.Chrome.helper"]]
+        await observe(fixture, seconds: [161, 163])
+        XCTAssertEqual(fixture.prompt.offers, [.meet, .meet])
+    }
+
+    func testTwoCallsStartingTogetherKeepTheFirstRecordingsBrowser() async throws {
+        MeetingSettings.setPolicy(.alwaysRecord, for: .meet, in: defaults)
+        MeetingSettings.setPolicy(.alwaysRecord, for: .zoom, in: defaults)
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["com.google.Chrome.helper"], ["us.zoom.xos"]]
+        fixture.urls[.chrome] = "https://meet.google.com/abc-defg-hij"
+        await observe(fixture, seconds: [0, 2])
+        try await waitUntil { fixture.recorder.isRecording }
+        try await Task.sleep(for: .milliseconds(30))
+        let provider = try XCTUnwrap(fixture.recorder.activeMeeting?.provider)
+
+        fixture.urls[.chrome] = "https://docs.google.com/document/d/notes"
+        await observe(fixture, seconds: [4, 7, 10])
+
+        XCTAssertTrue(fixture.prompt.stopOffers.isEmpty, "\(provider) is still on its call")
+        XCTAssertEqual(fixture.prompt.automaticStarts.count, 1)
+        _ = await fixture.recorder.stop()
+    }
+
     func testStartingAMeetingElsewhereWithdrawsAnOpenOffer() async throws {
         let fixture = makeMonitor()
         fixture.processes.bundleIDs = [["us.zoom.xos"]]
@@ -308,8 +347,17 @@ import XCTest
         try await Task.sleep(for: .milliseconds(20))
         fixture.urls.releaseLookups()
         try await Task.sleep(for: .milliseconds(50))
-
         XCTAssertTrue(fixture.prompt.offers.isEmpty)
+
+        // A fresh run starts when detection returns; the dropped observation at 0 s must not count toward it.
+        fixture.clock.now = 1.5
+        defaults.set(true, forKey: MeetingSettings.detectsCallsKey)
+        try await Task.sleep(for: .milliseconds(40))
+        fixture.clock.now = 2.5
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(fixture.prompt.offers.isEmpty)
+        fixture.clock.now = 3.6
+        try await waitUntil { fixture.prompt.offers == [.meet] }
     }
 
     func testThePromptPanelTimesOutWithoutRecordingAndNeverAnswersAfterDismissal() async throws {
