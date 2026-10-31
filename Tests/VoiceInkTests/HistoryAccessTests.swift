@@ -251,6 +251,46 @@ final class HistoryAccessTests: XCTestCase {
         XCTAssertEqual(pending, Data())
     }
 
+    func testAConnectionAdmittedAfterStopIsClosedWithoutAnAnswer() async throws {
+        let socketURL = socketDirectory.appendingPathComponent("a.sock")
+        let gate = AcceptStageGate(pausing: .accepted)
+        let server = HistoryAccessServer(socketURL: socketURL, acceptStage: gate.reach) { _ in Data("answered".utf8) }
+        try server.start()
+        let client = try Self.openConnection(socketURL.path)
+        Self.write(Data("{\"version\":1,\"command\":\"list\"}\n".utf8), to: client)
+        await gate.waitUntilPaused()
+
+        server.stop()
+        gate.resume()
+
+        let reply = await Self.readAll(client)
+        XCTAssertEqual(reply, Data())
+    }
+
+    func testAnOverCapacityConnectionGetsNoBusyAnswerAfterStop() async throws {
+        let socketURL = socketDirectory.appendingPathComponent("b.sock")
+        let gate = AcceptStageGate(pausing: .rejecting)
+        let server = HistoryAccessServer(socketURL: socketURL, acceptStage: gate.reach) { _ in Data("answered".utf8) }
+        try server.start()
+        let admitted = try (0..<HistoryAccessServer.maximumConnections).map { _ in
+            let connection = try Self.openConnection(socketURL.path)
+            Self.write(Data("{".utf8), to: connection)
+            return connection
+        }
+        let rejected = try Self.openConnection(socketURL.path)
+        await gate.waitUntilPaused()
+
+        server.stop()
+        gate.resume()
+
+        let reply = await Self.readAll(rejected)
+        XCTAssertEqual(reply, Data())
+        for connection in admitted {
+            let partialReply = await Self.readAll(connection)
+            XCTAssertEqual(partialReply, Data())
+        }
+    }
+
     func testIndeterminateProbeKeepsALiveSocketServing() async throws {
         let socketURL = socketDirectory.appendingPathComponent("p.sock")
         let live = HistoryAccessServer(socketURL: socketURL) { _ in Data("live".utf8) }
@@ -407,5 +447,30 @@ final class HistoryAccessTests: XCTestCase {
             if data.last == UInt8(ascii: "\n") { data.removeLast() }
             return data
         }.value
+    }
+}
+
+/// Holds the server's accept queue at one stage so a test can stop the server there.
+private final class AcceptStageGate: @unchecked Sendable {
+    private let stage: HistoryAccessServer.AcceptStage
+    private let paused = DispatchSemaphore(value: 0)
+    private let released = DispatchSemaphore(value: 0)
+
+    init(pausing stage: HistoryAccessServer.AcceptStage) {
+        self.stage = stage
+    }
+
+    func reach(_ reached: HistoryAccessServer.AcceptStage) {
+        guard reached == stage else { return }
+        paused.signal()
+        released.wait()
+    }
+
+    func waitUntilPaused() async {
+        await Task.detached { [paused] in paused.wait() }.value
+    }
+
+    func resume() {
+        released.signal()
     }
 }

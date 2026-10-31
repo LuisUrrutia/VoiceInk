@@ -13,6 +13,12 @@ final class HistoryAccessServer: @unchecked Sendable {
         case system(operation: String, code: Int32)
     }
 
+    /// Points in the accept loop, reported to `acceptStage` on the accept queue.
+    enum AcceptStage: Equatable {
+        case accepted
+        case rejecting
+    }
+
     enum SocketProbe: Equatable {
         case live
         case dead
@@ -27,12 +33,15 @@ final class HistoryAccessServer: @unchecked Sendable {
     private let handler: @Sendable (Data) async -> Data
     private let probe: (String) -> SocketProbe
     private let requestDeadline: TimeInterval
+    private let acceptStage: ((AcceptStage) -> Void)?
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "HistoryAccess")
     private let lock = NSLock()
     private var listener: DispatchSourceRead?
     private var boundFile: (dev_t, ino_t)?
     private var isServing = false
     private var clients: Set<Int32> = []
+    // Over-capacity connections, which stop() must also shut down before their busy answer.
+    private var rejectedClients: Set<Int32> = []
     private let acceptQueue = DispatchQueue(label: "com.prakashjoshipax.voiceink.history-access.accept")
     private let connectionQueue = DispatchQueue(
         label: "com.prakashjoshipax.voiceink.history-access.connection", attributes: .concurrent)
@@ -41,11 +50,13 @@ final class HistoryAccessServer: @unchecked Sendable {
         socketURL: URL,
         requestDeadline: TimeInterval = TimeInterval(ioTimeoutSeconds),
         probe: @escaping (String) -> SocketProbe = HistoryAccessServer.probeSocket,
+        acceptStage: ((AcceptStage) -> Void)? = nil,
         handler: @escaping @Sendable (Data) async -> Data
     ) {
         self.socketURL = socketURL
         self.requestDeadline = requestDeadline
         self.probe = probe
+        self.acceptStage = acceptStage
         self.handler = handler
     }
 
@@ -102,7 +113,7 @@ final class HistoryAccessServer: @unchecked Sendable {
                 isServing = false
             }
             // Descriptors stay registered until `finish` closes them, so none can be reused here.
-            for client in clients { shutdown(client, SHUT_RDWR) }
+            for client in clients.union(rejectedClients) { shutdown(client, SHUT_RDWR) }
             return (listener, boundFile)
         }
         source?.cancel()
@@ -120,6 +131,7 @@ final class HistoryAccessServer: @unchecked Sendable {
                 return
             }
             Self.configureClient(client)
+            acceptStage?(.accepted)
 
             var peerUID: uid_t = 0
             var peerGID: gid_t = 0
@@ -130,7 +142,10 @@ final class HistoryAccessServer: @unchecked Sendable {
             }
             let (serving, admitted) = lock.withLock {
                 guard isServing else { return (false, false) }
-                guard clients.count < Self.maximumConnections else { return (true, false) }
+                guard clients.count < Self.maximumConnections else {
+                    rejectedClients.insert(client)
+                    return (true, false)
+                }
                 clients.insert(client)
                 return (true, true)
             }
@@ -140,9 +155,11 @@ final class HistoryAccessServer: @unchecked Sendable {
                 return
             }
             guard admitted else {
+                acceptStage?(.rejecting)
                 Self.write(
                     HistoryAccessService.encode(.failure(HistoryAccessFailure(.busy, "Too many concurrent requests."))),
                     to: client)
+                lock.withLock { _ = rejectedClients.remove(client) }
                 close(client)
                 continue
             }
