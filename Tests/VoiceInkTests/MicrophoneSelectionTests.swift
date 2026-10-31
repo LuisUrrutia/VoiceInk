@@ -289,4 +289,5 @@ private final class SelectionDeviceManager: AudioDeviceManager {
     override func getSystemDefaultDevice() -> AudioDeviceID? { systemDefaultDeviceID }
     override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { deviceID == 1 }
     override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .other }
 }

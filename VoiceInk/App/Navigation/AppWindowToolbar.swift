@@ -57,6 +57,9 @@ struct MicrophoneMenu: View {
             )) {
                 Label("Use system default", appSymbol: "desktopcomputer")
             }
+            if let substitution = devices.bluetoothDefaultSubstitution {
+                Text(substitution.message)
+            }
 
             Text("Use Microphone Temporarily")
             ForEach(devices.availableDevices, id: \.uid) { device in
