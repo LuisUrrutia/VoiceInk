@@ -102,18 +102,6 @@ final class PasteSession {
             return true
         }
         let copyFailure = String(localized: "Could not copy the transcription to the clipboard.")
-        let expectedTarget: PasteApplication?
-        switch destination {
-        case .currentApplication: expectedTarget = environment.frontmost()
-        case .originalApplication(let original): expectedTarget = original
-        }
-        // Typing must leave the clipboard untouched, so decide before writing it.
-        if preferredMethod.usesClipboard, !(expectedTarget.map(environment.losesSyntheticPaste) ?? false) {
-            guard takeClipboard(text) else {
-                environment.reportFailure(copyFailure)
-                return finish(.commandNotPosted)
-            }
-        }
         let supersededPush = pendingRemotePush
         supersededPush?.cancel()
 
@@ -121,14 +109,16 @@ final class PasteSession {
             !canceled() && request == latestRequest && (owner.map { owns($0) } ?? true)
         }
         func fail(_ result: CursorPaster.PasteResult, cause: String? = nil) -> CursorPaster.PasteOutcome {
-            if let owner {
-                if owns(owner) {
+            if request == latestRequest {
+                if let owner {
+                    if owns(owner) {
+                        ClipboardManager.setClipboard(text, on: pasteboard)
+                        ownership = nil
+                    }
+                } else if result != .cancelled {
+                    // Typing leaves the clipboard untouched, so failures need the same recovery copy.
                     ClipboardManager.setClipboard(text, on: pasteboard)
-                    ownership = nil
                 }
-            } else if result != .cancelled {
-                // Typing leaves the clipboard untouched, so failures need the same recovery copy.
-                ClipboardManager.setClipboard(text, on: pasteboard)
             }
             if result != .cancelled {
                 environment.reportFailure(
@@ -173,9 +163,7 @@ final class PasteSession {
             var policy = PastePolicy.resolve(
                 for: target, preferredMethod: preferredMethod, losesSyntheticPaste: losesSyntheticPaste
             )
-            if policy.method.usesClipboard, owner == nil {
-                // Screen Sharing replaces a typing preference with clipboard delivery, and
-                // the focused application may have changed since the Chromium check.
+            if policy.method.usesClipboard {
                 guard takeClipboard(text) else { return fail(.commandNotPosted, cause: copyFailure) }
             }
             let deliveredText = await environment.adjustText(text, target, policy.method)

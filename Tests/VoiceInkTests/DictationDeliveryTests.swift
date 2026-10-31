@@ -506,22 +506,71 @@ final class DictationDeliveryTests: XCTestCase {
     }
 
     func testChromiumCheckFollowsFocusChangesBeforeDelivery() async {
-        let fixture = Fixture()
-        fixture.board.setString("original", forType: .string)
-        // The current destination is chosen at delivery time, after the clipboard decision.
-        var checks = 0
-        fixture.frontmostOverride = {
-            checks += 1
-            return checks == 1 ? Fixture.chromium : Fixture.local
+        for intoChromium in [false, true] {
+            for method in [PasteMethod.standard, .appleScript] {
+                for restore in [false, true] {
+                    let fixture = Fixture()
+                    fixture.frontmost = Fixture.remote
+                    let entered = expectation(description: "old remote push started")
+                    let effectiveTarget = intoChromium ? Fixture.chromium : Fixture.local
+                    fixture.onPush = { _ in
+                        entered.fulfill()
+                        do { try await Task.sleep(for: .seconds(30)) }
+                        catch {
+                            fixture.frontmost = effectiveTarget
+                            throw error
+                        }
+                    }
+                    let old = Task { await fixture.paste(text: "old", command: "configured") }
+                    await fulfillment(of: [entered], timeout: 2)
+                    fixture.frontmost = intoChromium ? Fixture.local : Fixture.chromium
+                    let clipboardText = fixture.board.string(forType: .string)
+                    let clipboardChangeCount = fixture.board.changeCount
+
+                    let result = await fixture.paste(restore: restore, method: method)
+                    let older = await old.value
+
+                    XCTAssertEqual(older.result, .cancelled)
+                    XCTAssertEqual(result.result, .commandPosted)
+                    XCTAssertEqual(result.target, effectiveTarget)
+                    XCTAssertEqual(fixture.methods, [intoChromium ? .directTyping : method])
+                    if intoChromium {
+                        XCTAssertEqual(fixture.typedTexts, ["transcript"])
+                        XCTAssertTrue(fixture.postedTexts.isEmpty)
+                        XCTAssertEqual(fixture.board.string(forType: .string), clipboardText)
+                        XCTAssertEqual(fixture.board.changeCount, clipboardChangeCount)
+                    } else {
+                        XCTAssertEqual(fixture.postedTexts, ["transcript"])
+                        XCTAssertTrue(fixture.typedTexts.isEmpty)
+                    }
+                }
+            }
         }
+    }
 
-        let result = await fixture.paste()
+    func testSupersededRemotePushPreservesOriginalClipboardForNewPasteRestoration() async throws {
+        let fixture = Fixture()
+        let data = Data([1, 2, 3])
+        fixture.board.setData(data, forType: .pdf)
+        fixture.board.setString("original", forType: .string)
+        fixture.frontmost = Fixture.remote
+        let entered = expectation(description: "old remote push started")
+        fixture.onPush = { _ in
+            entered.fulfill()
+            try await Task.sleep(for: .seconds(30))
+        }
+        let old = Task { await fixture.paste(text: "old", restore: true, command: "configured") }
+        await fulfillment(of: [entered], timeout: 2)
 
+        let result = await fixture.paste(destination: .originalApplication(Fixture.local), restore: true)
+        let older = await old.value
+        try await Task.sleep(for: .seconds(0.4))
+
+        XCTAssertEqual(older.result, .cancelled)
         XCTAssertEqual(result.result, .commandPosted)
-        XCTAssertEqual(result.target, Fixture.local)
-        XCTAssertEqual(fixture.methods, [.standard])
         XCTAssertEqual(fixture.postedTexts, ["transcript"])
-        XCTAssertTrue(fixture.typedTexts.isEmpty)
+        XCTAssertEqual(fixture.board.string(forType: .string), "original")
+        XCTAssertEqual(fixture.board.data(forType: .pdf), data)
     }
 
     private func makeDefaults() -> UserDefaults {
@@ -545,7 +594,6 @@ final class DictationDeliveryTests: XCTestCase {
         var typeResult = CursorPaster.PasteResult.commandPosted
         var typedTexts: [String] = []
         var onType: (() async -> Void)?
-        var frontmostOverride: (() -> PasteApplication?)?
         var activations: [PasteApplication] = []
         var methods: [PasteMethod] = []
         var pushedTexts: [String] = []
@@ -561,7 +609,7 @@ final class DictationDeliveryTests: XCTestCase {
         var onAsyncWait: ((TimeInterval) async -> Void)?
         var onPost: (() -> Void)?
         lazy var session = PasteSession(pasteboard: board, environment: .init(
-            frontmost: { self.frontmostOverride?() ?? self.frontmost },
+            frontmost: { self.frontmost },
             isRunning: { _ in self.running },
             activate: {
                 self.activations.append($0)
