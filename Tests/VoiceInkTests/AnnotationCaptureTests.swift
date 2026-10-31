@@ -267,6 +267,36 @@ import os
         XCTAssertEqual(word.start, 5.9, accuracy: 0.05)
     }
 
+    func testANarrationCaptureFailureIsKeptAndShownInTheHandoff() async throws {
+        let fixture = makeFixture()
+        let processor = AnnotationProcessor()
+        var copied: [String] = []
+        let model = try XCTUnwrap(TranscriptionModelRegistry.models.first { $0.name == "parakeet-tdt-0.6b-v3" })
+        processor.configure(
+            environment: .init(
+                chooseModel: { model }, makeTranscriber: { _ in NarrationTranscriber() },
+                requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { copied.append($0) },
+                notify: { _ in }
+            ),
+            recorder: fixture.recorder
+        )
+        try await fixture.recorder.start()
+        let id = try XCTUnwrap(fixture.recorder.activeAnnotation?.id)
+        fixture.microphone.failureAfterStop = RecordingAudioError.conversionFailed
+        _ = await fixture.recorder.stop()
+        // The partial narration is still readable.
+        try writeNarration(to: fixture.store.url(for: id, file: AnnotationManifest.narrationFileName), toneAt: 1)
+
+        await processor.waitUntilIdle()
+
+        let manifest = try fixture.store.load(id: id)
+        XCTAssertEqual(manifest.status, .ready)
+        XCTAssertEqual(manifest.narrationFailure, RecordingAudioError.conversionFailed.localizedDescription)
+        XCTAssertEqual(manifest.transcript.map(\.text), ["this button is broken"])
+        XCTAssertEqual(copied.count, 1)
+        XCTAssertTrue(copied[0].contains(RecordingAudioError.conversionFailed.localizedDescription))
+    }
+
     func testAFailedBundleWriteMarksTheAnnotationFailedWithoutAHandoff() async throws {
         let fixture = makeFixture()
         let processor = AnnotationProcessor()

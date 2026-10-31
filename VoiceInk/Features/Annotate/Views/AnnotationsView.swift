@@ -95,7 +95,9 @@ private struct AnnotationRow: View {
         case .ready: String(localized: "Ready")
         case .failed: String(localized: "Failed")
         }
-        return [MeetingMarkdown.timestamp(annotation.duration), status, annotation.failure].compactMap { $0 }.joined(separator: " · ")
+        let narration = annotation.narrationFailure.map { _ in String(localized: "Narration incomplete") }
+        return [MeetingMarkdown.timestamp(annotation.duration), status, narration, annotation.failure].compactMap { $0 }
+            .joined(separator: " · ")
     }
 }
 

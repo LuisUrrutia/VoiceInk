@@ -41,6 +41,8 @@ struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
     var transcript: [TimedTranscriptSegment] = []
     var transcriptModel: String?
     var failure: String?
+    /// The narration capture failed; its audio, and so its transcript, may be incomplete.
+    var narrationFailure: String?
 
     init(id: UUID = UUID(), createdAt: Date = Date()) {
         self.id = id

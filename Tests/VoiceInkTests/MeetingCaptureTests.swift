@@ -635,6 +635,13 @@ final class FakeMeetingMicrophoneHardware: RecordingHardware, @unchecked Sendabl
         get { state.withLock { $0.failStart } }
         set { state.withLock { $0.failStart = newValue } }
     }
+    /// What the writer reports after Stop, as a converter or file failure would.
+    private let stopError = OSAllocatedUnfairLock<Error?>(initialState: nil)
+    var failureAfterStop: Error? {
+        get { stopError.withLock { $0 } }
+        set { stopError.withLock { $0 = newValue } }
+    }
+    var recordingError: Error? { failureAfterStop }
 
     /// Delivers one input block: its converted PCM in `chunks` callbacks, then its capture progress.
     func emit(frames: Int, capturedThrough: UInt64, chunks: Int = 1) {
