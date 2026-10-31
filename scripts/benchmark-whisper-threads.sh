@@ -32,21 +32,24 @@ fetch "https://raw.githubusercontent.com/handy-computer/transcribe.cpp/856d7c10a
     "$audio" 2e9c9335af977bb667c6a1893f5109c7219e2d616ab2b69f063a30891433109b
 
 # The app downloads these names from ggerganov/whisper.cpp `main`; pin today's revision.
+# A caller-supplied VOICEINK_WHISPER_BENCH_MODELS skips these downloads.
 hf="https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1"
 turbo="$scratch/turbo/ggml-large-v3-turbo.bin"
-fetch "$hf/ggml-large-v3-turbo.bin" "$turbo" 1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69
 quantized="$scratch/turbo-q5_0/ggml-large-v3-turbo-q5_0.bin"
-fetch "$hf/ggml-large-v3-turbo-q5_0.bin" "$quantized" 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
-# The app installs the Core ML encoder with the non-quantized Turbo model.
 encoder="$scratch/turbo/ggml-large-v3-turbo-encoder.mlmodelc"
-if [[ ! -f "$encoder/.verified" ]]; then
-    zip="$scratch/encoder.zip"
-    fetch "$hf/ggml-large-v3-turbo-encoder.mlmodelc.zip" "$zip" 84bedfe895bd7b5de6e8e89a0803dfc5addf8c0c5bc4c937451716bf7cf7988a
-    rm -rf "$encoder" "$scratch/encoder-staging"
-    ditto -x -k "$zip" "$scratch/encoder-staging"
-    mv "$scratch/encoder-staging/ggml-large-v3-turbo-encoder.mlmodelc" "$encoder"
-    rm -rf "$scratch/encoder-staging" "$zip"
-    touch "$encoder/.verified"
+if [[ -z "${VOICEINK_WHISPER_BENCH_MODELS:-}" ]]; then
+    fetch "$hf/ggml-large-v3-turbo.bin" "$turbo" 1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69
+    fetch "$hf/ggml-large-v3-turbo-q5_0.bin" "$quantized" 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
+    # The app installs the Core ML encoder with the non-quantized Turbo model.
+    if [[ ! -f "$encoder/.verified" ]]; then
+        zip="$scratch/encoder.zip"
+        fetch "$hf/ggml-large-v3-turbo-encoder.mlmodelc.zip" "$zip" 84bedfe895bd7b5de6e8e89a0803dfc5addf8c0c5bc4c937451716bf7cf7988a
+        rm -rf "$encoder" "$scratch/encoder-staging"
+        ditto -x -k "$zip" "$scratch/encoder-staging"
+        mv "$scratch/encoder-staging/ggml-large-v3-turbo-encoder.mlmodelc" "$encoder"
+        rm -rf "$scratch/encoder-staging" "$zip"
+        touch "$encoder/.verified"
+    fi
 fi
 
 if $prepare_only; then
