@@ -262,7 +262,14 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         guard !isRecording, isCaptureRunning, let unit = audioUnit else { return }
         stopRunningAudioUnit(unit)
         drainAudioProcessingQueue()
-        withAudioProcessingQueue { preRoll = nil }
+        withAudioProcessingQueue {
+            preRoll?.removeAll()
+            preRoll = nil
+            for slot in inputBufferSlots {
+                slot.samples.update(repeating: 0, count: Int(slot.capacitySamples))
+            }
+        }
+        renderBuffer?.update(repeating: 0, count: Int(renderBufferSize))
         pendingPreRollPress.store(0, ordering: .relaxed)
         resetMeters()
         logger.notice("🎙️ Idle capture stopped")
@@ -1073,6 +1080,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
                 inputSampleRate: slot.sampleRate,
                 endNanoseconds: slot.endNanoseconds
             )
+            slot.samples.update(repeating: 0, count: Int(slot.capacitySamples))
             inputReadIndex.store(readIndex + 1, ordering: .releasing)
             processedBuffers += 1
         }

@@ -68,6 +68,16 @@ final class PreRollBufferTests: XCTestCase {
         XCTAssertEqual(samples, (2_550..<3_000).flatMap { [Float($0), -Float($0)] })
     }
 
+    func testCaptureGapExpiresAudioByCaptureTime() {
+        var buffer = PreRollBuffer(sampleRate: 1_000, channelCount: 1)
+        append(&buffer, frames: 0..<1_000)
+
+        append(&buffer, frames: 2_000..<2_010)
+        let samples = buffer.take(pressNanoseconds: endOfFrame(2_009))
+
+        XCTAssertEqual(samples, (2_000..<2_010).map(Float.init))
+    }
+
     private func append(_ buffer: inout PreRollBuffer, frames: Range<Int>, pendingPress: UInt64? = nil) {
         for start in stride(from: frames.lowerBound, to: frames.upperBound, by: 10) {
             let samples = (start..<min(start + 10, frames.upperBound)).map(Float.init)

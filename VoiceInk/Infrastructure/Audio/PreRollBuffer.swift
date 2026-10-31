@@ -11,6 +11,7 @@ struct PreRollBuffer {
     let channelCount: Int
     let capacityFrames: Int
     private var storage: [Float]
+    private var frameEnds: [UInt64]
     private var oldestFrame = 0
     private(set) var frameCount = 0
     /// Monotonic uptime at the end of the newest buffered frame.
@@ -23,6 +24,7 @@ struct PreRollBuffer {
         let retained = Double(Self.windowNanoseconds + Self.pendingPressLimitNanoseconds) / 1_000_000_000
         capacityFrames = Int((retained * sampleRate).rounded(.up))
         storage = [Float](repeating: 0, count: capacityFrames * channelCount)
+        frameEnds = [UInt64](repeating: 0, count: capacityFrames)
     }
 
     var duration: TimeInterval { Double(frameCount) / sampleRate }
@@ -39,6 +41,9 @@ struct PreRollBuffer {
                 frameCount -= 1
             }
             let destination = ((oldestFrame + frameCount) % capacityFrames) * channelCount
+            let framesAfter = incomingFrames - frame - 1
+            let remainingNanoseconds = UInt64((Double(framesAfter) * 1_000_000_000 / sampleRate).rounded())
+            frameEnds[(oldestFrame + frameCount) % capacityFrames] = endNanoseconds.subtractingClamped(remainingNanoseconds)
             for channel in 0..<channelCount {
                 storage[destination + channel] = samples[frame * channelCount + channel]
             }
@@ -65,6 +70,7 @@ struct PreRollBuffer {
         oldestFrame = 0
         frameCount = 0
         storage.withUnsafeMutableBufferPointer { $0.update(repeating: 0) }
+        frameEnds.withUnsafeMutableBufferPointer { $0.update(repeating: 0) }
     }
 
     private func retentionStart(pendingPressNanoseconds: UInt64?) -> UInt64 {
@@ -77,12 +83,16 @@ struct PreRollBuffer {
     }
 
     private mutating func retainFrames(after start: UInt64) {
-        let retainedNanoseconds = newestFrameEndNanoseconds.subtractingClamped(start)
-        let retainedFrames = Int((Double(retainedNanoseconds) * sampleRate / 1_000_000_000).rounded(.down))
-        let droppedFrames = frameCount - min(frameCount, retainedFrames)
+        var droppedFrames = 0
+        while droppedFrames < frameCount,
+            frameEnds[(oldestFrame + droppedFrames) % capacityFrames] <= start
+        {
+            droppedFrames += 1
+        }
         guard droppedFrames > 0 else { return }
         for frame in 0..<droppedFrames {
             let index = ((oldestFrame + frame) % capacityFrames) * channelCount
+            frameEnds[(oldestFrame + frame) % capacityFrames] = 0
             storage.withUnsafeMutableBufferPointer { samples in
                 samples[index..<index + channelCount].update(repeating: 0)
             }
