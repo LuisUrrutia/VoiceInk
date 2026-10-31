@@ -216,4 +216,31 @@ struct TranscriptionLanguageTests {
             automatic.message
                 == "Parakeet V2 can't detect the language automatically, so this mode's language changes to English.")
     }
+
+    @Test @MainActor func modeEditorAsksBeforeASwitchThatChangesTheLanguage() throws {
+        let mode = ModeConfig(
+            name: "Greek", isAIEnhancementEnabled: false, selectedTranscriptionModelName: whisper.selectionKey,
+            selectedLanguages: ["el"]
+        )
+        let englishOnly = FluidAudioModel(
+            name: "parakeet-tdt-0.6b-v2", displayName: "Parakeet V2", description: "", size: "", speed: 0,
+            accuracy: 0, ramUsage: 0, supportedLanguages: ["en": "English"]
+        )
+        let greek = TranscribeCppModel(
+            name: "cohere-transcribe", displayName: "Cohere Transcribe", description: "", size: "", speed: 0,
+            accuracy: 0, ramUsage: 0, publisher: "", supportedLanguages: ["el": "Greek", "en": "English"]
+        )
+        var draft = ModeConfigDraft(mode: .edit(mode), modeManager: .shared)
+
+        let languageChange = draft.selectTranscriptionModel(englishOnly)
+        let pending = try #require(languageChange)
+        #expect(pending.resultingLanguages == ["en"])
+        #expect(draft.selectedTranscriptionModelName == whisper.selectionKey)
+        #expect(draft.transcriptionLanguages == ["el"])
+
+        let compatibleChange = draft.selectTranscriptionModel(greek)
+        #expect(compatibleChange == nil)
+        #expect(draft.selectedTranscriptionModelName == greek.selectionKey)
+        #expect(draft.transcriptionLanguages == ["el"])
+    }
 }

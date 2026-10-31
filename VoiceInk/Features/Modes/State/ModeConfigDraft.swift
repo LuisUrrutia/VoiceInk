@@ -155,6 +155,16 @@ struct ModeConfigDraft {
         }
     }
 
+    /// Applies a model that keeps the mode's languages; otherwise returns the change to confirm first.
+    mutating func selectTranscriptionModel(_ model: any TranscriptionModel) -> TranscriptionLanguageChange? {
+        guard selectedTranscriptionModelName != model.selectionKey else { return nil }
+        if let languageChange = TranscriptionLanguageChange(selection: transcriptionLanguages, model: model) {
+            return languageChange
+        }
+        selectedTranscriptionModelName = model.selectionKey
+        return nil
+    }
+
     mutating func useCompatibleLanguage(for model: any TranscriptionModel) {
         setTranscriptionLanguages(TranscriptionLanguageSupport.validLanguagesOrFallback(transcriptionLanguages, for: model))
     }

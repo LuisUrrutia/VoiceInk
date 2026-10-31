@@ -297,14 +297,10 @@ struct ModeConfigFormView: View {
         }
     }
 
-    /// Asks before a model switch drops or replaces the mode's saved languages.
     private func selectTranscriptionModel(_ model: any TranscriptionModel) {
-        guard draft.selectedTranscriptionModelName != model.selectionKey else { return }
-        if let languageChange = TranscriptionLanguageChange(selection: draft.transcriptionLanguages, model: model) {
+        if let languageChange = draft.selectTranscriptionModel(model) {
             pendingTranscriptionModelSwitch = PendingTranscriptionModelSwitch(
                 selectionKey: model.selectionKey, languageChange: languageChange)
-        } else {
-            draft.selectedTranscriptionModelName = model.selectionKey
         }
     }
 
