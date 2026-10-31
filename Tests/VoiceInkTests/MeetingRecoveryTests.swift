@@ -160,6 +160,10 @@ import XCTest
 
         let first = try addExpired()
         try await waitUntil { !FileManager.default.fileExists(atPath: store.directory(for: first).path) }
+        // A later pass while Meetings stays on, not only the first one after enabling.
+        try await Task.sleep(for: .milliseconds(30))
+        let later = try addExpired()
+        try await waitUntil { !FileManager.default.fileExists(atPath: store.directory(for: later).path) }
         Labs.setEnabled(false, for: .meetings, in: defaults)
         let second = try addExpired()
         try await Task.sleep(for: .milliseconds(60))
