@@ -13,6 +13,24 @@ struct PrioritizedDevice: Codable, Identifiable {
     var requirements: MicrophoneRequirements?
 }
 
+enum AudioInputTransport: Equatable {
+    case builtIn
+    /// Bluetooth or Bluetooth LE: opening the microphone moves a headset to its low-quality call profile.
+    case bluetooth
+    /// Virtual and aggregate inputs can record silence while their source application is idle.
+    case virtual
+    case other
+}
+
+struct BluetoothMicrophoneSubstitution: Equatable {
+    let bluetoothName: String
+    let standInName: String
+
+    var message: String {
+        String(localized: "\(bluetoothName) is Bluetooth, so VoiceInk listens to \(standInName)")
+    }
+}
+
 enum AudioInputMode: String, CaseIterable {
     case systemDefault = "System Default"
     case custom = "Custom Device"
@@ -33,6 +51,7 @@ class AudioDeviceManager: ObservableObject {
     @Published private(set) var runningApplicationBundleIDs = Set<String>()
     @Published private(set) var inputChannelsByDevice: [AudioDeviceID: [AudioInputChannel]] = [:]
     @Published private(set) var inputChannelsByDeviceUID: [String: [UInt32]]
+    @Published private(set) var avoidsBluetoothDefaultMicrophone: Bool
     private var workspaceObservers: [NSObjectProtocol] = []
     private var eligiblePreferredMicrophones = Set<String>()
 
@@ -51,6 +70,7 @@ class AudioDeviceManager: ObservableObject {
         self.userDefaults = userDefaults
         self.notificationCenter = notificationCenter
         inputChannelsByDeviceUID = userDefaults.audioInputChannelsByDeviceUID
+        avoidsBluetoothDefaultMicrophone = userDefaults.avoidsBluetoothDefaultMicrophone
         loadPrioritizedDevices()
 
         if let savedMode = userDefaults.audioInputModeRawValue,
@@ -368,6 +388,13 @@ class AudioDeviceManager: ObservableObject {
         reconcileInputAvailability()
     }
 
+    func setAvoidsBluetoothDefaultMicrophone(_ avoids: Bool) {
+        guard avoidsBluetoothDefaultMicrophone != avoids else { return }
+        avoidsBluetoothDefaultMicrophone = avoids
+        userDefaults.avoidsBluetoothDefaultMicrophone = avoids
+        reconcileInputAvailability()
+    }
+
     func updateMicrophoneRequirements(_ requirements: MicrophoneRequirements, for uid: String) {
         guard let index = prioritizedDevices.firstIndex(where: { $0.id == uid }) else { return }
         prioritizedDevices[index].requirements = requirements.isEmpty ? nil : requirements
@@ -390,6 +417,13 @@ class AudioDeviceManager: ObservableObject {
             unmet.append(String(localized: "Requires open application: \(application.name)"))
         }
         return unmet
+    }
+
+    func hasMicrophoneRequirements(_ deviceID: AudioDeviceID) -> Bool {
+        prioritizedDevices.contains { saved in
+            saved.requirements?.isEmpty == false
+                && findAvailableDevice(uid: saved.id, modelUID: saved.modelUID)?.id == deviceID
+        }
     }
 
     func microphoneRequirementsAreMet(for deviceID: AudioDeviceID) -> Bool {
@@ -640,6 +674,20 @@ class AudioDeviceManager: ObservableObject {
         )
         guard status == noErr else { return nil }
         return property
+    }
+
+    func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport {
+        switch getUInt32DeviceProperty(deviceID: deviceID, selector: kAudioDevicePropertyTransportType) {
+        case kAudioDeviceTransportTypeBuiltIn:
+            return .builtIn
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            return .bluetooth
+        case kAudioDeviceTransportTypeVirtual, kAudioDeviceTransportTypeAggregate,
+            kAudioDeviceTransportTypeAutoAggregate:
+            return .virtual
+        default:
+            return .other
+        }
     }
 
     /// The MacBook's internal microphone is physically disconnected when the lid closes.

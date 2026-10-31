@@ -102,7 +102,8 @@ extension AudioDeviceManager {
     func automaticRecordingDeviceIDs() -> [AudioDeviceID] {
         switch inputMode {
         case .systemDefault:
-            return getSystemDefaultDevice().map { [$0] } ?? []
+            guard let defaultDeviceID = getSystemDefaultDevice() else { return [] }
+            return bluetoothDefaultStandInIDs(for: defaultDeviceID) + [defaultDeviceID]
         case .custom:
             let savedUID = userDefaults.selectedAudioDeviceUID ?? ""
             let savedModelUID = userDefaults.selectedAudioDeviceModelUID
@@ -114,10 +115,53 @@ extension AudioDeviceManager {
         }
     }
 
+    var bluetoothDefaultSubstitution: BluetoothMicrophoneSubstitution? {
+        guard inputMode == .systemDefault, temporaryMicrophone == nil,
+            let defaultDeviceID = getSystemDefaultDevice(),
+            !bluetoothDefaultStandInIDs(for: defaultDeviceID).isEmpty
+        else { return nil }
+        let currentDeviceID = getCurrentDevice()
+        guard currentDeviceID != defaultDeviceID,
+            let bluetoothName = availableDevices.first(where: { $0.id == defaultDeviceID })?.name,
+            let standInName = availableDevices.first(where: { $0.id == currentDeviceID })?.name
+        else { return nil }
+        return BluetoothMicrophoneSubstitution(bluetoothName: bluetoothName, standInName: standInName)
+    }
+
+    /// A Bluetooth system default yields to the internal microphone, else another real input; it remains the
+    /// last automatic candidate, so it is kept when no stand-in is usable.
+    private func bluetoothDefaultStandInIDs(for defaultDeviceID: AudioDeviceID) -> [AudioDeviceID] {
+        guard avoidsBluetoothDefaultMicrophone, isOperationalInputDevice(defaultDeviceID),
+            inputTransport(defaultDeviceID) == .bluetooth
+        else { return [] }
+        return fallbackRecordingDeviceIDs().filter {
+            fallbackRank($0) <= .otherInput && isDeviceUsableForRecording($0)
+        }
+    }
+
+    private enum FallbackRank: Int, Comparable {
+        case internalMicrophone, otherInput, bluetooth, unconfiguredVirtual, closedLidInternalMicrophone
+
+        static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
+
+    private func fallbackRank(_ deviceID: AudioDeviceID) -> FallbackRank {
+        if isInternalMicrophone(deviceID) {
+            return isClamshellClosed ? .closedLidInternalMicrophone : .internalMicrophone
+        }
+        guard avoidsBluetoothDefaultMicrophone else { return .otherInput }
+        switch inputTransport(deviceID) {
+        case .bluetooth: return .bluetooth
+        case .virtual: return hasMicrophoneRequirements(deviceID) ? .otherInput : .unconfiguredVirtual
+        case .builtIn, .other: return .otherInput
+        }
+    }
+
     private func fallbackRecordingDeviceIDs() -> [AudioDeviceID] {
-        let internalMicrophones = availableDevices.filter { isInternalMicrophone($0.id) }.map { $0.id }
-        let otherInputs = availableDevices.filter { !isInternalMicrophone($0.id) }.map { $0.id }
-        return isClamshellClosed ? otherInputs + internalMicrophones : internalMicrophones + otherInputs
+        let ranked = availableDevices.map { (id: $0.id, rank: fallbackRank($0.id)) }
+        return ranked.enumerated().sorted {
+            ($0.element.rank, $0.offset) < ($1.element.rank, $1.offset)
+        }.map(\.element.id)
     }
 
     func isOperationalInputDevice(_ deviceID: AudioDeviceID) -> Bool {

@@ -102,6 +102,7 @@ struct GeneralBackup: Codable {
     let finishAndSendKey: String?
     var pinPasteTargetToRecordStart: Bool? = nil
     var remoteClipboardPushCommand: String? = nil
+    var avoidsBluetoothDefaultMicrophone: Bool? = nil
     let isAutoLearnDictionaryEnabled: Bool?
     let autoLearnMinimumCorrections: Int?
     var keepMicrophoneReady: Bool? = nil
@@ -118,6 +119,12 @@ struct GeneralBackup: Codable {
         }
         if let remoteClipboardPushCommand {
             defaults.set(remoteClipboardPushCommand, forKey: PasteTargetSettings.remoteClipboardPushCommandKey)
+        }
+    }
+
+    func restoreMicrophonePreferences(in devices: AudioDeviceManager = .shared) {
+        if let avoidsBluetoothDefaultMicrophone {
+            devices.setAvoidsBluetoothDefaultMicrophone(avoidsBluetoothDefaultMicrophone)
         }
     }
 

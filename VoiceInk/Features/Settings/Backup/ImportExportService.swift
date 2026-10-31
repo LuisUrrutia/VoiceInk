@@ -198,6 +198,7 @@ class ImportExportService {
             finishAndSendKey: FinishAndSendSettings.selectedKey.rawValue,
             pinPasteTargetToRecordStart: PasteTargetSettings.isEnabled(),
             remoteClipboardPushCommand: UserDefaults.standard.string(forKey: PasteTargetSettings.remoteClipboardPushCommandKey),
+            avoidsBluetoothDefaultMicrophone: AudioDeviceManager.shared.avoidsBluetoothDefaultMicrophone,
             isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
             autoLearnMinimumCorrections: AutoLearnSettings.minimumCorrections,
             keepMicrophoneReady: UserDefaults.standard.keepMicrophoneReady

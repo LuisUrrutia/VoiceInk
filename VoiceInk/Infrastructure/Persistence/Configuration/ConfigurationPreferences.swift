@@ -18,6 +18,7 @@ enum ConfigurationPreferences {
                 "useScreenCaptureContext", "SmartPunctuationEnabled", "IsAutomaticVocabularyCorrectionEnabled",
                 NoSpeechGateSettings.isEnabledKey,
                 UserDefaults.Keys.keepMicrophoneReady,
+                UserDefaults.Keys.avoidsBluetoothDefaultMicrophone,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",

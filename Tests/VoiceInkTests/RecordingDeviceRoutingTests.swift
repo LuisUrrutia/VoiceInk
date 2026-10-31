@@ -238,4 +238,5 @@ private final class FixtureAudioDeviceManager: AudioDeviceManager {
     override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { deviceID == 1 }
 
     override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .other }
 }

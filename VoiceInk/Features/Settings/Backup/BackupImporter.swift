@@ -207,6 +207,7 @@ enum BackupImporter {
             UserDefaults.standard.set(clipboardDelay, forKey: "clipboardRestoreDelay")
         }
         general.restorePastePreferences()
+        general.restoreMicrophonePreferences()
         if let method = general.pasteMethod.flatMap(PasteMethod.init(rawValue:)) {
             PasteMethod.setCurrent(method)
         }

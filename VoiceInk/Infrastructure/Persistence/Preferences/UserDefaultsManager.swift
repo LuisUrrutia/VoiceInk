@@ -7,6 +7,7 @@ extension UserDefaults {
         static let selectedAudioDeviceModelUID = "selectedAudioDeviceModelUID"
         static let prioritizedDevices = "prioritizedDevices"
         static let audioInputChannelsByDeviceUID = "audioInputChannelsByDeviceUID"
+        static let avoidsBluetoothDefaultMicrophone = "AvoidBluetoothDefaultMicrophone"
         static let affiliatePromotionDismissed = "VoiceInkAffiliatePromotionDismissed"
         static let selectedLanguages = "SelectedLanguages"
         static let selectedLanguage = "SelectedLanguage"
@@ -67,6 +68,11 @@ extension UserDefaults {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             set(data, forKey: Keys.audioInputChannelsByDeviceUID)
         }
+    }
+
+    var avoidsBluetoothDefaultMicrophone: Bool {
+        get { object(forKey: Keys.avoidsBluetoothDefaultMicrophone) as? Bool ?? true }
+        set { set(newValue, forKey: Keys.avoidsBluetoothDefaultMicrophone) }
     }
 
     var affiliatePromotionDismissed: Bool {

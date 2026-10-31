@@ -119,6 +119,17 @@ struct AudioSetupView: View {
             }
         }
 
+        Toggle("Use the Mac's microphone instead of Bluetooth", isOn: Binding(
+            get: { audioDeviceManager.avoidsBluetoothDefaultMicrophone },
+            set: { audioDeviceManager.setAvoidsBluetoothDefaultMicrophone($0) }
+        ))
+        .help("Keeps Bluetooth headphones out of their low-quality call mode when the system default microphone is Bluetooth.")
+
+        if let substitution = audioDeviceManager.bluetoothDefaultSubstitution {
+            Text(substitution.message)
+                .foregroundStyle(.secondary)
+        }
+
         Button {
             refreshMicrophones()
         } label: {
