@@ -22,7 +22,26 @@ class WhisperTranscriptionService: TranscriptionService {
         }
 
         logger.notice("Initiating local transcription for model: \(model.displayName, privacy: .public)")
+        let whisperContext = try await loadContext(for: model)
 
+        // Read audio data
+        let data = try readAudioSamples(audioURL)
+
+        // The actor applies settings and reads the result atomically, keeping concurrent
+        // recordings/imports from overwriting each other's language, hints or output.
+        let text: String
+        do {
+            text = try await whisperContext.transcribe(samples: data, request: context)
+        } catch {
+            await releaseUnsharedContext(whisperContext)
+            throw error
+        }
+        logger.notice("Whisper transcription completed successfully.")
+        await releaseUnsharedContext(whisperContext)
+        return text
+    }
+
+    private func loadContext(for model: any TranscriptionModel) async throws -> WhisperContext {
         // Check if the required model is already loaded in the model provider
         if let provider = modelProvider,
             await provider.isModelLoaded,
@@ -53,22 +72,7 @@ class WhisperTranscriptionService: TranscriptionService {
             logger.error("❌ Cannot transcribe: Model could not be loaded")
             throw VoiceInkEngineError.modelLoadFailed
         }
-
-        // Read audio data
-        let data = try readAudioSamples(audioURL)
-
-        // The actor applies settings and reads the result atomically, keeping concurrent
-        // recordings/imports from overwriting each other's language, hints or output.
-        let text: String
-        do {
-            text = try await whisperContext.transcribe(samples: data, request: context)
-        } catch {
-            await releaseUnsharedContext(whisperContext)
-            throw error
-        }
-        logger.notice("Whisper transcription completed successfully.")
-        await releaseUnsharedContext(whisperContext)
-        return text
+        return whisperContext
     }
 
     private func releaseUnsharedContext(_ context: WhisperContext) async {
@@ -88,5 +92,24 @@ class WhisperTranscriptionService: TranscriptionService {
             }
         }
         return floats
+    }
+}
+
+extension WhisperTranscriptionService: TimedSpeechTranscribing {
+    func transcribeTimed(
+        samples: [Float], model: any TranscriptionModel, context: TranscriptionRequestContext
+    ) async throws -> [TimedTranscriptSegment] {
+        guard model.provider == .whisper else { throw TimedTranscriptionError.unsupportedModel }
+        guard !samples.isEmpty else { return [] }
+        let whisperContext = try await loadContext(for: model)
+        return try await whisperContext.transcribeTimed(samples: samples, request: context)
+    }
+
+    /// Whisper's own voice detection runs inside a transcription and reports no regions.
+    func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? { nil }
+
+    func releaseResources() async {
+        guard let whisperContext else { return }
+        await releaseUnsharedContext(whisperContext)
     }
 }
