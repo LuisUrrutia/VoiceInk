@@ -170,6 +170,7 @@ struct VoiceInkApp: App {
         _recordingShortcutManager = StateObject(wrappedValue: recordingShortcutManager)
 
         MeetingTranscriptionCoordinator.shared.configure(engine: engine)
+        MeetingRecorder.shared.startMaintenance()
         MeetingIndicatorController.shared.start()
         MeetingCallMonitor.shared.start()
 

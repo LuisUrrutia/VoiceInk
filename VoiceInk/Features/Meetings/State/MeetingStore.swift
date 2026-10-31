@@ -5,6 +5,8 @@ import os
 /// files, and atomically replaced manifests.
 struct MeetingStore: Sendable {
     let rootURL: URL
+    /// Deleted meetings go to the Trash, so they can be restored; tests remove them instead.
+    var movesToTrash = true
 
     static let `default` = MeetingStore(rootURL: VoiceInkPersistence.directoryURL.appendingPathComponent("Meetings", isDirectory: true))
 
@@ -59,7 +61,11 @@ struct MeetingStore: Sendable {
     func delete(id: UUID) throws {
         let directory = directory(for: id)
         guard FileManager.default.fileExists(atPath: directory.path) else { return }
-        try FileManager.default.trashItem(at: directory, resultingItemURL: nil)
+        if movesToTrash {
+            try FileManager.default.trashItem(at: directory, resultingItemURL: nil)
+        } else {
+            try FileManager.default.removeItem(at: directory)
+        }
     }
 
     /// Owner-only permissions for an audio file the capture created.

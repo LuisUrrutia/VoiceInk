@@ -69,6 +69,7 @@ enum MeetingSettings {
         var outputFolder: String?
         var showsRecordingIndicator: Bool?
         var detectsCalls: Bool?
+        var audioRetentionDays: Int?
         /// Keyed by `MeetingProvider` identifier; unknown providers and policies are ignored.
         var providerPolicies: [String: String]?
 
@@ -77,6 +78,7 @@ enum MeetingSettings {
                 outputFolder: defaults.string(forKey: outputFolderKey),
                 showsRecordingIndicator: MeetingSettings.showsRecordingIndicator(in: defaults),
                 detectsCalls: MeetingSettings.detectsCalls(in: defaults),
+                audioRetentionDays: MeetingAudioRetention.current(in: defaults).rawValue,
                 providerPolicies: Dictionary(uniqueKeysWithValues: MeetingProvider.allCases.map {
                     ($0.rawValue, MeetingSettings.policy(for: $0, in: defaults).rawValue)
                 })
@@ -87,6 +89,9 @@ enum MeetingSettings {
             if let outputFolder, outputFolder.hasPrefix("/") { defaults.set(outputFolder, forKey: outputFolderKey) }
             if let showsRecordingIndicator { defaults.set(showsRecordingIndicator, forKey: showsRecordingIndicatorKey) }
             if let detectsCalls { defaults.set(detectsCalls, forKey: detectsCallsKey) }
+            if let audioRetentionDays, MeetingAudioRetention(rawValue: audioRetentionDays) != nil {
+                defaults.set(audioRetentionDays, forKey: MeetingAudioRetention.key)
+            }
             for (id, value) in providerPolicies ?? [:] {
                 guard let provider = MeetingProvider(rawValue: id), let policy = MeetingProviderPolicy(rawValue: value) else { continue }
                 MeetingSettings.setPolicy(policy, for: provider, in: defaults)

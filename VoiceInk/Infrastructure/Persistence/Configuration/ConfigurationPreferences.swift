@@ -47,6 +47,7 @@ enum ConfigurationPreferences {
             (.integer, [
                 "CloudTranscriptionTimeout", "ShortEnhancementWordThreshold", "EnhancementTimeoutSeconds",
                 "TranscriptionRetentionMinutes", "AudioRetentionPeriod", "AutoLearnDictionaryMinimumCorrections",
+                MeetingAudioRetention.key,
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
             (.stringMap, ["CustomLanguagePrompts", MeetingSettings.providerPoliciesKey]),

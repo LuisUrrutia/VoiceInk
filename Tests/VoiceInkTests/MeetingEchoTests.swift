@@ -224,7 +224,7 @@ final class MeetingEchoTests: XCTestCase {
     func testAMeetingWithSpeakerBleedKeepsOnlyThemAndCountsTheEcho() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MeetingEchoTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = MeetingStore(rootURL: root)
+        let store = MeetingStore(rootURL: root, movesToTrash: false)
         var manifest = MeetingManifest(title: "Echo")
         _ = try store.createDirectory(for: manifest.id)
         let system = speech(seconds: 12, seed: 11)
@@ -245,7 +245,7 @@ final class MeetingEchoTests: XCTestCase {
     func testSilencedDictationsDoNotHideSpeakerBleedElsewhere() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MeetingEchoTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = MeetingStore(rootURL: root)
+        let store = MeetingStore(rootURL: root, movesToTrash: false)
         var manifest = MeetingManifest(title: "Echo")
         _ = try store.createDirectory(for: manifest.id)
         let system = speech(seconds: 60, seed: 11)

@@ -445,7 +445,7 @@ import os
         permission status: SystemAudioAuthorization = .granted, answer: SystemAudioAuthorization = .granted,
         isMicrophoneAuthorized: Bool = true
     ) -> Fixture {
-        let store = MeetingStore(rootURL: root)
+        let store = MeetingStore(rootURL: root, movesToTrash: false)
         let systemAudio = FakeSystemAudioCapture()
         let hardware = FakeMeetingMicrophoneHardware()
         let devices = MeetingAudioDevices(userDefaults: defaults)

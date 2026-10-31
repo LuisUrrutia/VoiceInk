@@ -57,6 +57,7 @@ enum AppDefaults {
             UserDefaults.Keys.keepMicrophoneReady: false,
             MeetingSettings.showsRecordingIndicatorKey: true,
             MeetingSettings.detectsCallsKey: true,
+            MeetingAudioRetention.key: MeetingAudioRetention.default.rawValue,
             UserDefaults.Keys.avoidsBluetoothDefaultMicrophone: true,
             CustomSoundManager.SoundType.start.builtInSoundKey: CustomSoundManager.SoundType.start.defaultBuiltInSound
                 .rawValue,

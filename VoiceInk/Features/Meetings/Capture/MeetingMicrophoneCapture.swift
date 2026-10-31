@@ -70,6 +70,8 @@ final class MeetingMicrophoneCapture {
         }
     }
 
+    func snapshot() -> MeetingTrackCaptureResult { progress.withLock { $0.result } }
+
     /// Closes the WAV before the process exits; nothing may suspend during termination.
     func stopForTermination() -> MeetingTrackCaptureResult {
         deviceCancellable = nil
