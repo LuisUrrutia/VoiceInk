@@ -19,10 +19,19 @@ final class VocabularyWord {
     var word: String = ""
     var dateAdded: Date = Date()
     var sectionID: UUID?
+    /// Comma-separated "sounds like" spellings; a defaulted string keeps lightweight migration and CloudKit sync simple.
+    var soundsLikeText: String = ""
 
-    init(word: String, dateAdded: Date = Date(), sectionID: UUID? = nil) {
+    init(word: String, dateAdded: Date = Date(), sectionID: UUID? = nil, soundsLike: [String] = []) {
         self.word = word
         self.dateAdded = dateAdded
         self.sectionID = sectionID
+        self.soundsLikeText = VocabularySoundsLike.serialize(soundsLike)
+    }
+
+    /// Spellings a transcript may show instead of the term; used only by the enhancement prompt.
+    var soundsLike: [String] {
+        get { VocabularySoundsLike.parse(soundsLikeText) }
+        set { soundsLikeText = VocabularySoundsLike.serialize(newValue) }
     }
 }

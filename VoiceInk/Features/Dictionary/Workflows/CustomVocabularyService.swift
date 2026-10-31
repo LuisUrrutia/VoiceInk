@@ -15,7 +15,8 @@ final class CustomVocabularyService {
             : []
         return RecordingVocabulary(
             savedTerms: words.map(\.word),
-            sectionedPrompt: Self.sectionedPrompt(words: words, sections: sections)
+            sectionedPrompt: Self.sectionedPrompt(words: words, sections: sections),
+            soundsLike: words.map { (term: $0.word, spellings: $0.soundsLike) }
         )
     }
 
@@ -32,7 +33,7 @@ final class CustomVocabularyService {
         if let sectioned = sectionedPrompt(words: words, sections: sections) {
             return sectioned
         }
-        let terms = sortedTerms(words).map(\.term)
+        let terms = sortedTerms(words).map(\.entry)
         guard !terms.isEmpty else { return "" }
         return escapePromptDelimiters("Important Vocabulary: \(terms.joined(separator: ", "))")
     }
@@ -48,10 +49,10 @@ final class CustomVocabularyService {
         let ungrouped = sortedWords.filter { word in
             guard let id = word.sectionID else { return true }
             return sectionByID[id] == nil
-        }.map(\.term)
+        }.map(\.entry)
         let groups = sections.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .compactMap { section -> String? in
-                let terms = sortedWords.filter { $0.sectionID == section.id }.map(\.term)
+                let terms = sortedWords.filter { $0.sectionID == section.id }.map(\.entry)
                 guard !terms.isEmpty else { return nil }
                 let name = section.name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
                 let description = section.sectionDescription.split(whereSeparator: \.isWhitespace)
@@ -71,9 +72,15 @@ final class CustomVocabularyService {
             .replacingOccurrences(of: ">", with: "&gt;")
     }
 
-    private nonisolated static func sortedTerms(_ words: [VocabularyWord]) -> [(term: String, sectionID: UUID?)] {
-        words.map { (term: $0.word.trimmingCharacters(in: .whitespacesAndNewlines), sectionID: $0.sectionID) }
-            .filter { !$0.term.isEmpty }
-            .sorted { $0.term.localizedCaseInsensitiveCompare($1.term) == .orderedAscending }
+    private nonisolated static func sortedTerms(
+        _ words: [VocabularyWord]
+    ) -> [(term: String, sectionID: UUID?, entry: String)] {
+        words.map { word in
+            let term = word.word.trimmingCharacters(in: .whitespacesAndNewlines)
+            let entry = VocabularySoundsLike.promptEntry(term: term, spellings: word.soundsLike)
+            return (term: term, sectionID: word.sectionID, entry: entry)
+        }
+        .filter { !$0.term.isEmpty }
+        .sorted { $0.term.localizedCaseInsensitiveCompare($1.term) == .orderedAscending }
     }
 }

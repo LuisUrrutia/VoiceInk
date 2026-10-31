@@ -140,7 +140,9 @@ class ImportExportService {
         var exportedDictionaryItems: [WordBackup]? = nil
         let vocabularyDescriptor = FetchDescriptor<VocabularyWord>()
         if let items = try? modelContext.fetch(vocabularyDescriptor), !items.isEmpty {
-            exportedDictionaryItems = items.map { WordBackup(word: $0.word, sectionID: $0.sectionID) }
+            exportedDictionaryItems = items.map {
+                WordBackup(word: $0.word, sectionID: $0.sectionID, soundsLike: $0.soundsLike)
+            }
         }
 
         var vocabularySections: [DictionarySectionEntry]?

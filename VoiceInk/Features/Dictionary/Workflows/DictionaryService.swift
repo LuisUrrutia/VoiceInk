@@ -7,14 +7,16 @@ enum DictionaryService {
 
     // MARK: - Vocabulary
 
-    /// Adds one or more comma-separated words to vocabulary.
+    /// Adds one or more comma-separated words to vocabulary. "Sounds like" spellings
+    /// (comma-separated) apply to a single word and keep only what fits the limits.
     /// Returns an error message string if something went wrong, nil on success.
     @discardableResult
     static func addVocabularyWords(
         _ input: String,
         existing: [VocabularyWord],
         context: ModelContext,
-        sectionID: UUID? = nil
+        sectionID: UUID? = nil,
+        soundsLike: String = ""
     ) -> String? {
         let parts =
             input
@@ -23,6 +25,10 @@ enum DictionaryService {
             .filter { !$0.isEmpty }
 
         guard !parts.isEmpty else { return nil }
+        let spellings = VocabularySoundsLike.parse(soundsLike)
+        guard parts.count == 1 || spellings.isEmpty else {
+            return String(localized: "Add \"sounds like\" spellings to one term at a time.")
+        }
 
         if parts.count == 1, let word = parts.first {
             let identity = VocabularyWordIdentity(word: word, sectionID: sectionID)
@@ -31,7 +37,10 @@ enum DictionaryService {
             }) {
                 return duplicateVocabularyMessage(word, sectionID: sectionID)
             }
-            return insertVocabularyWord(word, context: context, sectionID: sectionID)
+            return insertVocabularyWord(
+                word, context: context, sectionID: sectionID,
+                soundsLike: VocabularySoundsLike.normalize(spellings, term: word).spellings
+            )
         }
 
         var addedWords = Set(existing.map {
@@ -51,8 +60,10 @@ enum DictionaryService {
     }
 
     @discardableResult
-    private static func insertVocabularyWord(_ word: String, context: ModelContext, sectionID: UUID?) -> String? {
-        let entry = VocabularyWord(word: word, sectionID: sectionID)
+    private static func insertVocabularyWord(
+        _ word: String, context: ModelContext, sectionID: UUID?, soundsLike: [String] = []
+    ) -> String? {
+        let entry = VocabularyWord(word: word, sectionID: sectionID, soundsLike: soundsLike)
         context.insert(entry)
         do {
             try context.save()
@@ -68,6 +79,25 @@ enum DictionaryService {
             ? String(localized: "'%@' is already in No section")
             : String(localized: "'%@' is already in this section")
         return String(format: message, word)
+    }
+
+    /// Replaces a term's "sounds like" spellings, keeping only what fits the limits.
+    @discardableResult
+    static func updateVocabularySoundsLike(
+        _ word: VocabularyWord, soundsLike: String, context: ModelContext
+    ) -> String? {
+        let spellings = VocabularySoundsLike.normalize(
+            VocabularySoundsLike.parse(soundsLike), term: word.word
+        ).spellings
+        guard spellings != word.soundsLike else { return nil }
+        word.soundsLike = spellings
+        do {
+            try context.save()
+            return nil
+        } catch {
+            context.rollback()
+            return String(format: String(localized: "Failed to save changes: %@"), error.localizedDescription)
+        }
     }
 
     @discardableResult
@@ -97,17 +127,22 @@ enum DictionaryService {
         var normalizedReplacementCount = 0
 
         if let vocabularyWords = try? context.fetch(FetchDescriptor<VocabularyWord>()) {
-            var seenWords = Set<VocabularyWordIdentity>()
+            var retainedWords: [VocabularyWordIdentity: VocabularyWord] = [:]
 
             for vocabularyWord in vocabularyWords.sorted(by: { $0.dateAdded < $1.dateAdded }) {
                 let word = vocabularyWord.word
                 guard !word.isEmpty else { continue }
 
                 let identity = VocabularyWordIdentity(word: word, sectionID: vocabularyWord.sectionID)
-                if seenWords.insert(identity).inserted {
+                guard let retained = retainedWords[identity] else {
+                    retainedWords[identity] = vocabularyWord
                     continue
                 }
 
+                let merged = VocabularySoundsLike.normalize(
+                    retained.soundsLike + vocabularyWord.soundsLike, term: retained.word
+                ).spellings
+                if merged != retained.soundsLike { retained.soundsLike = merged }
                 context.delete(vocabularyWord)
                 deletedVocabularyCount += 1
             }

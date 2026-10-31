@@ -84,7 +84,8 @@ enum DictionaryImportExportService {
                 VocabularyWord(
                     word: entry.term,
                     dateAdded: entry.createdAt ?? Date(),
-                    sectionID: entry.sectionID.flatMap { plan.sectionIDMap[$0] }
+                    sectionID: entry.sectionID.flatMap { plan.sectionIDMap[$0] },
+                    soundsLike: entry.soundsLike ?? []
                 )
             )
         }
@@ -147,7 +148,8 @@ enum DictionaryImportExportService {
                 return DictionaryVocabularyEntry(
                     term: term,
                     createdAt: item.dateAdded,
-                    sectionID: sectionID
+                    sectionID: sectionID,
+                    soundsLike: item.soundsLike
                 )
             }
 
@@ -352,7 +354,8 @@ enum DictionaryImportExportService {
                 continue
             }
             acceptedVocabulary.append(DictionaryVocabularyEntry(
-                term: term, createdAt: entry.createdAt, sectionID: entry.sectionID
+                term: term, createdAt: entry.createdAt, sectionID: entry.sectionID,
+                soundsLike: VocabularySoundsLike.normalize(entry.soundsLike ?? [], term: term).spellings
             ))
         }
 
