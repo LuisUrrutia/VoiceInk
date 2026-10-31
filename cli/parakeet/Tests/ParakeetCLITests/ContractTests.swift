@@ -86,6 +86,30 @@ final class ContractTests: XCTestCase {
         XCTAssertThrowsError(try Settings.dictionaryPlan(from: preferences))
     }
 
+    func testDictionaryArchiveVersionsIgnoreVocabularySpellings() throws {
+        let dictionary = directory.appendingPathComponent("dictionary.json")
+        for version in 1...3 {
+            let export = Data("""
+            {"format":"voiceink.dictionary","schemaVersion":\(version),
+            "vocabulary":[{"term":"VoiceInk","soundsLike":["voice ink"]}],
+            "replacements":[{"sources":["hello"],"replacement":"VoiceInk"}]}
+            """.utf8)
+            try export.write(to: dictionary)
+
+            let plan = try Settings.dictionaryPlan(from: dictionary)
+
+            XCTAssertEqual(plan.apply(to: "hello voice ink"), "VoiceInk voice ink")
+            XCTAssertEqual(try Data(contentsOf: dictionary), export)
+        }
+        for version in [0, 4] {
+            try Data("""
+            {"format":"voiceink.dictionary","schemaVersion":\(version),"replacements":[]}
+            """.utf8).write(to: dictionary)
+
+            XCTAssertThrowsError(try Settings.dictionaryPlan(from: dictionary))
+        }
+    }
+
     func testSharedCleanupAndReplacementBoundaries() {
         let settings = Settings()
         let input = "um, Café [music] <tag>secret</tag> 東京."
