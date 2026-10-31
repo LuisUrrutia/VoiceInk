@@ -116,6 +116,21 @@ final class MeetingEchoTests: XCTestCase {
         XCTAssertEqual(result.entries.map(\.speaker), [.them])
     }
 
+    func testWordMatchingOnlyConsidersRemoteSpeechWithinOneAndAHalfSeconds() {
+        let entries = [
+            entry(.them, 1_000, 2_000, "Ship the beta on Friday"),
+            // Starts 1.4 s after the remote line ends: an echo window match.
+            entry(.you, 3_400, 4_400, "Ship the beta on Friday"),
+            // Repeats the same words 20 s later: the user quoting them, not echo.
+            entry(.you, 22_000, 23_000, "Ship the beta on Friday"),
+        ]
+
+        let result = MeetingEchoSuppression.suppress(entries) { _, _ in nil }
+
+        XCTAssertEqual(result.dropped, 1)
+        XCTAssertEqual(result.entries.map { Int($0.start * 1_000) }, [1_000, 22_000])
+    }
+
     func testManifestsWithoutAnEchoCountStillLoad() throws {
         let manifest = MeetingManifest(title: "Old")
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.meetingManifest.encode(manifest)) as? [String: Any])
