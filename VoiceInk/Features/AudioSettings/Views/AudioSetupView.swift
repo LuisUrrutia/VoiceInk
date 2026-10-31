@@ -40,6 +40,8 @@ struct AudioSetupView: View {
                 }
 
                 Section {
+                    IdleMicrophoneSettingsView(recorder: engine.recorder)
+
                     Toggle("Mute Audio While Recording", isOn: $mediaController.isSystemMuteEnabled)
 
                     Toggle("Pause Media While Recording", isOn: $playbackController.isPauseMediaEnabled)

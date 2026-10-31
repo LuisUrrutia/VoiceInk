@@ -61,11 +61,17 @@ final class RecordingDeliverySession {
 
     static func capture(
         defaults: UserDefaults = .standard,
-        frontmost: @MainActor () -> PasteApplication? = { .frontmost }
+        frontmost: @MainActor () -> PasteApplication? = { .frontmost },
+        shortcutPressNanoseconds: UInt64? = nil
     ) -> RecordingDeliverySession {
-        RecordingDeliverySession(
+        let receivedAt = DispatchTime.now().uptimeNanoseconds
+        return RecordingDeliverySession(
             destination: PasteTargetSettings.isEnabled(in: defaults)
-                ? .originalApplication(frontmost()) : .currentApplication
+                ? .originalApplication(frontmost()) : .currentApplication,
+            timing: RecordingTimingTrace(
+                originNanoseconds: shortcutPressNanoseconds ?? receivedAt,
+                requestReceivedNanoseconds: receivedAt
+            )
         )
     }
 

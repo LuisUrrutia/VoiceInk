@@ -82,6 +82,9 @@ struct ShortcutMonitoringLifecycleTests {
         #expect(didStart)
         #expect(isShortcutAvailable(keyCode: initialKeyCode, modifiers: modifiers))
         #expect(!isShortcutAvailable(keyCode: latestKeyCode, modifiers: modifiers))
+        #expect(monitor.isMonitoring(.primaryRecording))
+        #expect(monitor.earlyCaptureAvailability(for: [.primaryRecording]) == false)
+        #expect(monitor.earlyCaptureAvailability(for: [.mode(UUID())]) == nil)
 
         keyCode = initialKeyCode
         lifecycle.refreshWhenReady(refresh)

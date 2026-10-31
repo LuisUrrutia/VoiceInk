@@ -17,6 +17,7 @@ enum ConfigurationPreferences {
                 "isExperimentalFeaturesEnabled", "useClipboardContext", "useSelectedTextContext",
                 "useScreenCaptureContext", "SmartPunctuationEnabled", "IsAutomaticVocabularyCorrectionEnabled",
                 NoSpeechGateSettings.isEnabledKey,
+                UserDefaults.Keys.keepMicrophoneReady,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",

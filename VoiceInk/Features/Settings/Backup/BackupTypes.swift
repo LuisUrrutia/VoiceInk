@@ -104,6 +104,13 @@ struct GeneralBackup: Codable {
     var remoteClipboardPushCommand: String? = nil
     let isAutoLearnDictionaryEnabled: Bool?
     let autoLearnMinimumCorrections: Int?
+    var keepMicrophoneReady: Bool? = nil
+
+    func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {
+        if let keepMicrophoneReady {
+            defaults.keepMicrophoneReady = keepMicrophoneReady
+        }
+    }
 
     func restorePastePreferences(in defaults: UserDefaults = .standard) {
         if let pinPasteTargetToRecordStart {

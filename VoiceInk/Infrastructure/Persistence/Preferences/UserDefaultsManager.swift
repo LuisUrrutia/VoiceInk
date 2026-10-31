@@ -10,6 +10,13 @@ extension UserDefaults {
         static let affiliatePromotionDismissed = "VoiceInkAffiliatePromotionDismissed"
         static let selectedLanguages = "SelectedLanguages"
         static let selectedLanguage = "SelectedLanguage"
+        static let keepMicrophoneReady = "keepMicrophoneReady"
+    }
+
+    /// Keeps the effective microphone open while idle for pre-roll; the KVO name must match its key.
+    @objc dynamic var keepMicrophoneReady: Bool {
+        get { bool(forKey: Keys.keepMicrophoneReady) }
+        set { set(newValue, forKey: Keys.keepMicrophoneReady) }
     }
 
     var selectedTranscriptionLanguages: [String] {

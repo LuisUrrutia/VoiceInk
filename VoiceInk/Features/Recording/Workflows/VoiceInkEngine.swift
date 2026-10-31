@@ -222,7 +222,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     func toggleRecord(
         modeId: UUID? = nil, isAssistantFollowUp: Bool = false, sendAfterPaste: Bool = false,
-        deliverySession: RecordingDeliverySession? = nil, releaseTail: RecordingReleaseTail? = nil
+        deliverySession: RecordingDeliverySession? = nil, releaseTail: RecordingReleaseTail? = nil,
+        preRollPressNanoseconds: UInt64? = nil
     ) async {
         let capturedDelivery = deliverySession ?? RecordingDeliverySession.capture()
         await recordingFinalization.waitUntilFinished()
@@ -328,6 +329,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         } else {
             guard recordingState == .idle else { return }
             capturedDelivery.timing.mark(.engineStart)
+            let pressNanoseconds = preRollPressNanoseconds ?? capturedDelivery.timing.originNanoseconds
+            recorder.holdPreRoll(forPressAt: pressNanoseconds)
             let canContinueAssistantSession = isAssistantFollowUp && assistantSession.canSendFollowUp
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
@@ -382,7 +385,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 self.recordingState = .starting
 
                 preparation.timing.mark(.audioStartRequested)
-                try await self.recorder.startRecording(toOutputFile: permanentURL)
+                try await self.recorder.startRecording(
+                    toOutputFile: permanentURL, preRollPressNanoseconds: pressNanoseconds
+                )
 
                 guard self.activeRecordingStartID == startID,
                     self.recorderUIManager?.isRecorderPanelVisible ?? false,
@@ -851,7 +856,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             timing?.mark(.speechGate, outcome: .skipped)
             return false
         }
-        let firstAudioNanoseconds = trace.originNanoseconds + firstAudio.elapsedNanoseconds
+        let firstAudioNanoseconds = trace.preRollStartNanoseconds
+            ?? trace.originNanoseconds + firstAudio.elapsedNanoseconds
         let releasedFrames = NoSpeechGate.releasedFrameCount(
             firstAudioNanoseconds: firstAudioNanoseconds,
             releaseNanoseconds: trace.originNanoseconds + release.elapsedNanoseconds
@@ -1207,6 +1213,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     private func recordClosedAudioTiming(_ timing: RecordingTimingTrace?) {
+        if let preRollStart = recorder.preRollStartNanoseconds {
+            timing?.recordPreRollStart(at: preRollStart)
+        }
         if let firstAudio = recorder.firstAudioTimestampNanoseconds {
             timing?.mark(.firstAudio, at: firstAudio)
         }

@@ -7,19 +7,39 @@ protocol RecordingHardware: AnyObject, Sendable {
     var peakPower: Float { get }
     var recordingError: Error? { get }
     var firstAudioTimestampNanoseconds: UInt64? { get }
+    var preRollStartNanoseconds: UInt64? { get }
     /// Monotonic uptime through which hardware audio has been delivered for this recording.
     var capturedThroughNanoseconds: UInt64? { get }
 
     func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
     func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
+    func startRecording(
+        toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?,
+        preRollPressNanoseconds: UInt64?
+    ) throws
     func stopRecording()
     func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
     func invalidatePreparation()
     func teardown()
+    func startIdleCapture(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
+    func stopIdleCapture()
+    func holdPreRoll(forPressAt pressNanoseconds: UInt64)
 }
 
 extension RecordingHardware {
     var recordingError: Error? { nil }
     var firstAudioTimestampNanoseconds: UInt64? { nil }
+    var preRollStartNanoseconds: UInt64? { nil }
     var capturedThroughNanoseconds: UInt64? { nil }
+
+    func startRecording(
+        toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?,
+        preRollPressNanoseconds: UInt64?
+    ) throws {
+        try startRecording(toOutputFile: url, deviceID: deviceID, selectedInputChannels: selectedInputChannels)
+    }
+
+    func startIdleCapture(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
+    func stopIdleCapture() {}
+    func holdPreRoll(forPressAt pressNanoseconds: UInt64) {}
 }

@@ -199,7 +199,8 @@ class ImportExportService {
             pinPasteTargetToRecordStart: PasteTargetSettings.isEnabled(),
             remoteClipboardPushCommand: UserDefaults.standard.string(forKey: PasteTargetSettings.remoteClipboardPushCommandKey),
             isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
-            autoLearnMinimumCorrections: AutoLearnSettings.minimumCorrections
+            autoLearnMinimumCorrections: AutoLearnSettings.minimumCorrections,
+            keepMicrophoneReady: UserDefaults.standard.keepMicrophoneReady
         )
 
         let exportedSettings = BackupFile(

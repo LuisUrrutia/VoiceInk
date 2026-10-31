@@ -3,7 +3,7 @@ import os
 
 final class RecordingTimingTrace: @unchecked Sendable {
     enum Phase: String, CaseIterable, Sendable {
-        case requestReceived, engineStart, audioStartRequested, audioStarted, firstAudio
+        case shortcutPressed, requestReceived, engineStart, audioStartRequested, audioStarted, firstAudio
         case contextStarted, modeResolutionStarted, modeResolved
         case preparationStarted, preparationFinished, stopReceived, shortcutReleased, releaseTailEnded, wavClosed, speechGate
         case asrStarted, asrFinished, enhancementStarted, enhancementFinished
@@ -24,12 +24,19 @@ final class RecordingTimingTrace: @unchecked Sendable {
     let recordingID: UUID
     let originNanoseconds: UInt64
     private let events = OSAllocatedUnfairLock(initialState: [Phase: Event]())
+    private let preRollStart = OSAllocatedUnfairLock<UInt64?>(initialState: nil)
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "RecordingTiming")
 
-    init(recordingID: UUID = UUID(), originNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+    init(
+        recordingID: UUID = UUID(), originNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds,
+        requestReceivedNanoseconds: UInt64? = nil
+    ) {
         self.recordingID = recordingID
         self.originNanoseconds = originNanoseconds
-        mark(.requestReceived, at: originNanoseconds)
+        if let requestReceivedNanoseconds, requestReceivedNanoseconds > originNanoseconds {
+            mark(.shortcutPressed, at: originNanoseconds)
+        }
+        mark(.requestReceived, at: requestReceivedNanoseconds ?? originNanoseconds)
     }
 
     // Call only outside the audio render callback. Each phase has one bounded, content-free event.
@@ -48,5 +55,11 @@ final class RecordingTimingTrace: @unchecked Sendable {
 
     var snapshot: [Event] {
         events.withLock { Array($0.values).sorted { $0.elapsedNanoseconds < $1.elapsedNanoseconds } }
+    }
+
+    var preRollStartNanoseconds: UInt64? { preRollStart.withLock { $0 } }
+
+    func recordPreRollStart(at nanoseconds: UInt64) {
+        preRollStart.withLock { if $0 == nil { $0 = nanoseconds } }
     }
 }
