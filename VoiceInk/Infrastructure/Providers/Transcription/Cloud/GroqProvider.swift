@@ -24,19 +24,21 @@ struct GroqProvider: CloudProvider {
         audioData: Data, fileName: String, apiKey: String, model: String, language: String?,
         customVocabulary: [String], timeout: TimeInterval
     ) async throws -> String {
-        return try await OpenAITranscriptionClient.transcribe(
+        let promptEcho = WhisperPromptEcho(languagePrompt: nil, hints: Self.vocabularyHints(from: customVocabulary))
+        let text = try await OpenAITranscriptionClient.transcribe(
             baseURL: URL(string: "https://api.groq.com/openai")!,
             audioData: audioData,
             fileName: fileName,
             apiKey: apiKey,
             model: model,
             language: language,
-            prompt: Self.vocabularyPrompt(from: customVocabulary),
+            prompt: promptEcho.prompt.isEmpty ? nil : promptEcho.prompt,
             timeout: timeout
         )
+        return promptEcho.removingEcho(from: [text]).joined()
     }
 
-    static func vocabularyPrompt(from terms: [String]) -> String? {
+    static func vocabularyHints(from terms: [String]) -> [String] {
         // Groq rejects prompts over 896 UTF-8 bytes before Whisper can trim tokens.
         let maximumBytes = 896
         var selected: [String] = []
@@ -47,7 +49,7 @@ struct GroqProvider: CloudProvider {
             selected.append(term)
             byteCount += requiredBytes
         }
-        return selected.isEmpty ? nil : selected.joined(separator: ", ")
+        return selected
     }
 
     func makeStreamingProvider(vocabulary: RecordingVocabulary) -> (any StreamingTranscriptionProvider)? { nil }
