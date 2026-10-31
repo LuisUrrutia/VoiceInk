@@ -1,4 +1,5 @@
 import FluidAudio
+import TranscriptionText
 import Foundation
 
 enum CLIError: LocalizedError {

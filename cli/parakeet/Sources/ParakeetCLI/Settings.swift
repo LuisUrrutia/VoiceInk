@@ -1,19 +1,6 @@
 import Foundation
 import TranscriptionText
 
-enum AppNamespace: String {
-    case production, development, local
-    var domain: String {
-        switch self {
-        case .production, .local: return VoiceInkPersistence.productionDirectoryName
-        case .development: return VoiceInkPersistence.productionDirectoryName + ".dev"
-        }
-    }
-    var storeDirectoryName: String {
-        VoiceInkPersistence.directoryName(bundleIdentifier: domain, isLocalBuild: self == .local)
-    }
-}
-
 struct Settings {
     var vadEnabled: Bool
     var formatEnabled: Bool
