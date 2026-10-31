@@ -14,13 +14,22 @@ struct MeetingTranscriber {
 
     private static let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "MeetingTranscriber")
 
-    func transcribe(_ manifest: MeetingManifest, store: MeetingStore) async throws -> [MeetingTranscriptEntry] {
+    struct Result: Equatable {
+        var turns: [MeetingTranscriptEntry]
+        /// Microphone utterances dropped as speaker echo of the other participants.
+        var echoSuppressedUtterances: Int
+    }
+
+    func transcribe(_ manifest: MeetingManifest, store: MeetingStore) async throws -> Result {
         var entries: [MeetingTranscriptEntry] = []
+        var levels: [MeetingManifest.TrackKind: [Float]] = [:]
         for kind in MeetingManifest.TrackKind.allCases {
             guard let track = manifest.track(kind) else { continue }
             let url = store.audioURL(for: manifest.id, track: kind)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             var samples = try Self.readSamples(from: url)
+            // Echo calibration needs the recorded levels; silenced spans would read as missing coupling.
+            levels[kind] = MeetingEchoEnvelope.frames(of: samples, timeline: track.timeline)
             if kind == .microphone {
                 // Models without word times cannot drop dictated words afterwards, so their audio is silenced first.
                 Self.silence(manifest.dictationIntervals, in: &samples, timeline: track.timeline)
@@ -35,7 +44,14 @@ struct MeetingTranscriber {
             }
             Self.logger.notice("Transcribed meeting track=\(kind.rawValue, privacy: .public) segments=\(segments.count, privacy: .public)")
         }
-        return MeetingTranscript.turns(entries)
+        let envelope = MeetingEchoEnvelope(system: levels[.system] ?? [], microphone: levels[.microphone] ?? [])
+        let suppressed = MeetingEchoSuppression.suppress(entries) {
+            envelope.assess(startMilliseconds: $0, endMilliseconds: $1)
+        }
+        if suppressed.dropped > 0 {
+            Self.logger.notice("Dropped speaker echo utterances=\(suppressed.dropped, privacy: .public)")
+        }
+        return Result(turns: MeetingTranscript.turns(suppressed.entries), echoSuppressedUtterances: suppressed.dropped)
     }
 
     /// Segments in seconds from the start of the track's file.

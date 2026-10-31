@@ -111,7 +111,9 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
             waitForDictation: { [environment] in await Self.wait(while: environment.isDictating, poll: environment.dictationPollInterval) }
         )
         do {
-            let turns = try await meetingTranscriber.transcribe(manifest, store: recorder.store)
+            let result = try await meetingTranscriber.transcribe(manifest, store: recorder.store)
+            let turns = result.turns
+            manifest.echoSuppressedUtterances = result.echoSuppressedUtterances
             let markdown = MeetingMarkdown.render(manifest, turns: turns)
             let url = try MeetingMarkdown.write(markdown, named: MeetingMarkdown.fileName(for: manifest), in: environment.outputFolder())
             if let previous = manifest.transcriptPath, previous != url.path { logger.notice("Meeting transcribed again into a new file") }

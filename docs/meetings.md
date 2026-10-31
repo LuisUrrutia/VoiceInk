@@ -107,8 +107,12 @@ Transcripts are written to the folder you choose. The default is
 ## Limits
 
 - No real call has been recorded end to end with this implementation yet.
-- Echo from speakers is not suppressed yet. With speakers, Them can also appear
-  as You.
+- With speakers, your microphone also hears the other participants. VoiceInk
+  removes those lines from **You** when the level pattern of both tracks shows
+  delayed system audio, or when their words repeat what was just said.
+  Talking over the other side is kept. The audio files are unchanged. The
+  thresholds come from Hex, which tuned them on two calls, so some echo can
+  remain and quiet replies can be removed.
 - A track is read into memory for transcription, about 230 MB for each hour of
   audio.
 - The system tap captures every app's output, not only the call app.

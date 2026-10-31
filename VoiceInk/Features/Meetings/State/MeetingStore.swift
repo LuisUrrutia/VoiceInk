@@ -27,11 +27,8 @@ struct MeetingStore: Sendable {
     }
 
     func save(_ manifest: MeetingManifest) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
         let url = directory(for: manifest.id).appendingPathComponent(MeetingManifest.fileName)
-        try encoder.encode(manifest).write(to: url, options: [.atomic])
+        try JSONEncoder.meetingManifest.encode(manifest).write(to: url, options: [.atomic])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
@@ -68,5 +65,14 @@ struct MeetingStore: Sendable {
     /// Owner-only permissions for an audio file the capture created.
     func protect(_ url: URL) {
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+}
+
+extension JSONEncoder {
+    static var meetingManifest: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
     }
 }
