@@ -76,9 +76,10 @@ final class StreamingFinishDeadlineTests: XCTestCase {
     func testPartialCommittedTextIsNeverReturnedAfterTheDeadline() async throws {
         let provider = FinishFakeProvider(finalText: nil)
         let deadline = ManualDeadline()
-        let (session, fallback) = try await makeSession(provider: provider, deadline: deadline)
+        let partials = PartialTranscripts()
+        let (session, fallback) = try await makeSession(provider: provider, deadline: deadline, partials: partials)
         provider.emitCommitted("First half of the")
-        try await waitUntil { provider.emittedCount == 1 }
+        try await waitUntil { partials.latest == "First half of the" }
 
         let text = try await stopAtDeadline(session, deadline: deadline)
 
@@ -176,9 +177,12 @@ final class StreamingFinishDeadlineTests: XCTestCase {
         let provider = FinishFakeProvider(finalText: nil)
         let deadline = ManualDeadline()
         let model = try XCTUnwrap(CartesiaProvider().models.first)
-        let (session, fallback) = try await makeSession(provider: provider, deadline: deadline, model: model)
+        let partials = PartialTranscripts()
+        let (session, fallback) = try await makeSession(
+            provider: provider, deadline: deadline, model: model, partials: partials
+        )
         provider.emitCommitted("Only streamed words")
-        try await waitUntil { provider.emittedCount == 1 }
+        try await waitUntil { partials.latest == "Only streamed words" }
 
         let text = try await stopAtDeadline(session, deadline: deadline)
 
@@ -203,9 +207,11 @@ final class StreamingFinishDeadlineTests: XCTestCase {
 
     private func makeSession(
         provider: FinishFakeProvider, deadline: ManualDeadline, chunks: [Data] = [],
-        model: (any TranscriptionModel)? = nil
+        model: (any TranscriptionModel)? = nil, partials: PartialTranscripts? = nil
     ) async throws -> (StreamingTranscriptionSession, FinishFallback) {
+        // The detached event consumer appends a committed segment after the provider yields it.
         let service = StreamingTranscriptionService(
+            onPartialTranscript: { partials?.latest = $0 },
             providerFactory: { _ in provider }, finishDeadlineSleep: { try await deadline.sleep($0) }
         )
         let fallback = FinishFallback()
@@ -358,7 +364,6 @@ private final class FinishFakeProvider: StreamingTranscriptionProvider, @uncheck
     private struct State {
         var commitCount = 0
         var disconnectCount = 0
-        var emittedCount = 0
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let finalText: String?
@@ -391,11 +396,9 @@ private final class FinishFakeProvider: StreamingTranscriptionProvider, @uncheck
 
     var commitCount: Int { state.withLock { $0.commitCount } }
     var disconnectCount: Int { state.withLock { $0.disconnectCount } }
-    var emittedCount: Int { state.withLock { $0.emittedCount } }
 
     func emitCommitted(_ text: String) {
         events.yield(.committed(text: text))
-        state.withLock { $0.emittedCount += 1 }
     }
 
     func connect(model: any TranscriptionModel, language: String?) async throws {}
@@ -420,6 +423,11 @@ private final class FinishFakeProvider: StreamingTranscriptionProvider, @uncheck
         events.finish()
         finalization?.finish()
     }
+}
+
+@MainActor
+private final class PartialTranscripts {
+    var latest = ""
 }
 
 @MainActor
