@@ -37,15 +37,18 @@ enum Labs {
         defaults.set(isEnabled, forKey: feature.defaultsKey)
     }
 
-    /// The current state, then every change, for work that runs between dictations and must stop or start at once.
+    /// The state when subscribed, then every change made through `defaults`, for work that runs between
+    /// dictations and must stop or start at once.
     static func enabledPublisher(
         _ feature: LabsFeature, in defaults: UserDefaults = .standard
     ) -> AnyPublisher<Bool, Never> {
-        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: defaults)
-            .map { _ in isEnabled(feature, in: defaults) }
-            .prepend(isEnabled(feature, in: defaults))
-            .removeDuplicates()
-            .eraseToAnyPublisher()
+        Deferred {
+            NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: defaults)
+                .map { _ in isEnabled(feature, in: defaults) }
+                .prepend(isEnabled(feature, in: defaults))
+                .removeDuplicates()
+        }
+        .eraseToAnyPublisher()
     }
 
     static func registeredDefaults(for features: [LabsFeature] = LabsFeature.all) -> [String: Any] {

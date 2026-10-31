@@ -30,7 +30,12 @@ enum OnboardingSettings {
 enum AppDefaults {
     static func registerDefaults() {
         AutoLearnSettings.registerDefaults()
-        UserDefaults.standard.register(defaults: [
+        UserDefaults.standard.register(defaults: registeredValues())
+        PasteMethod.migrateLegacyUserDefaultIfNeeded()
+    }
+
+    static func registeredValues(labsFeatures: [LabsFeature] = LabsFeature.all) -> [String: Any] {
+        [
             // Onboarding & General
             OnboardingSettings.completedV2Key: false,
             OnboardingSettings.preparedV2Key: false,
@@ -88,8 +93,6 @@ enum AppDefaults {
             "PrewarmModelOnWake": true,
 
         ].merging(TranscriptionTextDefaults.preferences) { _, shared in shared }
-            .merging(Labs.registeredDefaults()) { current, _ in current })
-
-        PasteMethod.migrateLegacyUserDefaultIfNeeded()
+            .merging(Labs.registeredDefaults(for: labsFeatures)) { current, _ in current }
     }
 }

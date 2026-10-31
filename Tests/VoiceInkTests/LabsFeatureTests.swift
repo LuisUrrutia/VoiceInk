@@ -20,22 +20,51 @@ final class LabsFeatureTests: XCTestCase {
         defaults = nil
     }
 
-    func testEveryRegisteredFeatureIsOffByDefaultWithAUniqueBooleanPreference() throws {
+    func testEveryRegisteredFeatureIsRegisteredOffWithAUniqueBooleanPreference() throws {
         let features = LabsFeature.all
+        let registrationDomain = UserDefaults.standard.volatileDomain(forName: UserDefaults.registrationDomain)
 
         XCTAssertEqual(Set(features.map(\.id)).count, features.count)
-        let registered = Labs.registeredDefaults(for: features)
         for feature in features {
             XCTAssertTrue(feature.defaultsKey.hasPrefix("labs."), feature.id)
-            XCTAssertEqual(registered[feature.defaultsKey] as? Bool, false, feature.id)
+            XCTAssertEqual(registrationDomain[feature.defaultsKey] as? Bool, false, feature.id)
             XCTAssertFalse(Labs.isRetiredKey(feature.defaultsKey), feature.id)
+        }
+        try assertBooleanConfigurationRoundTrip(features)
+    }
 
+    func testAppDefaultsRegisterLabsFeaturesOffWithoutReplacingOtherDefaults() {
+        let registered = AppDefaults.registeredValues(labsFeatures: [first, second])
+
+        XCTAssertEqual(registered["labs.firstFixture"] as? Bool, false)
+        XCTAssertEqual(registered["labs.secondFixture"] as? Bool, false)
+        XCTAssertEqual(registered["AppendTrailingSpace"] as? Bool, true)
+        XCTAssertEqual(registered.count, AppDefaults.registeredValues(labsFeatures: []).count + 2)
+    }
+
+    func testFixtureFeaturesPersistAsBooleanConfigurationPreferences() throws {
+        try assertBooleanConfigurationRoundTrip([first, second])
+
+        Labs.setEnabled(true, for: second, in: defaults)
+        try ConfigurationPreferences.apply(["labs.secondFixture": .null], to: defaults, labsFeatures: [first, second])
+        XCTAssertNil(defaults.object(forKey: "labs.secondFixture"))
+        XCTAssertNil(try ConfigurationPreferences.capture(from: defaults, labsFeatures: [])["labs.firstFixture"])
+    }
+
+    private func assertBooleanConfigurationRoundTrip(
+        _ features: [LabsFeature], file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        for feature in features {
             Labs.setEnabled(true, for: feature, in: defaults)
-            XCTAssertEqual(try ConfigurationPreferences.capture(from: defaults)[feature.defaultsKey], .bool(true))
-            try ConfigurationPreferences.apply([feature.defaultsKey: .bool(false)], to: defaults)
-            XCTAssertFalse(Labs.isEnabled(feature, in: defaults), feature.id)
+            let captured = try ConfigurationPreferences.capture(from: defaults, labsFeatures: features)
+            XCTAssertEqual(captured[feature.defaultsKey], .bool(true), feature.id, file: file, line: line)
+
+            try ConfigurationPreferences.validate([feature.defaultsKey: .bool(false)], labsFeatures: features)
+            try ConfigurationPreferences.apply([feature.defaultsKey: .bool(false)], to: defaults, labsFeatures: features)
+            XCTAssertFalse(Labs.isEnabled(feature, in: defaults), feature.id, file: file, line: line)
             XCTAssertThrowsError(
-                try ConfigurationPreferences.validate([feature.defaultsKey: .string("on")]), feature.id)
+                try ConfigurationPreferences.validate([feature.defaultsKey: .string("on")], labsFeatures: features),
+                feature.id, file: file, line: line)
         }
     }
 
@@ -61,6 +90,23 @@ final class LabsFeatureTests: XCTestCase {
         Labs.setEnabled(true, for: first, in: defaults)
 
         XCTAssertEqual(received, [true, false, true])
+    }
+
+    func testEnabledPublisherReadsTheStateWhenEachSubscriptionStarts() {
+        Labs.setEnabled(true, for: first, in: defaults)
+        let publisher = Labs.enabledPublisher(first, in: defaults)
+        Labs.setEnabled(false, for: first, in: defaults)
+
+        var afterDisabling: [Bool] = []
+        let disabledSubscription = publisher.sink { afterDisabling.append($0) }
+        disabledSubscription.cancel()
+        Labs.setEnabled(true, for: first, in: defaults)
+        var afterEnabling: [Bool] = []
+        let enabledSubscription = publisher.sink { afterEnabling.append($0) }
+        enabledSubscription.cancel()
+
+        XCTAssertEqual(afterDisabling, [false])
+        XCTAssertEqual(afterEnabling, [true])
     }
 
     func testBackupRestoresListedFeaturesKeepsMissingOnesAndIgnoresUnknownOnes() throws {
