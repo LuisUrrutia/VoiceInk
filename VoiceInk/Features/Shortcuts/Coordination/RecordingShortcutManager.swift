@@ -6,9 +6,7 @@ import os
 @MainActor
 class RecordingShortcutManager: ObservableObject {
     @Published private(set) var hotkeyAvailability: RecordingHotkeyAvailability = .unconfigured
-    private var accessibilitySubscription: AnyCancellable?
-    private var captureAvailabilitySubscription: AnyCancellable?
-    private let permissionMonitor: PermissionMonitor
+    private var permissionTracker: ShortcutPermissionTracker?
     @Published var primaryRecordingShortcut: ShortcutSelection {
         didSet {
             UserDefaults.standard.set(primaryRecordingShortcut.rawValue, forKey: "primaryRecordingShortcut")
@@ -105,7 +103,6 @@ class RecordingShortcutManager: ObservableObject {
         engine: VoiceInkEngine, recorderUIManager: RecorderUIManager, permissionMonitor: PermissionMonitor? = nil
     ) {
         let permissionMonitor = permissionMonitor ?? .shared
-        self.permissionMonitor = permissionMonitor
         ShortcutMigration.migrateLegacyShortcutsIfNeeded()
 
         self.primaryRecordingShortcut = ShortcutMigration.migrateShortcutSelection(
@@ -214,15 +211,22 @@ class RecordingShortcutManager: ObservableObject {
         ShortcutDiagnostics.notice("configuration primarySelection=\(self.primaryRecordingShortcut.rawValue) primaryMode=\(self.primaryRecordingShortcutMode.rawValue) secondarySelection=\(self.secondaryRecordingShortcut.rawValue) secondaryMode=\(self.secondaryRecordingShortcutMode.rawValue)")
         ShortcutDiagnostics.observeEnvironment(reason: "startup", force: true)
 
+        permissionTracker = ShortcutPermissionTracker(
+            permissionMonitor: permissionMonitor,
+            refreshMonitoring: { [weak self] in self?.refreshShortcutMonitoring(reason: "accessibility-change") },
+            availability: .init(
+                isMonitoring: { [weak self] in
+                    guard let self else { return false }
+                    return [ShortcutAction.primaryRecording, .secondaryRecording].contains(where: self.shortcutMonitor.isMonitoring)
+                },
+                hasShortcut: { [weak self] in self?.hasRecordingShortcut ?? false },
+                publish: { [weak self] availability in
+                    guard let self, availability != self.hotkeyAvailability else { return }
+                    self.hotkeyAvailability = availability
+                }
+            )
+        )
         refreshShortcutMonitoring(reason: "startup")
-        // The monitor refreshes on activation and, while setup is visible, live; a grant starts the taps without waiting for the health check.
-        accessibilitySubscription = permissionMonitor.observeAccessibilityChanges { [weak self] _ in
-            self?.refreshShortcutMonitoring(reason: "accessibility-change")
-        }
-        captureAvailabilitySubscription = NotificationCenter.default
-            .publisher(for: ShortcutMonitor.captureAvailabilityDidChange)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateHotkeyAvailability() }
     }
 
     private func refreshShortcutMonitoring(reason: String) {
@@ -299,20 +303,12 @@ class RecordingShortcutManager: ObservableObject {
             },
             reason: reason
         )
-        updateHotkeyAvailability()
+        permissionTracker?.updateAvailability()
     }
 
-    private func updateHotkeyAvailability() {
-        let hasShortcut =
-            (primaryRecordingShortcut == .custom && ShortcutStore.shortcut(for: .primaryRecording) != nil)
+    private var hasRecordingShortcut: Bool {
+        (primaryRecordingShortcut == .custom && ShortcutStore.shortcut(for: .primaryRecording) != nil)
             || (secondaryRecordingShortcut == .custom && ShortcutStore.shortcut(for: .secondaryRecording) != nil)
-        let availability = RecordingHotkeyAvailability.resolve(
-            isMonitoring: [ShortcutAction.primaryRecording, .secondaryRecording].contains(where: shortcutMonitor.isMonitoring),
-            hasShortcut: hasShortcut,
-            accessibilityTrusted: AXIsProcessTrusted(),
-            accessibilityGrantedSinceLaunch: permissionMonitor.hasObservedUntrustedAccessibility
-        )
-        if availability != hotkeyAvailability { hotkeyAvailability = availability }
     }
 
     private var standaloneModifierActions: Set<ShortcutAction> {

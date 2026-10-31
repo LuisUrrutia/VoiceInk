@@ -90,15 +90,18 @@ final class LivePermissionRefreshTests: XCTestCase {
         XCTAssertEqual(timers.activeCount, 0)
     }
 
-    func testProductionTimerIsInvalidatedWithItsCancellable() async throws {
+    func testProductionTimerIsInvalidatedWithItsCancellable() {
         var ticks = 0
         var cancellable: AnyCancellable? = PermissionMonitor.mainRunLoopTimer(interval: 0.02) { ticks += 1 }
-        try await Task.sleep(nanoseconds: 120_000_000)
+        let deadline = Date().addingTimeInterval(5)
+        while ticks == 0 && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
         XCTAssertGreaterThan(ticks, 0)
 
         cancellable = nil
         let ticksAtCancel = ticks
-        try await Task.sleep(nanoseconds: 120_000_000)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
 
         XCTAssertNil(cancellable)
         XCTAssertEqual(ticks, ticksAtCancel)
@@ -257,6 +260,84 @@ final class LivePermissionRefreshTests: XCTestCase {
         XCTAssertEqual(readiness.issues(for: .shortcutDictation, hotkey: .needsRestart), [.hotkey(.needsRestart)])
         XCTAssertTrue(readiness.issues(for: .onScreenDictation, hotkey: .needsRestart).isEmpty)
         XCTAssertTrue(RecordingHotkeyAvailability.needsRestart.message.contains("Restart VoiceInk"))
+    }
+
+    // MARK: Shortcut connections
+
+    func testAccessibilityGrantRefreshesShortcutMonitoringWithoutActivation() async {
+        let monitor = makeMonitor()
+        let refreshed = expectation(description: "monitoring refreshed")
+        var refreshes = 0
+        let tracker = ShortcutPermissionTracker(
+            permissionMonitor: monitor, notificationCenter: NotificationCenter(),
+            refreshMonitoring: {
+                refreshes += 1
+                refreshed.fulfill()
+            }
+        )
+
+        monitor.setLiveRefresh(true, for: self)
+        permissions.snapshot.accessibility = true
+        timers.fire()
+        timers.fire()
+        await fulfillment(of: [refreshed], timeout: 3)
+
+        XCTAssertEqual(refreshes, 1)
+        withExtendedLifetime(tracker) {}
+        monitor.setLiveRefresh(false, for: self)
+    }
+
+    func testMonitoringChangeClearsAStaleRestartState() async {
+        let monitor = makeMonitor()
+        let center = NotificationCenter()
+        var isMonitoring = false
+        var published: [RecordingHotkeyAvailability] = []
+        let tracker = ShortcutPermissionTracker(
+            permissionMonitor: monitor, notificationCenter: center, accessibilityTrusted: { true },
+            refreshMonitoring: {},
+            availability: .init(
+                isMonitoring: { isMonitoring }, hasShortcut: { true }, publish: { published.append($0) }
+            )
+        )
+        tracker.updateAvailability()
+        XCTAssertEqual(published, [.needsRestart])
+        let recovered = expectation(description: "availability recomputed")
+        let observer = center.addObserver(forName: ShortcutMonitor.captureAvailabilityDidChange, object: nil, queue: .main) { _ in
+            DispatchQueue.main.async { recovered.fulfill() }
+        }
+        defer { center.removeObserver(observer) }
+
+        // The health check installed the tap after the grant.
+        isMonitoring = true
+        center.post(name: ShortcutMonitor.captureAvailabilityDidChange, object: nil)
+        await fulfillment(of: [recovered], timeout: 3)
+
+        XCTAssertEqual(published, [.needsRestart, .available])
+    }
+
+    func testReleasedTrackerStopsReacting() async {
+        let monitor = makeMonitor()
+        let center = NotificationCenter()
+        var refreshes = 0
+        var publishes = 0
+        var tracker: ShortcutPermissionTracker? = ShortcutPermissionTracker(
+            permissionMonitor: monitor, notificationCenter: center, accessibilityTrusted: { true },
+            refreshMonitoring: { refreshes += 1 },
+            availability: .init(isMonitoring: { false }, hasShortcut: { true }, publish: { _ in publishes += 1 })
+        )
+        XCTAssertNotNil(tracker)
+
+        tracker = nil
+        permissions.snapshot.accessibility = true
+        monitor.refresh()
+        center.post(name: ShortcutMonitor.captureAvailabilityDidChange, object: nil)
+        await Task.yield()
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 3)
+
+        XCTAssertEqual(refreshes, 0)
+        XCTAssertEqual(publishes, 0)
     }
 
     // MARK: Relaunch

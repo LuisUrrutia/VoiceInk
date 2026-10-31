@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 
 @MainActor
@@ -10,7 +9,7 @@ class ModeShortcutManager {
     private let preRollPress: RecordingPreRollPress
     private var shortcutChangeObserver: NSObjectProtocol?
     private var monitoredActions = Set<ShortcutAction>()
-    private var accessibilitySubscription: AnyCancellable?
+    private var permissionTracker: ShortcutPermissionTracker?
 
     var earlyCaptureAvailability: Bool? {
         shortcutMonitor.earlyCaptureAvailability(for: monitoredActions)
@@ -27,9 +26,10 @@ class ModeShortcutManager {
         self.preRollPress = preRollPress
 
         refreshModeShortcuts(reason: "startup")
-        accessibilitySubscription = (permissionMonitor ?? .shared).observeAccessibilityChanges { [weak self] _ in
-            self?.refreshModeShortcuts(reason: "accessibility-change")
-        }
+        permissionTracker = ShortcutPermissionTracker(
+            permissionMonitor: permissionMonitor ?? .shared,
+            refreshMonitoring: { [weak self] in self?.refreshModeShortcuts(reason: "accessibility-change") }
+        )
 
         shortcutChangeObserver = NotificationCenter.default.addObserver(
             forName: ShortcutStore.shortcutDidChange,
