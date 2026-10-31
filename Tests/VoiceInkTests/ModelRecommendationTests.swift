@@ -78,6 +78,13 @@ struct ModelRecommendationTests {
                 == ListFormatter.localizedString(byJoining: ["Spanish", "English"]))
     }
 
+    @Test func filipinoAndAutomaticDetectionMatchHexEntries() {
+        #expect(suggestions(for: ["fil"]) == [ModelRecommendations.whisperLargeV3Turbo: .recommended])
+        #expect(
+            ModelRecommendations(languages: ["auto"]).languageDescription
+                == String(localized: "automatic language detection"))
+    }
+
     @Test func localeSelectionsMatchTheirLanguage() {
         let parakeet = FluidAudioModel(
             name: ModelRecommendations.parakeetV3, displayName: "Parakeet V3", description: "Speech", size: "494 MB",
