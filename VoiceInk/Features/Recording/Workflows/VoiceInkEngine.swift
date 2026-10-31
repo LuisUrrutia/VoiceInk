@@ -364,7 +364,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 assistantSession.reset()
             }
 
-            guard await passesRecordingPreflight(), !microphoneDiagnostic.isBusy,
+            guard await passesRecordingPreflight(delivery: capturedDelivery), !microphoneDiagnostic.isBusy,
                 recordingState == .idle, !Task.isCancelled
             else { return }
 
@@ -621,13 +621,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     /// Checks requirements that do not depend on asynchronous app and URL mode resolution.
     @MainActor
-    private func passesRecordingPreflight() async -> Bool {
+    private func passesRecordingPreflight(delivery: RecordingDeliverySession) async -> Bool {
         captureReadiness.refreshSnapshot()
         if let issue = captureReadiness.snapshot.issues(for: .microphoneTest).first {
             await failRecordingPreflight(
                 title: issue.message,
                 actionLabel: String(localized: "Audio Settings"),
-                action: AudioSetupNavigator.openAudioSettings
+                action: AudioSetupNavigator.openAudioSettings,
+                delivery: delivery
             )
             return false
         }
@@ -635,7 +636,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             await failRecordingPreflight(
                 title: String(localized: "No mode configured"),
                 actionLabel: String(localized: "Manage Modes"),
-                action: ModeSetupNavigator.openModesSettings
+                action: ModeSetupNavigator.openModesSettings,
+                delivery: delivery
             )
             return false
         }
@@ -647,16 +649,19 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private func failRecordingPreflight(
         title: String,
         actionLabel: String,
-        action: @escaping () -> Void
+        action: @escaping () -> Void,
+        delivery: RecordingDeliverySession
     ) async {
         logger.error("❌ Recording preflight failed: \(title, privacy: .public)")
         recordingState = .idle
         recordingError = title
+        delivery.dictationFailed()
         NotificationManager.shared.showNotification(
             title: title,
             type: .error,
             duration: 7.0,
-            actionButton: (actionLabel, action)
+            actionButton: (actionLabel, action),
+            playsSound: false
         )
         await recorderUIManager?.dismissRecorderPanel()
     }

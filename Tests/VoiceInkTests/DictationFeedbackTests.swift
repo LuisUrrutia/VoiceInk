@@ -142,6 +142,18 @@ final class DictationFeedbackTests: XCTestCase {
         XCTAssertEqual(command.tones, [.error])
     }
 
+    func testEmptyAssistantFollowUpIsAFailedDictation() async {
+        let fixture = SessionFixture()
+        fixture.session.recordingStopped()
+
+        await deliver(.paste, text: " ", isAssistantFollowUp: true, session: fixture.session) { _ in
+            XCTFail("A follow-up is not pasted")
+            return .commandPosted
+        }
+
+        XCTAssertEqual(fixture.tones, [.stop, .error])
+    }
+
     // MARK: - Helpers
 
     @MainActor private final class SessionFixture {
@@ -159,6 +171,7 @@ final class DictationFeedbackTests: XCTestCase {
         text: String?,
         status: TranscriptionStatus = .completed,
         responseError: String? = nil,
+        isAssistantFollowUp: Bool = false,
         session: RecordingDeliverySession,
         dismiss: @escaping () async -> Void = {},
         failResponse: @escaping (String) async -> Void = { _ in },
@@ -168,7 +181,7 @@ final class DictationFeedbackTests: XCTestCase {
             transcription: Transcription(text: text ?? "", duration: 1, transcriptionStatus: status),
             text: text,
             output: OutputRuntimeConfiguration(mode: nil, outputMode: outputMode, autoSendKey: .none, customCommand: nil),
-            responseConfig: nil, responseError: responseError, isAssistantFollowUp: false, sendAfterPaste: false,
+            responseConfig: nil, responseError: responseError, isAssistantFollowUp: isAssistantFollowUp, sendAfterPaste: false,
             deliverySession: session
         )
         let delivery = TranscriptionDelivery { text, _, _ in

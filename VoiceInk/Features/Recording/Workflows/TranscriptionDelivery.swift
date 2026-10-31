@@ -79,6 +79,7 @@ final class TranscriptionDelivery {
         guard let text = item.text?.trimmingCharacters(in: .whitespacesAndNewlines),
             !text.isEmpty
         else {
+            item.deliverySession?.dictationFailed()
             return
         }
 

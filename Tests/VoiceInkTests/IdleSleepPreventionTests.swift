@@ -241,6 +241,22 @@ final class RecordingIdleSleepTests: XCTestCase {
         withExtendedLifetime(panel) {}
     }
 
+    func testPreflightFailurePlaysTheErrorToneWithoutStartingCapture() async throws {
+        let (client, prevention, _) = makePrevention()
+        let hardware = SleepTestHardware()
+        let (engine, panel) = try makeEngine(hardware: hardware, prevention: prevention)
+        ModeManager.shared.configurations = []
+        var tones: [DictationFeedback.Tone] = []
+        let session = RecordingDeliverySession(destination: .currentApplication, playFeedback: { tones.append($0) })
+
+        await engine.toggleRecord(deliverySession: session)
+
+        XCTAssertEqual(tones, [.error])
+        XCTAssertEqual(hardware.startCount, 0)
+        XCTAssertTrue(client.createdNames.isEmpty)
+        withExtendedLifetime(panel) {}
+    }
+
     func testCancelDuringStartupReleasesAssertionBeforeCaptureFinishesStarting() async throws {
         let (client, prevention, queue) = makePrevention()
         let hardware = SleepTestHardware()
