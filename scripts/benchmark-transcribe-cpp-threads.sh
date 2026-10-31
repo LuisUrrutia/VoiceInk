@@ -40,7 +40,7 @@ fetch "https://huggingface.co/handy-computer/SenseVoiceSmall-gguf/resolve/4a08b8
 passthrough=()
 while IFS='=' read -r name value; do
     passthrough+=("TEST_RUNNER_$name=$value")
-done < <(env | grep '^VOICEINK_TCPP_BENCH_' | grep -v '^VOICEINK_TCPP_BENCH_SCRATCH=' || true)
+done < <(env | grep '^VOICEINK_TCPP_BENCH_' | grep -Ev '^VOICEINK_TCPP_BENCH_(SCRATCH|RESULT|AUDIO|MODELS)=' || true)
 
 env GIT_TERMINAL_PROMPT=0 \
     GIT_SSH_COMMAND='ssh -o BatchMode=yes' \

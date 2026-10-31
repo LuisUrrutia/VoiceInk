@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import FluidAudio
 import Foundation
@@ -71,6 +72,9 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
                     .first { $0.fileName == fileName },
                 "Unknown model file \(fileName)"
             )
+            guard try sha256(ofFileAt: modelPath) == artifact.expectedSHA256 else {
+                return XCTFail("\(fileName) is not the revision the app ships")
+            }
             let model = try Model(path: modelPath, options: ModelOptions(backend: .metal))
             let options = RunOptions(
                 timestamps: .none,
@@ -78,10 +82,10 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
                 language: "en",
                 keepSpecialTags: false
             )
-            let capabilitiesMaximum = model.capabilities.maxAudioMs
-            let maximumChunkSeconds = capabilitiesMaximum > 0
-                ? min(artifact.maximumChunkSeconds, max(1, Int(capabilitiesMaximum / 1_000)))
-                : artifact.maximumChunkSeconds
+            let maximumChunkSeconds = OfflineTranscribeCppService.effectiveMaximumChunkSeconds(
+                configuredMaximum: artifact.maximumChunkSeconds,
+                capabilitiesMaximumMilliseconds: model.capabilities.maxAudioMs
+            )
             let chunkedClips = clips.map { clip in
                 (clip.seconds, clip.samples.energyAwareChunks(
                     maximumCount: maximumChunkSeconds * 16_000,
@@ -198,6 +202,16 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
             guard parts.count == 2 else { throw CocoaError(.formatting) }
             return (parts[0], parts[1])
         }
+    }
+
+    private func sha256(ofFileAt path: String) throws -> String {
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let data = try handle.read(upToCount: 16 << 20), !data.isEmpty {
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private func summary(_ values: [Double]) -> String {
