@@ -1,24 +1,32 @@
 import SwiftUI
 
 struct DashboardGettingStarted: View {
-    let hasModes: Bool
+    let steps: [DashboardSetupGuide.Step]
     let onNavigate: (ViewType) -> Void
 
     var body: some View {
         VStack(spacing: 4) {
-            row(
-                "Choose a model", detail: "Download a model or connect your preferred provider.",
-                icon: "books.vertical", destination: .models)
-            row(
-                hasModes ? "Customize your modes" : "Create your first mode",
-                detail: "Choose how VoiceInk transcribes and formats your speech.", icon: "sparkles",
-                destination: .modes)
-            row(
-                "Set your shortcuts", detail: "Start dictating from anywhere with a keyboard shortcut.",
-                icon: "command", destination: .settings)
-            row(
-                "Add your vocabulary", detail: "Keep names, technical terms, and unique spellings accurate.",
-                icon: "character.book.closed", destination: .dictionary)
+            ForEach(steps, id: \.self) { step in
+                switch step {
+                case .chooseModel:
+                    row(
+                        "Choose a model", detail: "Download a model or connect your preferred provider.",
+                        icon: "books.vertical", destination: .models)
+                case .createFirstMode, .customizeModes:
+                    row(
+                        step == .createFirstMode ? "Create your first mode" : "Customize your modes",
+                        detail: "Choose how VoiceInk transcribes and formats your speech.", icon: "sparkles",
+                        destination: .modes)
+                case .setShortcuts:
+                    row(
+                        "Set your shortcuts", detail: "Start dictating from anywhere with a keyboard shortcut.",
+                        icon: "command", destination: .settings)
+                case .addVocabulary:
+                    row(
+                        "Add your vocabulary", detail: "Keep names, technical terms, and unique spellings accurate.",
+                        icon: "character.book.closed", destination: .dictionary)
+                }
+            }
         }
     }
 

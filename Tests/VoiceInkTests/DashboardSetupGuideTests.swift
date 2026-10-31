@@ -1,0 +1,209 @@
+import XCTest
+@testable import VoiceInk
+
+@MainActor
+final class DashboardSetupGuideTests: XCTestCase {
+    func testFreshStarterSetupShowsEveryStep() {
+        let steps = DashboardSetupGuide.steps(for: configuration())
+
+        XCTAssertEqual(steps, [.chooseModel, .customizeModes, .setShortcuts, .addVocabulary])
+    }
+
+    func testWithoutEnabledModesSuggestsCreatingOne() {
+        var disabledDictation = starterDictation()
+        disabledDictation.isEnabled = false
+
+        XCTAssertEqual(
+            DashboardSetupGuide.steps(for: configuration(modes: [])),
+            [.chooseModel, .createFirstMode, .setShortcuts, .addVocabulary])
+        XCTAssertTrue(
+            DashboardSetupGuide.steps(for: configuration(modes: [disabledDictation])).contains(.createFirstMode))
+    }
+
+    func testUserCreatedModeHidesModelAndModeSteps() {
+        let slack = ModeConfig(name: "Slack", isAIEnhancementEnabled: true, selectedTranscriptionModelName: "parakeet-tdt-0.6b-v3")
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [starterDictation(), slack]))
+
+        XCTAssertEqual(steps, [.setShortcuts, .addVocabulary])
+    }
+
+    func testOnboardingStarterModesAloneKeepModeStep() {
+        var email = starterMode(.email)
+        email.triggerGroups = [ModeTriggerGroup(name: "Email", appConfigs: [], urlConfigs: [])]
+        let modes = [starterDictation(), starterMode(.enhance), email, starterMode(.rewrite), starterMode(.assistant)]
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: modes))
+
+        XCTAssertEqual(steps, [.chooseModel, .customizeModes, .setShortcuts, .addVocabulary])
+    }
+
+    func testEditedNondefaultStarterModeHidesModelAndModeSteps() {
+        var enhancement = starterMode(.enhance)
+        enhancement.name = "Work notes"
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [starterDictation(), enhancement]))
+
+        XCTAssertEqual(steps, [.setShortcuts, .addVocabulary])
+    }
+
+    func testCustomizedDefaultModeHidesModelAndModeSteps() {
+        let customizations: [(inout ModeConfig) -> Void] = [
+            { $0.name = "Notes" },
+            { $0.icon = .symbol("star") },
+            { $0.isAIEnhancementEnabled = true },
+            { $0.selectedLanguages = ["es"] },
+            { $0.triggerWords = ["note"] },
+            { $0.useClipboardContext = true },
+            { $0.isTextFormattingEnabled = false },
+            { $0.isRealtimeTranscriptionEnabled = false },
+            { $0.selectedPrompt = PromptTemplates.defaultPromptId.uuidString },
+            { $0.outputMode = .respond },
+            { $0.useSelectedTextContext = true },
+            { $0.useScreenCapture = true },
+            { $0.autoSendKey = .enter },
+            { $0.customCommand = ModeCustomCommand(command: "pbcopy") },
+            { $0.appConfigs = [AppConfig(bundleIdentifier: "com.apple.Notes", appName: "Notes")] },
+            { $0.urlConfigs = [URLConfig(url: "github.com")] },
+            { $0.triggerGroups = [ModeTriggerGroup(name: "Notes", urlConfigs: [URLConfig(url: "notion.so")])] },
+        ]
+
+        for customize in customizations {
+            var dictation = starterDictation()
+            customize(&dictation)
+
+            let steps = DashboardSetupGuide.steps(for: configuration(modes: [dictation]))
+
+            XCTAssertEqual(steps, [.setShortcuts, .addVocabulary])
+        }
+    }
+
+    func testUserModeMadeDefaultCountsAsCustomized() {
+        var dictation = starterDictation()
+        dictation.isDefault = false
+        let notes = ModeConfig(name: "Notes", isAIEnhancementEnabled: false, isDefault: true)
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [dictation, notes]))
+
+        XCTAssertFalse(steps.contains(.customizeModes))
+    }
+
+    func testUnchangedStarterMadeDefaultHidesModelAndModeSteps() {
+        var dictation = starterDictation()
+        dictation.isDefault = false
+        var enhancement = starterMode(.enhance)
+        enhancement.isDefault = true
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [dictation, enhancement]))
+
+        XCTAssertEqual(steps, [.setShortcuts, .addVocabulary])
+    }
+
+    func testEnhancementProviderOrModelAloneIsNotCustomization() {
+        // Onboarding sets the provider and model without recording them, so they have no baseline to compare.
+        var enhancement = starterMode(.enhance)
+        enhancement.selectedAIProvider = "Anthropic"
+        enhancement.selectedAIModel = "claude-sonnet-5-5"
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [starterDictation(), enhancement]))
+
+        XCTAssertEqual(steps, [.chooseModel, .customizeModes, .setShortcuts, .addVocabulary])
+    }
+
+    func testChangedDefaultModelHidesOnlyModelStep() {
+        var dictation = starterDictation()
+        dictation.selectedTranscriptionModelName = "ggml-large-v3-turbo"
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [dictation]))
+
+        XCTAssertEqual(steps, [.customizeModes, .setShortcuts, .addVocabulary])
+    }
+
+    func testDownloadedModelBeyondStarterDefaultHidesModelStep() {
+        let initial = DashboardSetupGuide.steps(
+            for: configuration(installed: ["apple-speech", "parakeet-tdt-0.6b-v3"]))
+        let downloaded = DashboardSetupGuide.steps(
+            for: configuration(installed: ["apple-speech", "parakeet-tdt-0.6b-v3", "ggml-base"]))
+
+        XCTAssertTrue(initial.contains(.chooseModel))
+        XCTAssertEqual(downloaded, [.customizeModes, .setShortcuts, .addVocabulary])
+    }
+
+    func testShortcutAndDictionaryEntriesHideTheirSteps() {
+        let steps = DashboardSetupGuide.steps(
+            for: configuration(hasRecordingShortcut: true, hasDictionaryEntries: true))
+
+        XCTAssertEqual(steps, [.chooseModel, .customizeModes])
+    }
+
+    func testCaptureReadinessShowsUntilFirstCompletedDictation() {
+        let ready = readiness()
+
+        XCTAssertTrue(showsReadiness(hasCompletedDictation: false, readiness: ready))
+        XCTAssertFalse(showsReadiness(hasCompletedDictation: true, readiness: ready))
+    }
+
+    func testCaptureReadinessReturnsForProblemsAfterFirstDictation() {
+        var noMicrophone = readiness()
+        noMicrophone.hasMicrophone = false
+        var noAccessibility = readiness()
+        noAccessibility.accessibilityGranted = false
+        var missingModel = readiness()
+        missingModel.model = .notInstalled
+
+        XCTAssertTrue(showsReadiness(readiness: noMicrophone))
+        XCTAssertTrue(showsReadiness(readiness: noAccessibility))
+        XCTAssertTrue(showsReadiness(readiness: missingModel))
+        XCTAssertTrue(showsReadiness(readiness: readiness(), hotkey: .unconfigured))
+        XCTAssertTrue(showsReadiness(readiness: readiness(), hotkey: .needsAccessibility))
+        XCTAssertTrue(showsReadiness(readiness: readiness(), hasRecordingError: true))
+    }
+
+    func testModelCheckInProgressDoesNotShowCaptureReadiness() {
+        var checking = readiness()
+        checking.model = .checking
+
+        XCTAssertFalse(showsReadiness(readiness: checking))
+    }
+
+    private func starterDictation() -> ModeConfig {
+        starterMode(.clean)
+    }
+
+    /// Mirrors the configuration `StarterModeFactory` installs during onboarding.
+    private func starterMode(_ kind: StarterModeKind) -> ModeConfig {
+        let template = StarterModeCatalog.templates.first { $0.kind == kind }!
+        return ModeConfig(
+            id: template.id, name: template.name, icon: template.icon,
+            isAIEnhancementEnabled: template.usesAIEnhancement, selectedPrompt: template.promptId?.uuidString,
+            selectedTranscriptionModelName: StarterModeFactory.defaultTranscriptionModelName,
+            selectedLanguage: "auto", useClipboardContext: kind == .email,
+            useSelectedTextContext: template.useSelectedTextContext,
+            useScreenCapture: template.useScreenCapture, isTextFormattingEnabled: true,
+            outputMode: template.outputMode, isDefault: template.isDefault)
+    }
+
+    private func configuration(
+        modes: [ModeConfig]? = nil, installed: Set<String> = ["apple-speech"],
+        hasRecordingShortcut: Bool = false, hasDictionaryEntries: Bool = false
+    ) -> DashboardSetupGuide.Configuration {
+        DashboardSetupGuide.Configuration(
+            modes: modes ?? [starterDictation()], installedLocalModelNames: installed,
+            hasRecordingShortcut: hasRecordingShortcut, hasDictionaryEntries: hasDictionaryEntries)
+    }
+
+    private func readiness() -> CaptureReadiness {
+        CaptureReadiness(
+            microphonePermission: .granted, hasMicrophone: true, accessibilityGranted: true,
+            model: .ready, usesPaste: true)
+    }
+
+    private func showsReadiness(
+        hasCompletedDictation: Bool = true, readiness: CaptureReadiness,
+        hotkey: RecordingHotkeyAvailability = .available, hasRecordingError: Bool = false
+    ) -> Bool {
+        DashboardSetupGuide.showsCaptureReadiness(
+            hasCompletedDictation: hasCompletedDictation, readiness: readiness, hotkey: hotkey,
+            hasRecordingError: hasRecordingError)
+    }
+}

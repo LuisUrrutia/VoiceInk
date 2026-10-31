@@ -19,8 +19,6 @@ struct ConfigurationFileSettingsView: View {
                 Label(error, appSymbol: "exclamationmark.triangle")
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                LabeledContent("Automatic saving", value: configuration.isReady ? "On" : "Unavailable")
             }
         } header: {
             Text("Portable Configuration")

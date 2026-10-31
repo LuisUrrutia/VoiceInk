@@ -28,12 +28,22 @@ struct DashboardContent: View {
     @EnvironmentObject private var engine: VoiceInkEngine
     @EnvironmentObject private var recordingShortcutManager: RecordingShortcutManager
     @EnvironmentObject private var recorderUIManager: RecorderUIManager
+    @EnvironmentObject private var transcriptionModelManager: TranscriptionModelManager
     @ObservedObject private var modeManager = ModeManager.shared
     @ObservedObject private var starPrompt = GitHubStarPromptCoordinator.shared
     @State private var isSystemInfoCopied = false
     @AppStorage(AutoLearnSettings.isEnabledKey) private var isAutoLearnEnabled = true
     @AppStorage(AutoLearnSettings.hasFailureKey) private var hasAutoLearnFailure = false
     @Query(Self.recentTranscriptionsDescriptor()) private var recentTranscriptionCandidates: [Transcription]
+    @Query(Self.firstRecordDescriptor(SessionMetric.self)) private var firstSessionMetric: [SessionMetric]
+    @Query(Self.firstRecordDescriptor(VocabularyWord.self)) private var firstVocabularyWord: [VocabularyWord]
+    @Query(Self.firstRecordDescriptor(WordReplacement.self)) private var firstWordReplacement: [WordReplacement]
+
+    private static func firstRecordDescriptor<Model: PersistentModel>(_: Model.Type) -> FetchDescriptor<Model> {
+        var descriptor = FetchDescriptor<Model>()
+        descriptor.fetchLimit = 1
+        return descriptor
+    }
 
     private static func recentTranscriptionsDescriptor() -> FetchDescriptor<Transcription> {
         var descriptor = FetchDescriptor<Transcription>(
@@ -127,11 +137,11 @@ struct DashboardContent: View {
         VStack(alignment: .leading, spacing: 26) {
             summarySection
 
-            CaptureReadinessView(engine: engine, shortcuts: recordingShortcutManager) {
+            DashboardCaptureReadinessCard(
+                engine: engine, shortcuts: recordingShortcutManager, hasCompletedDictation: !firstSessionMetric.isEmpty
+            ) {
                 Task { await recorderUIManager.toggleRecordingFromSetup() }
             }
-            .padding(20)
-            .background(AppTranslucentCardBackground(cornerRadius: 18))
 
             if hasAutoLearnFailure, isAutoLearnEnabled {
                 Button {
@@ -146,10 +156,12 @@ struct DashboardContent: View {
                 accessibilityReminder
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Get started").font(.headline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
-                DashboardGettingStarted(hasModes: modeManager.hasEnabledConfiguration) { destination in
-                    navigation.navigate(to: destination)
+            if !setupSteps.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Get started").font(.headline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
+                    DashboardGettingStarted(steps: setupSteps) { destination in
+                        navigation.navigate(to: destination)
+                    }
                 }
             }
 
@@ -220,8 +232,18 @@ struct DashboardContent: View {
                 summaryMetric(Formatters.formattedSavedTime(selectedTimeSavedSummary.timeSaved), title: "Time saved")
             }
             .padding(.vertical, 22)
-            .background(AppTranslucentCardBackground(cornerRadius: 18))
+            .appGlassCard()
         }
+    }
+
+    private var setupSteps: [DashboardSetupGuide.Step] {
+        DashboardSetupGuide.steps(
+            for: .init(
+                modes: modeManager.configurations,
+                installedLocalModelNames: transcriptionModelManager.installedLocalModelNames,
+                hasRecordingShortcut: recordingShortcutManager.hotkeyAvailability != .unconfigured,
+                hasDictionaryEntries: !firstVocabularyWord.isEmpty || !firstWordReplacement.isEmpty
+            ))
     }
 
     private func summaryMetric(_ value: String, title: LocalizedStringKey) -> some View {
