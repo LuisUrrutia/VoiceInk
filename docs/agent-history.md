@@ -11,7 +11,8 @@ VoiceInk runs with agent access enabled.
 In VoiceInk, open History, then History Settings, and turn on **Allow Local Agents
 to Read History** under Agent Access. The setting is off by default. It belongs
 to this Mac: the XDG configuration file and backups do not carry it, so restoring
-settings never opens the channel. Turning it off closes the socket at once.
+settings never opens the channel. Turning it off removes the socket, closes open
+connections and discards answers not yet sent.
 
 ## Build and run
 
@@ -99,8 +100,9 @@ stdio. Configure a client with the absolute path of the built binary, for exampl
 Tools, all annotated `readOnlyHint`: `list_history(limit?, since?, until?,
 cursor?)`, `search_history(query, limit?, since?, until?, cursor?)` and
 `get_history_entry(id)`. Each returns the version 1 JSON above as text and as
-`structuredContent`. When VoiceInk is not running or access is off, the tool
-result is an error that says so; the server keeps running.
+`structuredContent`. Unknown or mistyped arguments are rejected rather than
+ignored. When VoiceInk is not running or access is off, the tool result is an
+error that says so; the server keeps running.
 
 ## Security and privacy
 
@@ -113,7 +115,8 @@ result is an error that says so; the server keeps running.
 - Any program running under your account can read History while access is on.
   Leave it off when you do not use it.
 - Requests are read-only: the app fetches from an isolated SwiftData context and
-  never saves. Requests are limited to 16 KiB, 5-second I/O and four concurrent
-  connections. Neither side logs queries or transcription text.
+  never saves. A request must arrive whole within 5 seconds and fit in 16 KiB;
+  at most four connections are served at once. Neither side logs queries or
+  transcription text.
 - Transcripts leave the Mac only through whatever transport your MCP client or
   terminal uses.
