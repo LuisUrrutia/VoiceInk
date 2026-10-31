@@ -10,6 +10,7 @@ enum ShortcutAction: Hashable, Sendable {
     case cancelRecorder
     case openQuickHistory
     case quickAddToDictionary
+    case toggleMeeting
     case mode(UUID)
     case recorderPanelEscape
     case recorderPanelReturn
@@ -48,6 +49,8 @@ enum ShortcutAction: Hashable, Sendable {
             return "openHistoryWindow"
         case .quickAddToDictionary:
             return "quickAddToDictionary"
+        case .toggleMeeting:
+            return "toggleMeeting"
         case .mode(let id):
             return "mode_\(id.uuidString)"
         case .recorderPanelEscape:
@@ -79,6 +82,8 @@ enum ShortcutAction: Hashable, Sendable {
             return String(localized: "Open Quick History")
         case .quickAddToDictionary:
             return String(localized: "Quick Add to Dictionary")
+        case .toggleMeeting:
+            return String(localized: "Record or Stop Meeting")
         case .mode(let id):
             if let config = ModeManager.shared.getConfiguration(with: id) {
                 return String(format: String(localized: "%@ Mode"), config.name)
@@ -104,6 +109,7 @@ enum ShortcutAction: Hashable, Sendable {
         .retryLastTranscription,
         .openQuickHistory,
         .quickAddToDictionary,
+        .toggleMeeting,
     ]
 
     static let recorderPanelStoredActions: [Self] = [
@@ -121,8 +127,8 @@ enum ShortcutAction: Hashable, Sendable {
         .quickAddToDictionary,
     ]
 
-    /// Stored actions outside modes; `rawRecording` postdates the legacy KeyboardShortcuts names.
-    static let storedGlobalActions: [Self] = legacyKeyboardShortcutActions + [.rawRecording]
+    /// Stored actions outside modes, including those added after the KeyboardShortcuts migration.
+    static let storedGlobalActions: [Self] = legacyKeyboardShortcutActions + [.rawRecording, .toggleMeeting]
 
     var dictationProcessing: DictationProcessing {
         self == .rawRecording ? .raw : .standard

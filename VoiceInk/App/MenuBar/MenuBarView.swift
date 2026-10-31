@@ -116,6 +116,8 @@ struct MenuBarView: View {
                 }
             }
 
+            MeetingMenuItems()
+
             Divider()
 
             Button("Retry Last Transcription") {

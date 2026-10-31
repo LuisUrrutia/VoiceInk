@@ -46,6 +46,8 @@ class Recorder: NSObject, ObservableObject {
     @Published private(set) var isInputSilent = false
     private let inputSignalMonitoring: InputSignalMonitoring
     private var inputSignalTask: Task<Void, Never>?
+    private let meetingCoordinator: (any DictationMeetingCoordinating)?
+    private var isDictationCapture = false
 
     /// Audio chunk callback for streaming. Can be updated while recording;
     /// changes are forwarded to the live CoreAudioRecorder.
@@ -66,9 +68,11 @@ class Recorder: NSObject, ObservableObject {
             AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         },
         isPreRollObserverAvailable: @escaping @MainActor () -> Bool = { false },
-        inputSignalMonitoring: InputSignalMonitoring = InputSignalMonitoring()
+        inputSignalMonitoring: InputSignalMonitoring = InputSignalMonitoring(),
+        meetingCoordinator: (any DictationMeetingCoordinating)? = MeetingRecorder.shared
     ) {
         self.deviceManager = deviceManager
+        self.meetingCoordinator = meetingCoordinator
         self.inputSignalMonitoring = inputSignalMonitoring
         self.defaults = defaults
         self.isMicrophoneAuthorized = isMicrophoneAuthorized
@@ -138,7 +142,10 @@ class Recorder: NSObject, ObservableObject {
         mediaController.beginRecordingSession(sessionID: playbackSessionID)
         audioRestorationTask?.cancel()
         audioRestorationTask = nil
-        if applyRecordingEffects {
+        // Effects mark a dictation; the microphone test applies none and is not one.
+        isDictationCapture = applyRecordingEffects
+        if applyRecordingEffects { meetingCoordinator?.dictationCaptureBegan() }
+        if applyRecordingEffects, meetingCoordinator?.suppressesDictationOutputEffects != true {
             pauseMedia(sessionID: playbackSessionID)
             quietSystemAudio(sessionID: playbackSessionID)
         }
@@ -257,6 +264,10 @@ class Recorder: NSObject, ObservableObject {
                 currentRecorder?.stopRecording()
                 continuation.resume(returning: currentRecorder?.recordingError)
             }
+        }
+        if isDictationCapture {
+            isDictationCapture = false
+            meetingCoordinator?.dictationCaptureEnded()
         }
         guard self.playbackSessionID == playbackSessionID else { return tailOutcome }
         recordingError = failure

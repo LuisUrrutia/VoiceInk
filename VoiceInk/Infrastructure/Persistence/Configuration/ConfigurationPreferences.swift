@@ -20,6 +20,7 @@ enum ConfigurationPreferences {
                 UserDefaults.Keys.keepMicrophoneReady,
                 UserDefaults.Keys.avoidsBluetoothDefaultMicrophone,
                 IdleModelUnloadSettings.isEnabledKey,
+                MeetingSettings.showsRecordingIndicatorKey,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",
@@ -37,6 +38,7 @@ enum ConfigurationPreferences {
                 "selectedDoneBuiltInSound", "selectedErrorBuiltInSound",
                 "customDoneSoundFilename", "customErrorSoundFilename",
                 "vocabularySortMode", "wordReplacementSortMode",
+                MeetingSettings.outputFolderKey,
             ]),
             (.number, [
                 "clipboardRestoreDelay", "audioResumptionDelay", "systemAudioLoweringLevel", "localCLITimeoutSeconds",
