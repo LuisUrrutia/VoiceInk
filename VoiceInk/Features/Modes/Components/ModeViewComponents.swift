@@ -130,32 +130,6 @@ private struct ModeShortcutIndicator: View {
     }
 }
 
-private struct ModeCardSurface: ViewModifier {
-    let isSelected: Bool
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    func body(content: Content) -> some View {
-        Group {
-            if reduceTransparency {
-                content.background(AppTheme.Surface.card, in: .rect(cornerRadius: 16))
-            } else if #available(macOS 26.0, *) {
-                content.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
-            } else {
-                content.background(.thinMaterial, in: .rect(cornerRadius: 16))
-            }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(
-                    AppMaterialCardBackground.border(for: isSelected),
-                    lineWidth: AppMaterialCardBackground.lineWidth(for: isSelected)
-                )
-                .allowsHitTesting(false)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 16))
-    }
-}
-
 struct ConfigurationRow: View {
     private struct TranscriptionModelMetadata {
         let label: String
@@ -514,7 +488,7 @@ struct ConfigurationRow: View {
         .opacity(config.isEnabled ? 1.0 : 0.70)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         // Keep the switch inside the card glass; as a container sibling, its glass merges into the card's.
-        .modifier(ModeCardSurface(isSelected: isEditing))
+        .appGlassCard(isSelected: isEditing, isInteractive: true)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
                 isHovering = hovering
