@@ -142,10 +142,13 @@ final class HistoryAccessCLITests: XCTestCase {
     func testMCPInitializeNegotiatesVersionAndIgnoresNotifications() throws {
         let server = HistoryMCPServer(now: { self.now }, transport: { FakeTransport(response: .page([], nextCursor: nil)) })
 
-        let reply = try json(server.handle(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#))
+        let reply = try json(server.handle(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#))
         let unknownVersion = try json(server.handle(#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#))
 
-        XCTAssertEqual((reply["result"] as? [String: Any])?["protocolVersion"] as? String, "2025-03-26")
+        let batching = try json(server.handle(#"{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#))
+
+        XCTAssertEqual((reply["result"] as? [String: Any])?["protocolVersion"] as? String, "2024-11-05")
+        XCTAssertEqual((batching["result"] as? [String: Any])?["protocolVersion"] as? String, "2025-06-18")
         XCTAssertEqual((unknownVersion["result"] as? [String: Any])?["protocolVersion"] as? String, "2025-06-18")
         XCTAssertNil(server.handle(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#))
         XCTAssertEqual(try json(server.handle("{oops"))["error"].flatMap { ($0 as? [String: Any])?["code"] as? Int }, -32700)
@@ -206,12 +209,14 @@ final class HistoryAccessCLITests: XCTestCase {
         XCTAssertEqual(try errorCode("[]"), -32600)
         XCTAssertEqual(try errorCode(#"{"id":1,"method":"ping"}"#), -32600)
         XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#), -32600)
+        XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":1.00000000000000001,"method":"ping"}"#), -32600)
         XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":[]}"#), -32602)
         XCTAssertEqual(try errorCode(
             #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_history","arguments":"x"}}"#), -32602)
         XCTAssertEqual(try isToolError(#"{"since_ms":5}"#), true)
         XCTAssertEqual(try isToolError(#"{"limit":18446744073709551617}"#), true)
         XCTAssertEqual(try isToolError(#"{"limit":2.5}"#), true)
+        XCTAssertEqual(try isToolError(#"{"limit":1.00000000000000001}"#), true)
         XCTAssertEqual(try isToolError(#"{"limit":"5"}"#), true)
         XCTAssertEqual(try isToolError(#"{"query":"x"}"#), true)
         XCTAssertNil(server.handle(#"{"jsonrpc":"2.0","method":"tools/call","params":"bad"}"#))

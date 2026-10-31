@@ -3,7 +3,8 @@ import Foundation
 /// Minimal read-only MCP server (JSON-RPC 2.0, one message per stdio line). Each tool call asks the
 /// running app over its socket; the server keeps no History, cache or log of its own.
 public final class HistoryMCPServer {
-    static let supportedProtocolVersions = ["2024-11-05", "2025-03-26", "2025-06-18"]
+    // 2025-03-26 is omitted: it requires JSON-RPC batches, which this server does not accept.
+    static let supportedProtocolVersions = ["2024-11-05", "2025-06-18"]
 
     private let now: () -> Date
     private let transport: () throws -> HistoryTransport
@@ -100,9 +101,16 @@ public final class HistoryMCPServer {
     }
 
     private static func isValidID(_ id: Any) -> Bool {
-        if id is String { return true }
-        guard let number = id as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
-        return number.doubleValue.rounded() == number.doubleValue
+        id is String || integer(id) != nil
+    }
+
+    /// The exact decimal value, so neither fractions nor huge values are rounded into acceptance.
+    private static func integer(_ value: Any) -> Decimal? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        var exact = number.decimalValue
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &exact, 0, .plain)
+        return !exact.isNaN && rounded == exact ? exact : nil
     }
 
     static func request(for name: String, arguments: [String: Any], now: Date) throws -> HistoryAccessRequest {
@@ -128,14 +136,10 @@ public final class HistoryMCPServer {
         default:
             var limit: Int?
             if let value = arguments["limit"] {
-                // Check the full value before narrowing, so huge integers cannot wrap into range.
-                guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-                    number.doubleValue == number.doubleValue.rounded(),
-                    (1...Double(HistoryAccess.maximumLimit)).contains(number.doubleValue)
-                else {
+                guard let exact = integer(value), exact >= 1, exact <= Decimal(HistoryAccess.maximumLimit) else {
                     throw HistoryUsageError("limit must be an integer from 1 to \(HistoryAccess.maximumLimit)")
                 }
-                limit = number.intValue
+                limit = NSDecimalNumber(decimal: exact).intValue
             }
             let isSearch = name == "search_history"
             let query = try string("query")?.trimmingCharacters(in: .whitespacesAndNewlines)
