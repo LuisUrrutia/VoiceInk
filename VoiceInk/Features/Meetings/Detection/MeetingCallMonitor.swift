@@ -36,9 +36,24 @@ final class MeetingCallMonitor {
     private var browserMeet: [BrowserType: (checkedAt: TimeInterval, isMeet: Bool)] = [:]
     private var pendingStopProvider: MeetingProvider?
     private var pendingOfferProvider: MeetingProvider?
+    /// False once detection is switched off, so a poll awaiting a browser drops its result.
+    private var isPolling = true
+    /// The detected call a recording started for, and the browser that carried it; while it records, presence is
+    /// the app's microphone use, not whichever tab is in front.
+    private var recordedCall: (provider: MeetingProvider, browser: BrowserType?)?
+    private var recordedCallEndedWhileStarting = false
+    private var callBrowsers: [MeetingProvider: BrowserType] = [:]
 
     init(dependencies: Dependencies = Dependencies()) {
         self.dependencies = dependencies
+        let recorder = dependencies.recorder
+        recordingCancellable = recorder.$activeMeeting.map { $0 != nil }
+            .combineLatest(recorder.$isStarting)
+            .map { $0 || $1 }
+            .removeDuplicates()
+            .sink { [weak self] isBusy in
+                MainActor.assumeIsolated { self?.recorderBusyChanged(isBusy) }
+            }
     }
 
     /// Polls only while Meetings and call detection are both on.
@@ -56,19 +71,28 @@ final class MeetingCallMonitor {
             .sink { [weak self] isOn in
                 MainActor.assumeIsolated { self?.setPolling(isOn) }
             }
-        recordingCancellable = dependencies.recorder.$activeMeeting.map { $0 == nil }.removeDuplicates()
-            .sink { [weak self] isIdle in
-                MainActor.assumeIsolated {
-                    guard let self, isIdle, self.pendingStopProvider != nil else { return }
-                    self.pendingStopProvider = nil
-                    self.dependencies.prompt.dismiss()
-                }
+    }
+
+    /// A start from anywhere withdraws an open offer; a recording that ends withdraws its stop question.
+    private func recorderBusyChanged(_ isBusy: Bool) {
+        if isBusy, pendingOfferProvider != nil {
+            pendingOfferProvider = nil
+            dependencies.prompt.dismiss()
+        }
+        if !isBusy {
+            recordedCall = nil
+            recordedCallEndedWhileStarting = false
+            if pendingStopProvider != nil {
+                pendingStopProvider = nil
+                dependencies.prompt.dismiss()
             }
+        }
     }
 
     private func setPolling(_ isOn: Bool) {
         pollTask?.cancel()
         pollTask = nil
+        isPolling = isOn
         guard isOn else {
             detector = CallDetector()
             browserMeet = [:]
@@ -86,8 +110,10 @@ final class MeetingCallMonitor {
         }
     }
 
-    /// One observation of the microphone's users.
+    /// One observation of the microphone's users. An observation that awaited a browser after detection was switched
+    /// off is discarded.
     func poll() async {
+        guard isPolling else { return }
         let now = dependencies.now()
         var providers = Set<MeetingProvider>()
         var browsers = Set<BrowserType>()
@@ -98,9 +124,17 @@ final class MeetingCallMonitor {
                 browsers.insert(browser)
             }
         }
-        for browser in browsers where await isOnMeet(browser, at: now) {
-            providers.insert(.meet)
+        if let recordedCall, recordedCall.provider == .meet, let browser = recordedCall.browser {
+            // The recorded Meet call lasts while its browser uses the microphone, whatever tab is in front.
+            if browsers.contains(browser) { providers.insert(.meet) }
+        } else {
+            for browser in browsers where await isOnMeet(browser, at: now) {
+                guard isPolling else { return }
+                providers.insert(.meet)
+                callBrowsers[.meet] = browser
+            }
         }
+        guard isPolling else { return }
         browserMeet = browserMeet.filter { browsers.contains($0.key) }
         for event in detector.observe(providers, at: now) {
             handle(event)
@@ -121,7 +155,12 @@ final class MeetingCallMonitor {
         switch event {
         case .started(let provider):
             guard !recorder.isRecording, !recorder.isStarting, !detector.isSnoozed(provider) else { return }
-            switch MeetingSettings.policy(for: provider, in: dependencies.defaults) {
+            let policy = MeetingSettings.policy(for: provider, in: dependencies.defaults)
+            guard policy != .neverOffer else { return }
+            // As in Hex, a call that was offered or recorded is not offered again until its app has been off the
+            // microphone for a minute.
+            detector.snooze(provider)
+            switch policy {
             case .neverOffer:
                 return
             case .alwaysRecord:
@@ -130,18 +169,18 @@ final class MeetingCallMonitor {
             case .ask:
                 pendingOfferProvider = provider
                 dependencies.prompt.offerRecording(provider, timeout: dependencies.offerTimeout) { [weak self] answer in
-                    self?.pendingOfferProvider = nil
-                    self?.answerOffer(answer, for: provider)
+                    guard let self, self.pendingOfferProvider == provider else { return }
+                    self.pendingOfferProvider = nil
+                    self.answerOffer(answer, for: provider)
                 }
             }
         case .ended(let provider):
-            if pendingStopProvider == nil, recorder.activeMeeting?.provider == provider.rawValue {
+            if recorder.isStarting, recordedCall?.provider == provider {
+                // Asked once the start completes.
+                recordedCallEndedWhileStarting = true
+            } else if pendingStopProvider == nil, recorder.activeMeeting?.provider == provider.rawValue {
                 pendingStopProvider = provider
-                dependencies.prompt.offerStop(provider) { [weak self] answer in
-                    guard let self else { return }
-                    self.pendingStopProvider = nil
-                    if answer == .stop { Task { _ = await self.dependencies.recorder.stop() } }
-                }
+                offerStop(provider)
             } else if pendingOfferProvider == provider {
                 // An unanswered offer for a call that already ended is withdrawn.
                 pendingOfferProvider = nil
@@ -150,23 +189,41 @@ final class MeetingCallMonitor {
         }
     }
 
+    private func offerStop(_ provider: MeetingProvider) {
+        pendingStopProvider = provider
+        dependencies.prompt.offerStop(provider) { [weak self] answer in
+            guard let self, self.pendingStopProvider == provider else { return }
+            self.pendingStopProvider = nil
+            if answer == .stop { Task { _ = await self.dependencies.recorder.stop() } }
+        }
+    }
+
     private func answerOffer(_ answer: MeetingCallPromptAnswer, for provider: MeetingProvider) {
         switch answer {
         case .record:
+            // The answer may arrive after another start; only an idle recorder starts this call.
+            guard !dependencies.recorder.isRecording, !dependencies.recorder.isStarting else { return }
             Task { await record(provider, automatically: false) }
         case .neverOffer:
             MeetingSettings.setPolicy(.neverOffer, for: provider, in: dependencies.defaults)
         default:
-            detector.snooze(provider)
+            break
         }
     }
 
     private func record(_ provider: MeetingProvider, automatically: Bool) async {
         let title = provider.callName + " " + Date().formatted(date: .abbreviated, time: .shortened)
+        recordedCall = (provider, provider == .meet ? callBrowsers[.meet] : nil)
+        recordedCallEndedWhileStarting = false
         do {
             try await dependencies.recorder.start(title: title, provider: provider.rawValue)
             if automatically { dependencies.prompt.showStartedAutomatically(provider) }
+            if recordedCallEndedWhileStarting {
+                recordedCallEndedWhileStarting = false
+                offerStop(provider)
+            }
         } catch {
+            recordedCall = nil
             logger.error("Detected call recording failed: \(error, privacy: .public)")
             NotificationManager.shared.showNotification(title: error.localizedDescription, type: .error, duration: 7)
         }

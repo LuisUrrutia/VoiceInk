@@ -27,8 +27,18 @@ struct CoreAudioInputProcessListing: AudioInputProcessListing {
                     bundleIDs.append(id)
                 }
             }
-            return AudioInputProcess(pid: pid, bundleIDs: bundleIDs)
+            let name = NSRunningApplication(processIdentifier: pid)?.localizedName
+            return AudioInputProcess(pid: pid, bundleIDs: Self.withCanonicalHost(bundleIDs, localizedName: name))
         }
+    }
+
+    /// Safari's microphone runs in a WebKit GPU process whose parent is launchd; as in Hex, its localized name
+    /// ("Safari Graphics and Media") names the host. Other apps' WebKit processes stay unattributed.
+    static func withCanonicalHost(_ bundleIDs: [String], localizedName: String?) -> [String] {
+        guard bundleIDs.contains("com.apple.WebKit.GPU"), localizedName?.hasPrefix("Safari") == true,
+            !bundleIDs.contains("com.apple.Safari")
+        else { return bundleIDs }
+        return bundleIDs + ["com.apple.Safari"]
     }
 
     /// The process and up to four parents, stopping at launchd.
