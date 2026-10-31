@@ -138,7 +138,8 @@ final class RecordingReleaseTailTests: XCTestCase {
         let url = directory.appendingPathComponent("cancel-tail.wav")
         let hardware = try StreamingTailHardware(url: url)
         let (engine, timing) = try makeRecordingEngine(hardware: hardware, directory: directory, url: url)
-        let tail = RecordingReleaseTail.now()
+        // A release handled 10 s from now keeps the tail capturing however late a loaded scheduler delivers Escape.
+        let tail = RecordingReleaseTail(releasedAtNanoseconds: DispatchTime.now().uptimeNanoseconds + 10_000_000_000)
 
         let stop = Task { await engine.toggleRecord(releaseTail: tail) }
         try await waitUntilTailIsCapturing(hardware)
@@ -215,7 +216,8 @@ final class RecordingReleaseTailTests: XCTestCase {
         let url = directory.appendingPathComponent("press-tail.wav")
         let hardware = try StreamingTailHardware(url: url)
         let (engine, timing) = try makeRecordingEngine(hardware: hardware, directory: directory, url: url)
-        let tail = RecordingReleaseTail.now()
+        // A release handled 10 s from now keeps the tail capturing however late a loaded scheduler delivers Escape.
+        let tail = RecordingReleaseTail(releasedAtNanoseconds: DispatchTime.now().uptimeNanoseconds + 10_000_000_000)
 
         let stop = Task { await engine.toggleRecord(releaseTail: tail) }
         try await waitUntilTailIsCapturing(hardware)
