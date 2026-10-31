@@ -16,6 +16,7 @@ enum ConfigurationPreferences {
                 "IsAutoLearnDictionaryEnabled", "IsTranscriptionCleanupEnabled", "IsAudioCleanupEnabled",
                 "isExperimentalFeaturesEnabled", "useClipboardContext", "useSelectedTextContext",
                 "useScreenCaptureContext", "SmartPunctuationEnabled", "IsAutomaticVocabularyCorrectionEnabled",
+                NoSpeechGateSettings.isEnabledKey,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",

@@ -585,5 +585,6 @@ private final class RecordingFluidService: FluidAudioTranscriptionService {
 
 private struct PreparationVAD: FluidAudioVADManaging {
     func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment] { [] }
+    func segmentSpeech(_ samples: [Float], config: VadSegmentationConfig) async throws -> [VadSegment] { [] }
     func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]] { [samples] }
 }

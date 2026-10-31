@@ -38,6 +38,11 @@ class SoundManager: ObservableObject {
         playbackEngine.playStartSound()
     }
 
+    /// The gate can subtract a matched playback waveform without dropping overlapping speech.
+    var lastStartSoundPlayback: SoundPlayback? {
+        playbackEngine.lastStartSoundPlayback
+    }
+
     func playStopSound() {
         guard CustomSoundManager.shared.isSoundEnabled(for: .stop) else { return }
         playbackEngine.playStopSound()

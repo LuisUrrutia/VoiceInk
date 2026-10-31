@@ -2,6 +2,13 @@
 import Foundation
 import os
 
+/// When a sound began playing on the monotonic uptime clock, and how long it lasts.
+struct SoundPlayback: Equatable, Sendable {
+    let startNanoseconds: UInt64
+    let duration: TimeInterval
+    var reference: FeedbackSoundReference? = nil
+}
+
 final class SoundPlaybackEngine: @unchecked Sendable {
     private enum Sound {
         case start
@@ -17,6 +24,13 @@ final class SoundPlaybackEngine: @unchecked Sendable {
     private var escSound: AVAudioPlayer?
     private var customStartSound: AVAudioPlayer?
     private var customStopSound: AVAudioPlayer?
+    private var startReference: FeedbackSoundReference?
+    private var customStartReference: FeedbackSoundReference?
+    private let startPlayback = OSAllocatedUnfairLock<SoundPlayback?>(initialState: nil)
+
+    var lastStartSoundPlayback: SoundPlayback? {
+        startPlayback.withLock { $0 }
+    }
 
     func setup(
         defaultStartURL: URL?,
@@ -29,6 +43,7 @@ final class SoundPlaybackEngine: @unchecked Sendable {
             guard let self else { return }
 
             self.startSound = self.makePlayer(from: defaultStartURL, volume: 0.3)
+            self.startReference = defaultStartURL.flatMap { try? FeedbackSoundReference.load(from: $0) }
             self.stopSound = self.makePlayer(from: defaultStopURL, volume: 0.3)
             self.escSound = self.makePlayer(from: defaultEscURL, volume: 0.2)
             self.reloadCustomSoundsOnQueue(startURL: customStartURL, stopURL: customStopURL)
@@ -62,6 +77,7 @@ final class SoundPlaybackEngine: @unchecked Sendable {
         }
 
         customStartSound = makePlayer(from: startURL, volume: 1.0)
+        customStartReference = startURL.flatMap { try? FeedbackSoundReference.load(from: $0) }
         customStopSound = makePlayer(from: stopURL, volume: 1.0)
     }
 
@@ -79,7 +95,12 @@ final class SoundPlaybackEngine: @unchecked Sendable {
                 player = self.escSound
             }
 
-            player?.play()
+            guard let player, player.play(), sound == .start else { return }
+            let playback = SoundPlayback(
+                startNanoseconds: DispatchTime.now().uptimeNanoseconds, duration: player.duration,
+                reference: self.customStartSound == nil ? self.startReference : self.customStartReference
+            )
+            self.startPlayback.withLock { $0 = playback }
         }
     }
 

@@ -4,7 +4,9 @@ import SwiftData
 class LastTranscriptionService: ObservableObject {
 
     static func getLastTranscription(from modelContext: ModelContext) -> Transcription? {
+        let pending = TranscriptionStatus.pending.rawValue
         var descriptor = FetchDescriptor<Transcription>(
+            predicate: #Predicate { $0.transcriptionStatus == nil || $0.transcriptionStatus != pending },
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         descriptor.fetchLimit = 1

@@ -54,6 +54,7 @@ enum AppDefaults {
 
             // Recording & Transcription
             "AppendTrailingSpace": true,
+            NoSpeechGateSettings.isEnabledKey: true,
             "RecorderType": "mini",
             RecorderDisplaySettingsKeys.showLiveTranscript: true,
             CloudTranscriptionSettings.timeoutKey: CloudTranscriptionSettings.defaultTimeout,

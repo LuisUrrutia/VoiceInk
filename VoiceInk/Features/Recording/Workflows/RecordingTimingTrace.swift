@@ -5,14 +5,14 @@ final class RecordingTimingTrace: @unchecked Sendable {
     enum Phase: String, CaseIterable, Sendable {
         case requestReceived, engineStart, audioStartRequested, audioStarted, firstAudio
         case contextStarted, modeResolutionStarted, modeResolved
-        case preparationStarted, preparationFinished, stopReceived, shortcutReleased, releaseTailEnded, wavClosed
+        case preparationStarted, preparationFinished, stopReceived, shortcutReleased, releaseTailEnded, wavClosed, speechGate
         case asrStarted, asrFinished, enhancementStarted, enhancementFinished
         case deliveryStarted, destinationReady, clipboardSettled, pasteCommandPosted, deliveryFinished
         case cancelReceived, idle
     }
 
     enum Outcome: String, Sendable {
-        case completed, canceled, failed, skipped
+        case completed, canceled, failed, skipped, discarded
     }
 
     struct Event: Equatable, Sendable {
