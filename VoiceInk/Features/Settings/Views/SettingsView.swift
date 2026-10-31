@@ -417,7 +417,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var shortcutAvailabilityIssue: some View {
         let availability = recordingShortcutManager.hotkeyAvailability
-        if availability == .unavailable || availability == .needsAccessibility {
+        if [.unavailable, .needsAccessibility, .needsRestart].contains(availability) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Label(availability.message, appSymbol: "exclamationmark.triangle")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -425,10 +425,13 @@ struct SettingsView: View {
                     Button("Open Accessibility Settings") {
                         engine.captureReadiness.openPrivacySettings(.accessibility)
                     }
+                } else if availability == .needsRestart {
+                    RestartVoiceInkButton(engine: engine)
                 } else {
                     Button("Refresh") { recordingShortcutManager.updateShortcutStatus() }
                 }
             }
+            .livePermissionRefresh(isActive: availability == .needsAccessibility)
         }
     }
 
