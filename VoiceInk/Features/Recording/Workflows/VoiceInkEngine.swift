@@ -843,15 +843,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return false
         }
         let transcriptionID = transcription.id
-        let startSoundFrames = timing.map { timing in
+        let startSound = startSoundPlayback()
+        let startSoundOffset = timing.flatMap { timing in
             let firstAudio = timing.snapshot.first { $0.phase == .firstAudio }
-            return NoSpeechGate.startSoundFrameCount(
-                playback: startSoundPlayback(), requestNanoseconds: timing.originNanoseconds,
+            return NoSpeechGate.startSoundOffsetFrames(
+                playback: startSound, requestNanoseconds: timing.originNanoseconds,
                 firstAudioNanoseconds: firstAudio.map { timing.originNanoseconds + $0.elapsedNanoseconds }
             )
-        } ?? 0
+        }
         let evaluation = await NoSpeechGate.evaluate(
-            audioURL: audioURL, ignoringLeadingFrames: startSoundFrames, detector: speechDetector
+            audioURL: audioURL, startSound: startSound, startSoundOffsetFrames: startSoundOffset,
+            detector: speechDetector
         )
         guard let evaluation, evaluation.decision.discardsRecording else {
             timing?.mark(.speechGate)

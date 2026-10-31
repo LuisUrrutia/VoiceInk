@@ -27,8 +27,6 @@ enum NoSpeechGate {
     static let speechProbabilityThreshold: Float = 0.4
     /// Keeps a short "Ok" while rejecting clicks, keys and room noise.
     static let minimumSpeechDuration: TimeInterval = 0.16
-    /// Output latency allowance after the start sound's file duration ends.
-    static let startSoundOutputMargin: TimeInterval = 0.15
     /// Recording requests play their start sound immediately; later sounds, such as a Settings preview,
     /// are not this recording's start sound.
     static let startSoundRequestWindowNanoseconds: UInt64 = 1_000_000_000
@@ -50,23 +48,26 @@ enum NoSpeechGate {
 
     private static let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "NoSpeechGate")
 
-    /// Evaluates a closed WAV between the end of the start sound and the release, so neither the start
-    /// sound heard by the microphone nor audio recorded after the release can count as speech.
+    /// Evaluates a closed WAV up to release, subtracting only confidently matched feedback audio.
     /// Returns nil when the file cannot be read; callers then keep the recording.
     static func evaluate(
-        audioURL: URL, ignoringLeadingFrames leadingFrameCount: Int = 0, releasedFrameCount: Int? = nil,
+        audioURL: URL, startSound: SoundPlayback? = nil, startSoundOffsetFrames: Int? = nil,
+        releasedFrameCount: Int? = nil,
         detector: SpeechDetecting?
     ) async -> Evaluation? {
         let audio = await Task.detached(priority: .userInitiated) {
-            try? releasedAudio(at: audioURL, leadingFrameCount: leadingFrameCount, releasedFrameCount: releasedFrameCount)
+            guard var audio = try? releasedAudio(at: audioURL, releasedFrameCount: releasedFrameCount) else {
+                return nil as (samples: [Float], sampleRate: Double)?
+            }
+            if audio.sampleRate == sampleRate, let reference = startSound?.reference, let startSoundOffsetFrames {
+                let matched = reference.suppress(in: &audio.samples, expectedOffsetFrames: startSoundOffsetFrames)
+                logger.debug("No-speech gate start_sound_matched=\(matched, privacy: .public)")
+            }
+            return audio
         }.value
         guard let audio else {
             logger.notice("No-speech gate skipped: the recording could not be read")
             return nil
-        }
-        if leadingFrameCount > 0, audio.sampleRate > 0 {
-            let ignoredMilliseconds = Int((Double(leadingFrameCount) / audio.sampleRate * 1_000).rounded())
-            logger.debug("No-speech gate ignores start_sound_ms=\(ignoredMilliseconds, privacy: .public)")
         }
         return await evaluate(samples: audio.samples, sampleRate: audio.sampleRate, detector: detector)
     }
@@ -112,21 +113,17 @@ enum NoSpeechGate {
         return evaluation
     }
 
-    /// Frames at the start of a capture that may contain its start sound, or 0 when the sound did not
-    /// begin right after this request. Without a first-audio timestamp, capture is assumed to begin at
-    /// the request.
-    static func startSoundFrameCount(
+    static func startSoundOffsetFrames(
         playback: SoundPlayback?, requestNanoseconds: UInt64, firstAudioNanoseconds: UInt64?,
         sampleRate: Double = sampleRate
-    ) -> Int {
-        guard let playback, playback.startNanoseconds >= requestNanoseconds,
+    ) -> Int? {
+        guard let playback, let firstAudioNanoseconds, playback.startNanoseconds >= requestNanoseconds,
             playback.startNanoseconds - requestNanoseconds <= startSoundRequestWindowNanoseconds
-        else { return 0 }
-        let audible = UInt64(((playback.duration + startSoundOutputMargin) * 1_000_000_000).rounded())
-        let soundEnd = playback.startNanoseconds + audible
-        let captureStart = firstAudioNanoseconds ?? requestNanoseconds
-        guard soundEnd > captureStart else { return 0 }
-        return Int((Double(soundEnd - captureStart) * sampleRate / 1_000_000_000).rounded(.up))
+        else { return nil }
+        let delta = playback.startNanoseconds >= firstAudioNanoseconds
+            ? Double(playback.startNanoseconds - firstAudioNanoseconds)
+            : -Double(firstAudioNanoseconds - playback.startNanoseconds)
+        return Int((delta * sampleRate / 1_000_000_000).rounded())
     }
 
     /// The loudest window's DC-removed RMS level in dBFS, floored at -120 dBFS.
@@ -151,15 +148,13 @@ enum NoSpeechGate {
     }
 
     private nonisolated static func releasedAudio(
-        at url: URL, leadingFrameCount: Int, releasedFrameCount: Int?
+        at url: URL, releasedFrameCount: Int?
     ) throws -> (samples: [Float], sampleRate: Double) {
         let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
         let released = releasedFrameCount.map { min(Int64(max(0, $0)), file.length) } ?? file.length
-        let leading = min(Int64(max(0, leadingFrameCount)), released)
-        let frameCount = AVAudioFrameCount(clamping: released - leading)
+        let frameCount = AVAudioFrameCount(clamping: released)
         let sampleRate = file.processingFormat.sampleRate
         guard frameCount > 0 else { return ([], sampleRate) }
-        file.framePosition = leading
         guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else {
             throw CocoaError(.fileReadCorruptFile)
         }

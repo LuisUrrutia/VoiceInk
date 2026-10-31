@@ -38,7 +38,7 @@ class SoundManager: ObservableObject {
         playbackEngine.playStartSound()
     }
 
-    /// The start sound can reach the microphone, so the no-speech gate skips it.
+    /// The gate can subtract a matched playback waveform without dropping overlapping speech.
     var lastStartSoundPlayback: SoundPlayback? {
         playbackEngine.lastStartSoundPlayback
     }

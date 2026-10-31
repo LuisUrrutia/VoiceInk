@@ -91,43 +91,125 @@ final class NoSpeechGateTests: XCTestCase {
         let url = directory.appendingPathComponent("start-sound.wav")
         try writeRecording(tone(amplitude: 0.2, count: 8_000) + silence(16_000), to: url)
         let detector = SpeechDetectorFixture(verdict: true)
+        let playback = SoundPlayback(
+            startNanoseconds: 0, duration: 0.5,
+            reference: FeedbackSoundReference(samples: tone(amplitude: 0.2, count: 8_000))
+        )
 
-        let evaluation = await NoSpeechGate.evaluate(audioURL: url, ignoringLeadingFrames: 8_000, detector: detector)
+        let evaluation = await NoSpeechGate.evaluate(
+            audioURL: url, startSound: playback, startSoundOffsetFrames: 0, detector: detector
+        )
 
         XCTAssertEqual(evaluation?.decision, .nearSilent)
-        XCTAssertEqual(try XCTUnwrap(evaluation?.audioDuration), 1, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(evaluation?.audioDuration), 1.5, accuracy: 0.001)
         XCTAssertEqual(detector.receivedSampleCounts, [])
     }
 
-    func testStartSoundWindowCoversOnlyThisRequestsSoundAfterCaptureStarts() {
+    func testStartSoundMatchingRequiresThisRequestsSoundAndCaptureTimestamp() {
         let request: UInt64 = 5_000_000_000
         let playback = SoundPlayback(startNanoseconds: request + 10_000_000, duration: 0.456)
 
-        let afterCapture = NoSpeechGate.startSoundFrameCount(
+        let afterCapture = NoSpeechGate.startSoundOffsetFrames(
             playback: playback, requestNanoseconds: request, firstAudioNanoseconds: request + 100_000_000
         )
-        let withoutFirstAudio = NoSpeechGate.startSoundFrameCount(
+        let withoutFirstAudio = NoSpeechGate.startSoundOffsetFrames(
             playback: playback, requestNanoseconds: request, firstAudioNanoseconds: nil
         )
-        let lateCapture = NoSpeechGate.startSoundFrameCount(
+        let lateCapture = NoSpeechGate.startSoundOffsetFrames(
             playback: playback, requestNanoseconds: request, firstAudioNanoseconds: request + 2_000_000_000
         )
-        let earlierRequest = NoSpeechGate.startSoundFrameCount(
+        let earlierRequest = NoSpeechGate.startSoundOffsetFrames(
             playback: playback, requestNanoseconds: request + 20_000_000, firstAudioNanoseconds: nil
         )
-        let preview = NoSpeechGate.startSoundFrameCount(
+        let preview = NoSpeechGate.startSoundOffsetFrames(
             playback: SoundPlayback(startNanoseconds: request + 3_000_000_000, duration: 0.456),
             requestNanoseconds: request, firstAudioNanoseconds: request + 100_000_000
         )
 
-        XCTAssertEqual(afterCapture, 8_256)
-        XCTAssertEqual(withoutFirstAudio, 9_856)
-        XCTAssertEqual(lateCapture, 0)
-        XCTAssertEqual(earlierRequest, 0)
-        XCTAssertEqual(preview, 0)
-        XCTAssertEqual(NoSpeechGate.startSoundFrameCount(
+        XCTAssertEqual(afterCapture, -1_440)
+        XCTAssertNil(withoutFirstAudio)
+        XCTAssertEqual(lateCapture, -31_840)
+        XCTAssertNil(earlierRequest)
+        XCTAssertNil(preview)
+        XCTAssertNil(NoSpeechGate.startSoundOffsetFrames(
             playback: nil, requestNanoseconds: request, firstAudioNanoseconds: nil
-        ), 0)
+        ))
+    }
+
+    func testSpeechInsideTheStartSoundIntervalIsPreservedWithoutToneLeakage() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("early-speech.wav")
+        try writeRecording(noise(rmsDBFS: -30, count: 4_800) + silence(11_200), to: url)
+        let playback = SoundPlayback(
+            startNanoseconds: 0, duration: 0.5,
+            reference: FeedbackSoundReference(samples: tone(amplitude: 0.2, count: 8_000))
+        )
+        let detector = SpeechDetectorFixture(verdict: true)
+
+        let evaluation = await NoSpeechGate.evaluate(
+            audioURL: url, startSound: playback, startSoundOffsetFrames: 0, detector: detector
+        )
+
+        XCTAssertEqual(evaluation?.decision, .speech)
+        XCTAssertEqual(detector.receivedSampleCounts, [16_000])
+    }
+
+    func testQuietSpeechOverlappingTheMatchedStartSoundIsPreserved() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("overlapping-speech.wav")
+        let sound = tone(amplitude: 0.2, count: 8_000)
+        let speech = noise(rmsDBFS: -43, count: 4_800) + silence(3_200)
+        try writeRecording(zip(sound, speech).map(+) + silence(8_000), to: url)
+        let playback = SoundPlayback(
+            startNanoseconds: 0, duration: 0.5, reference: FeedbackSoundReference(samples: sound)
+        )
+        let detector = SpeechDetectorFixture(verdict: true)
+
+        let evaluation = await NoSpeechGate.evaluate(
+            audioURL: url, startSound: playback, startSoundOffsetFrames: 0, detector: detector
+        )
+
+        XCTAssertEqual(evaluation?.decision, .speech)
+        XCTAssertEqual(try XCTUnwrap(evaluation?.levelDBFS), -43, accuracy: 2)
+        XCTAssertEqual(detector.receivedSampleCounts, [16_000])
+    }
+
+    func testSoundReferenceMatchesDelayGainPolarityAndCaptureStartingMidSound() {
+        let reference = FeedbackSoundReference(samples: noise(rmsDBFS: -10, count: 8_000))
+        for offset in [0, 173, -1_234] {
+            let audible = offset < 0 ? Array(reference.samples.dropFirst(-offset)) : reference.samples
+            var capture = silence(max(0, offset)) + audible.map { -0.3 * $0 } + silence(8_000)
+
+            let matched = reference.suppress(in: &capture, expectedOffsetFrames: min(0, offset))
+
+            XCTAssertTrue(matched, "offset=\(offset)")
+            XCTAssertLessThan(NoSpeechGate.loudestWindowLevel(in: capture, windowSize: 480), -90)
+        }
+    }
+
+    func testUnmatchedSoundReferenceLeavesSpeechUnchanged() {
+        let reference = FeedbackSoundReference(samples: tone(amplitude: 0.2, count: 8_000))
+        let original = noise(rmsDBFS: -43, count: 4_800) + silence(11_200)
+        var capture = original
+
+        let matched = reference.suppress(in: &capture, expectedOffsetFrames: 0)
+
+        XCTAssertFalse(matched)
+        XCTAssertEqual(capture, original)
+    }
+
+    func testBundledSoundReferencesDecodeAndSuppressTheirOwnWaveforms() throws {
+        for sound in CustomSoundManager.BuiltInSound.allCases {
+            let reference = try FeedbackSoundReference.load(from: XCTUnwrap(sound.bundleURL))
+            var capture = silence(1_280) + reference.samples.map { $0 * 0.3 } + silence(8_000)
+
+            let matched = reference.suppress(in: &capture, expectedOffsetFrames: 0)
+
+            XCTAssertTrue(matched, sound.rawValue)
+            XCTAssertLessThan(NoSpeechGate.loudestWindowLevel(in: capture, windowSize: 480), -90, sound.rawValue)
+        }
     }
 
     func testUnreadableRecordingKeepsTheRecording() async throws {
@@ -299,7 +381,7 @@ final class NoSpeechGateTests: XCTestCase {
         let url = directory.appendingPathComponent("start-sound-only.wav")
         let detector = SpeechDetectorFixture(verdict: true)
         let fixture = try makeRecording(
-            samples: tone(amplitude: 0.2, count: 6_400) + silence(16_000), url: url, directory: directory,
+            samples: tone(amplitude: 0.2, count: 4_800) + silence(16_000), url: url, directory: directory,
             detector: detector, startSoundDuration: 0.3
         )
 
@@ -400,11 +482,23 @@ final class NoSpeechGateTests: XCTestCase {
         let whisperGate = await NoSpeechGate.evaluate(samples: whisper, sampleRate: 16_000, detector: service)
         let toneVerdict = try await service.containsSpeech(in: tone(amplitude: 0.1, count: 32_000))
         let noiseVerdict = try await service.containsSpeech(in: noise(rmsDBFS: -35, count: 32_000))
+        let reference = FeedbackSoundReference(samples: tone(amplitude: 0.6, count: 48_000))
+        let earlySpeech = Array(whisper.prefix(32_000))
+        var overlap = reference.samples
+        for index in earlySpeech.indices { overlap[index] += earlySpeech[index] }
+        let overlapURL = directory.appendingPathComponent("early-whisper.wav")
+        try writeRecording(overlap, to: overlapURL)
+        let earlyWhisperGate = await NoSpeechGate.evaluate(
+            audioURL: overlapURL,
+            startSound: SoundPlayback(startNanoseconds: 0, duration: 3, reference: reference),
+            startSoundOffsetFrames: 0, detector: service
+        )
 
         XCTAssertEqual(speechVerdict, true)
         XCTAssertEqual(whisperGate.decision, .speech, "whisper level \(whisperGate.levelDBFS) dBFS")
         XCTAssertEqual(toneVerdict, false)
         XCTAssertEqual(noiseVerdict, false)
+        XCTAssertEqual(earlyWhisperGate?.decision, .speech)
     }
 
     // MARK: - Fixtures
@@ -422,8 +516,12 @@ final class NoSpeechGateTests: XCTestCase {
     ) throws -> RecordingFixture {
         let timing = RecordingTimingTrace()
         let startSound = startSoundDuration.map {
-            SoundPlayback(startNanoseconds: timing.originNanoseconds, duration: $0)
+            SoundPlayback(
+                startNanoseconds: timing.originNanoseconds, duration: $0,
+                reference: FeedbackSoundReference(samples: tone(amplitude: 0.2, count: Int($0 * 16_000)))
+            )
         }
+        timing.mark(.firstAudio, at: timing.originNanoseconds)
         let container = try ModelContainer(
             for: Transcription.self, VocabularyWord.self, VocabularySection.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
