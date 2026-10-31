@@ -145,7 +145,7 @@ final class HistoryAccessServer: @unchecked Sendable {
     }
 
     private func serve(_ client: Int32) {
-        switch Self.readRequest(from: client, deadline: Date().addingTimeInterval(requestDeadline)) {
+        switch Self.readRequest(from: client, deadline: .now + .seconds(requestDeadline)) {
         case .request(let data):
             guard lock.withLock({ isServing }) else { return finish(client, response: nil) }
             let handler = handler
@@ -178,14 +178,15 @@ final class HistoryAccessServer: @unchecked Sendable {
     }
 
     /// The whole request must arrive before `deadline`, so slow writers cannot hold a connection slot.
-    private static func readRequest(from client: Int32, deadline: Date) -> ReadResult {
+    private static func readRequest(from client: Int32, deadline: ContinuousClock.Instant) -> ReadResult {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
-            let remaining = deadline.timeIntervalSinceNow
-            guard remaining > 0 else { return .failed }
-            var timeout = timeval(tv_sec: Int(remaining), tv_usec: Int32(remaining.truncatingRemainder(dividingBy: 1) * 1_000_000))
-            if timeout.tv_sec == 0, timeout.tv_usec == 0 { timeout.tv_usec = 1 }
+            // A monotonic clock keeps wall-clock adjustments from stretching or cutting the allowance.
+            let remaining = (deadline - .now).components
+            guard remaining.seconds > 0 || remaining.attoseconds > 0 else { return .failed }
+            var timeout = timeval(
+                tv_sec: Int(remaining.seconds), tv_usec: max(1, Int32(remaining.attoseconds / 1_000_000_000_000)))
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
             let count = recv(client, &buffer, buffer.count, 0)
             if count < 0 {
