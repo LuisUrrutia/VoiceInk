@@ -633,11 +633,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return false
         }
         // The narration is already speech; a dictation would record over it.
-        if AnnotationRecorder.shared.isRecording || AnnotationRecorder.shared.isStarting {
+        if AnnotationRecorder.shared.isBusy {
             await failRecordingPreflight(
                 title: String(localized: "Finish the annotation before dictating."),
                 actionLabel: String(localized: "Stop Annotation"),
-                action: { Task { await AnnotationRecorder.shared.stop() } },
+                action: { Task { await AnnotationRecorder.shared.stopOrCancelStart() } },
                 delivery: delivery
             )
             return false

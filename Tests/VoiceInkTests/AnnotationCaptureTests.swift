@@ -90,6 +90,85 @@ import os
         XCTAssertEqual(fixture.store.loadAll().first?.status, .processing)
     }
 
+    func testTheDurationLimitDoesNotCancelTheMoviesFinish() async throws {
+        let fixture = makeFixture(maximumDuration: .milliseconds(20))
+        fixture.screen.finishDelay = .milliseconds(80)
+        var recorded = 0
+        fixture.recorder.onRecorded = { _ in recorded += 1 }
+        try await fixture.recorder.start()
+
+        try await waitUntil { !fixture.recorder.isBusy }
+
+        XCTAssertEqual(fixture.store.loadAll().first?.status, .processing)
+        XCTAssertNil(fixture.store.loadAll().first?.failure)
+        XCTAssertEqual(recorded, 1)
+    }
+
+    func testAStopThatNeverFinishesIsAbandonedAtTheTimeout() async {
+        let started = ContinuousClock.now
+
+        let outcome = await ScreenCaptureKitRecording.firstOutcome(timeout: .milliseconds(50)) {
+            await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+        }
+
+        XCTAssertThrowsError(try outcome.get()) { XCTAssertEqual($0 as? ScreenRecordingError, .finishTimedOut) }
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(2))
+    }
+
+    func testMeetingsAndAnnotationsExcludeEachOtherInBothOrdersAndWhileStarting() async throws {
+        let fixture = makeFixture()
+        let meeting = makeMeetingRecorder(annotations: fixture.recorder)
+        fixture.screen.holdsStart = true
+        let start = Task { try await fixture.recorder.start() }
+        try await waitUntil { fixture.screen.isHoldingStart }
+
+        await XCTAssertThrowsErrorAsync(try await meeting.start(), MeetingRecorderError.annotationRecording)
+        fixture.screen.release()
+        try await start.value
+        await XCTAssertThrowsErrorAsync(try await meeting.start(), MeetingRecorderError.annotationRecording)
+        await fixture.recorder.stop()
+
+        try await meeting.start()
+        let blocked = makeFixture(meeting: meeting.isBusy)
+        await XCTAssertThrowsErrorAsync(try await blocked.recorder.start(), AnnotationRecorderError.meetingRecording)
+        _ = await meeting.stop()
+    }
+
+    func testTheReservationLastsUntilTeardownFinishes() async throws {
+        let fixture = makeFixture()
+        try await fixture.recorder.start()
+        let id = try XCTUnwrap(fixture.recorder.activeAnnotation?.id)
+        fixture.screen.holdsStop = true
+        let stop = Task { await fixture.recorder.stop() }
+        try await waitUntil { fixture.screen.isHoldingStop }
+
+        XCTAssertTrue(fixture.recorder.isBusy)
+        XCTAssertEqual(fixture.recorder.ownedAnnotationID, id)
+        await XCTAssertThrowsErrorAsync(try await fixture.recorder.start(), AnnotationRecorderError.alreadyRecording)
+        fixture.recorder.delete(try fixture.store.load(id: id))
+        XCTAssertNotNil(try? fixture.store.load(id: id))
+
+        fixture.screen.release()
+        _ = await stop.value
+        XCTAssertFalse(fixture.recorder.isBusy)
+        XCTAssertNil(fixture.recorder.ownedAnnotationID)
+    }
+
+    func testStopAnnotationAbandonsAPendingStart() async throws {
+        let fixture = makeFixture()
+        fixture.screen.holdsStart = true
+        let start = Task { try await fixture.recorder.start() }
+        try await waitUntil { fixture.screen.isHoldingStart }
+
+        await fixture.recorder.stopOrCancelStart()
+        fixture.screen.release()
+
+        await XCTAssertThrowsErrorAsync(try await start.value, AnnotationRecorderError.cancelled)
+        XCTAssertFalse(fixture.recorder.isBusy)
+        XCTAssertTrue(fixture.store.loadAll().isEmpty)
+        XCTAssertEqual(fixture.screen.stopCount, 1)
+    }
+
     func testTurningAnnotateOffDiscardsARecording() async throws {
         let fixture = makeFixture()
         try await fixture.recorder.start()
@@ -156,6 +235,82 @@ import os
         XCTAssertTrue(summary.contains("“this button is broken”"))
     }
 
+    func testProcessingWithoutAModelOrWithAFailureStillHandsOffASummary() async throws {
+        for failing in [false, true] {
+            let fixture = makeFixture()
+            let processor = AnnotationProcessor()
+            var copied: [String] = []
+            let model = try XCTUnwrap(TranscriptionModelRegistry.models.first { $0.name == "parakeet-tdt-0.6b-v3" })
+            processor.configure(
+                environment: .init(
+                    chooseModel: { failing ? model : nil }, makeTranscriber: { _ in FailingTranscriber() },
+                    requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { copied.append($0) },
+                    notify: { _ in }
+                ),
+                recorder: fixture.recorder
+            )
+            try await fixture.recorder.start()
+            let id = try XCTUnwrap(fixture.recorder.activeAnnotation?.id)
+            _ = await fixture.recorder.stop()
+            try writeNarration(to: fixture.store.url(for: id, file: AnnotationManifest.narrationFileName), toneAt: 1)
+
+            await processor.waitUntilIdle()
+
+            let manifest = try fixture.store.load(id: id)
+            XCTAssertEqual(manifest.status, .ready)
+            let failure = try XCTUnwrap(manifest.failure)
+            XCTAssertEqual(copied.count, 1)
+            XCTAssertTrue(copied[0].contains(failure))
+            XCTAssertTrue(copied[0].contains("_\(String(localized: "No narration was transcribed."))_"))
+        }
+    }
+
+    func testNarrationWordsMapAcrossGappedAnchors() {
+        var timeline = MeetingTrackTimeline()
+        timeline.record(frame: 0, at: 0.5)
+        timeline.record(frame: 16_000, at: 4)
+        let segment = TimedTranscriptSegment(
+            text: "here it breaks", start: 0.5, end: 1.5,
+            words: [TimedTranscriptWord(text: "here", start: 0.5, end: 0.8), TimedTranscriptWord(text: "breaks", start: 1.2, end: 1.5)]
+        )
+
+        let mapped = MeetingTranscriber.meetingTime(segment, timeline: timeline)
+
+        XCTAssertEqual(mapped.start, 1.0, accuracy: 0.001)
+        XCTAssertEqual(mapped.words[0].start, 1.0, accuracy: 0.001)
+        XCTAssertEqual(mapped.words[1].start, 4.2, accuracy: 0.001)
+    }
+
+    func testDeletingIsRefusedWhileProcessingWritesTheBundle() async throws {
+        let fixture = makeFixture()
+        let processor = AnnotationProcessor()
+        let transcriber = HeldTranscriber()
+        let model = try XCTUnwrap(TranscriptionModelRegistry.models.first { $0.name == "parakeet-tdt-0.6b-v3" })
+        var copied = 0
+        processor.configure(
+            environment: .init(
+                chooseModel: { model }, makeTranscriber: { _ in transcriber },
+                requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { _ in copied += 1 },
+                notify: { _ in }
+            ),
+            recorder: fixture.recorder
+        )
+        try await fixture.recorder.start()
+        let id = try XCTUnwrap(fixture.recorder.activeAnnotation?.id)
+        _ = await fixture.recorder.stop()
+        try writeNarration(to: fixture.store.url(for: id, file: AnnotationManifest.narrationFileName), toneAt: 1)
+        try await waitUntil { transcriber.isHeld }
+
+        fixture.recorder.delete(try fixture.store.load(id: id))
+        XCTAssertNotNil(try? fixture.store.load(id: id))
+        // A bundle removed outside VoiceInk meanwhile gets no late handoff.
+        try FileManager.default.removeItem(at: fixture.store.directory(for: id))
+        transcriber.release()
+        await processor.waitUntilIdle()
+
+        XCTAssertEqual(copied, 0)
+    }
+
     func testTheSummaryNamesTheBundleAndSaysWhenNothingWasSaid() {
         var manifest = AnnotationManifest(createdAt: Date(timeIntervalSince1970: 1_792_074_600))
         manifest.duration = 42
@@ -171,6 +326,20 @@ import os
     }
 
     // MARK: - Fixture
+
+    private func makeMeetingRecorder(annotations: AnnotationRecorder) -> MeetingRecorder {
+        let devices = MeetingAudioDevices(userDefaults: defaults)
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+        var dependencies = MeetingRecorder.Dependencies()
+        dependencies.store = MeetingStore(rootURL: root.appendingPathComponent("meetings"))
+        dependencies.permission = AnnotationTestSystemAudio()
+        dependencies.makeSystemAudio = { AnnotationTestTap() }
+        dependencies.makeMicrophone = { MeetingMicrophoneCapture(deviceManager: devices, makeHardware: { FakeMeetingMicrophoneHardware() }) }
+        dependencies.isMicrophoneAuthorized = { true }
+        dependencies.isOtherCaptureBusy = { annotations.isBusy }
+        dependencies.defaults = defaults
+        return MeetingRecorder(dependencies: dependencies)
+    }
 
     private struct Fixture {
         let recorder: AnnotationRecorder
@@ -239,14 +408,35 @@ private final class AnnotationClock: @unchecked Sendable {
     func advance(seconds: Double) { value.withLock { $0 += UInt64(seconds * 1_000_000_000) } }
 }
 
+@MainActor
 private final class FakeScreenRecording: ScreenRecording {
     var url: URL?
     var startCount = 0
     var stopCount = 0
     var firstFrame: UInt64?
     var startFailure: Error?
+    /// Suspends start or stop until released, as slow ScreenCaptureKit calls would.
+    var holdsStart = false
+    var holdsStop = false
+    /// A cancellation-aware movie finish, like the real stop's wait.
+    var finishDelay: Duration?
+    private(set) var isHoldingStart = false
+    private(set) var isHoldingStop = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+
+    func release() {
+        holdsStart = false
+        holdsStop = false
+        held.forEach { $0.resume() }
+        held = []
+    }
 
     func start(displayID: CGDirectDisplayID, writingTo url: URL) async throws -> AnnotationManifest.Display {
+        if holdsStart {
+            isHoldingStart = true
+            await withCheckedContinuation { held.append($0) }
+            isHoldingStart = false
+        }
         if let startFailure { throw startFailure }
         self.url = url
         startCount += 1
@@ -255,6 +445,12 @@ private final class FakeScreenRecording: ScreenRecording {
 
     func stop() async throws -> ScreenRecordingResult {
         stopCount += 1
+        if holdsStop {
+            isHoldingStop = true
+            await withCheckedContinuation { held.append($0) }
+            isHoldingStop = false
+        }
+        if let finishDelay { try await Task.sleep(for: finishDelay) }
         return ScreenRecordingResult(
             display: AnnotationManifest.Display(id: 7, width: 2_560, height: 1_662, scale: 2), firstFrameNanoseconds: firstFrame
         )
@@ -291,4 +487,49 @@ private final class AnnotationPowerAssertions: PowerAssertionClient, @unchecked 
     func releaseAssertion(_ id: IOPMAssertionID) -> IOReturn {
         state.withLock { $0.live.remove(id) != nil ? kIOReturnSuccess : kIOReturnNotFound }
     }
+}
+
+private final class FailingTranscriber: TimedSpeechTranscribing {
+    func transcribeTimed(
+        samples: [Float], model: any TranscriptionModel, context: TranscriptionRequestContext
+    ) async throws -> [TimedTranscriptSegment] {
+        throw TimedTranscriptionError.unsupportedModel
+    }
+
+    func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? { nil }
+    func releaseResources() async {}
+}
+
+@MainActor
+private final class HeldTranscriber: TimedSpeechTranscribing {
+    private(set) var isHeld = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func transcribeTimed(
+        samples: [Float], model: any TranscriptionModel, context: TranscriptionRequestContext
+    ) async throws -> [TimedTranscriptSegment] {
+        isHeld = true
+        await withCheckedContinuation { continuation = $0 }
+        return []
+    }
+
+    func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? { nil }
+    func releaseResources() async {}
+}
+
+private final class AnnotationTestSystemAudio: SystemAudioAuthorizing {
+    func status() -> SystemAudioAuthorization { .granted }
+    func request() async -> SystemAudioAuthorization { .granted }
+}
+
+private final class AnnotationTestTap: SystemAudioCapturing, @unchecked Sendable {
+    var lastDeliveryNanoseconds: UInt64? { DispatchTime.now().uptimeNanoseconds }
+    func start(writingTo url: URL, meetingStartNanoseconds: UInt64) throws {}
+    func restart() throws {}
+    func stop() -> MeetingTrackCaptureResult { MeetingTrackCaptureResult() }
 }

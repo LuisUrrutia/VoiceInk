@@ -22,7 +22,7 @@ struct AnnotationsView: View {
                     }
                 } else {
                     LabeledContent("Record the screen under the pointer") {
-                        Button("Annotate") { Task { await recorder.toggle() } }.disabled(recorder.isStarting)
+                        Button("Annotate") { Task { await recorder.toggle() } }.disabled(recorder.isBusy)
                     }
                 }
                 LabeledContent("Shortcut") { ShortcutRecorder(action: .toggleAnnotate) }
@@ -76,7 +76,7 @@ private struct AnnotationRow: View {
                 .help("Show in Finder")
                 .accessibilityLabel("Show in Finder")
                 Button(role: .destructive) { recorder.delete(annotation) } label: { Image(appSymbol: "trash") }
-                    .disabled(annotation.id == recorder.activeAnnotation?.id)
+                    .disabled(annotation.id == recorder.ownedAnnotationID || recorder.isProcessing(annotation.id))
                     .help("Move to Trash")
                     .accessibilityLabel("Move to Trash")
             }
@@ -109,7 +109,8 @@ final class AnnotationCapsuleController {
 
     func start(recorder: AnnotationRecorder = .shared) {
         guard cancellable == nil else { return }
-        cancellable = recorder.$activeAnnotation.map { $0 != nil }.removeDuplicates().sink { [weak self] isRecording in
+        cancellable = recorder.$activeAnnotation.map { $0 != nil }.combineLatest(recorder.$isStopping).map { $0 || $1 }
+            .removeDuplicates().sink { [weak self] isRecording in
             MainActor.assumeIsolated { isRecording ? self?.show(recorder) : self?.hide() }
         }
     }

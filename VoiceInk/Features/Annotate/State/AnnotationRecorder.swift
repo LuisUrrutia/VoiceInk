@@ -11,6 +11,7 @@ enum AnnotationRecorderError: LocalizedError, Equatable {
     case microphoneNotAuthorized
     case noDisplay
     case meetingRecording
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -21,6 +22,7 @@ enum AnnotationRecorderError: LocalizedError, Equatable {
         case .microphoneNotAuthorized: String(localized: "Allow VoiceInk to use the microphone to narrate annotations.")
         case .noDisplay: String(localized: "No display is available to record.")
         case .meetingRecording: String(localized: "Stop the meeting recording before annotating.")
+        case .cancelled: String(localized: "The annotation was cancelled.")
         }
     }
 }
@@ -38,7 +40,7 @@ final class AnnotationRecorder: ObservableObject {
         var isScreenAuthorized: () -> Bool = { CGPreflightScreenCaptureAccess() }
         var requestScreenAccess: () async -> Bool = { await ScreenCaptureService.requestScreenCapturePermissionRegistration() }
         var isMicrophoneAuthorized: () -> Bool = { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
-        var isMeetingRecording: @MainActor () -> Bool = { MeetingRecorder.shared.isRecording || MeetingRecorder.shared.isStarting }
+        var isMeetingRecording: @MainActor () -> Bool = { MeetingRecorder.shared.isBusy }
         var displayUnderPointer: () -> CGDirectDisplayID? = { NSScreen.displayUnderPointer }
         var idleSleep: IdleSleepPrevention = .shared
         var now: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
@@ -56,9 +58,13 @@ final class AnnotationRecorder: ObservableObject {
     @Published private(set) var isStarting = false
     @Published private(set) var isStopping = false
     @Published private(set) var annotations: [AnnotationManifest] = []
+    /// The annotation whose files are open: from the first start step through the end of Stop or Cancel.
+    @Published private(set) var ownedAnnotationID: UUID?
 
     /// Called with each annotation once its files are closed; processing subscribes here.
     var onRecorded: ((AnnotationManifest) -> Void)?
+    /// Whether processing is writing this annotation's bundle; set by the processor.
+    var isProcessing: (UUID) -> Bool = { _ in false }
 
     private struct Session {
         var manifest: AnnotationManifest
@@ -74,6 +80,8 @@ final class AnnotationRecorder: ObservableObject {
     private var labsCancellable: AnyCancellable?
 
     var isRecording: Bool { activeAnnotation != nil }
+    /// Starting, recording or closing files; another capture or dictation must wait.
+    var isBusy: Bool { isStarting || session != nil || isStopping }
     var store: AnnotationStore { dependencies.store }
 
     init(dependencies: Dependencies = Dependencies()) {
@@ -83,8 +91,7 @@ final class AnnotationRecorder: ObservableObject {
             .sink { [weak self] isEnabled in
                 MainActor.assumeIsolated {
                     guard let self, !isEnabled else { return }
-                    self.startGeneration += 1
-                    if self.isRecording { Task { await self.cancel() } }
+                    Task { await self.cancel() }
                 }
             }
     }
@@ -103,9 +110,10 @@ final class AnnotationRecorder: ObservableObject {
 
     func start() async throws {
         guard Labs.isEnabled(.annotate, in: dependencies.defaults) else { throw AnnotationRecorderError.featureDisabled }
-        guard session == nil, !isStarting else { throw AnnotationRecorderError.alreadyRecording }
+        guard !isBusy else { throw AnnotationRecorderError.alreadyRecording }
         guard !dependencies.isMeetingRecording() else { throw AnnotationRecorderError.meetingRecording }
         guard dependencies.isMicrophoneAuthorized() else { throw AnnotationRecorderError.microphoneNotAuthorized }
+        // Reserved before the first suspension, so a meeting or a second annotation cannot start meanwhile.
         isStarting = true
         defer { isStarting = false }
         let generation = startGeneration
@@ -118,6 +126,7 @@ final class AnnotationRecorder: ObservableObject {
         let store = dependencies.store
         var manifest = AnnotationManifest()
         try store.createDirectory(for: manifest.id)
+        ownedAnnotationID = manifest.id
         let startNanoseconds = dependencies.now()
         let screen = dependencies.makeScreen()
         let microphone = dependencies.makeMicrophone()
@@ -140,6 +149,7 @@ final class AnnotationRecorder: ObservableObject {
             }
         } catch {
             try? store.delete(id: manifest.id)
+            ownedAnnotationID = nil
             reload()
             logger.error("Annotation failed to start: \(error, privacy: .public)")
             throw error
@@ -155,7 +165,8 @@ final class AnnotationRecorder: ObservableObject {
             try? await Task.sleep(for: limit)
             guard !Task.isCancelled, let self, self.session?.manifest.id == manifest.id else { return }
             self.logger.notice("Annotation reached its maximum duration")
-            _ = await self.stop()
+            // A separate task: Stop cancels this one, which must not cancel the movie's finalization.
+            Task { await self.stop() }
         }
         self.session = session
         activeAnnotation = manifest
@@ -167,9 +178,8 @@ final class AnnotationRecorder: ObservableObject {
     /// Closes the movie and narration; returns the recorded annotation for processing.
     @discardableResult
     func stop() async -> AnnotationManifest? {
-        guard var session = finishSession() else { return nil }
-        isStopping = true
-        defer { isStopping = false }
+        guard let session = beginTeardown() else { return nil }
+        defer { endTeardown() }
         let end = dependencies.now()
         let microphone = await session.microphone.stop()
         var manifest = session.manifest
@@ -190,14 +200,25 @@ final class AnnotationRecorder: ObservableObject {
         return manifest
     }
 
-    /// Discards the annotation and its files.
+    /// Discards the annotation and its files, or abandons a start that has not finished.
     func cancel() async {
-        guard let session = finishSession() else { return }
+        if isStarting { startGeneration += 1 }
+        guard let session = beginTeardown() else { return }
+        defer { endTeardown() }
         _ = await session.microphone.stop()
         _ = try? await session.screen.stop()
         session.sleepHold.release()
         try? dependencies.store.delete(id: session.manifest.id)
         reload()
+    }
+
+    /// What the dictation's Stop Annotation does: a pending start is abandoned, a recording is stopped.
+    func stopOrCancelStart() async {
+        if isStarting, session == nil {
+            startGeneration += 1
+        } else {
+            await stop()
+        }
     }
 
     func update(_ manifest: AnnotationManifest) {
@@ -206,7 +227,7 @@ final class AnnotationRecorder: ObservableObject {
     }
 
     func delete(_ manifest: AnnotationManifest) {
-        guard manifest.id != activeAnnotation?.id else { return }
+        guard manifest.id != ownedAnnotationID, !isProcessing(manifest.id) else { return }
         try? dependencies.store.delete(id: manifest.id)
         reload()
     }
@@ -215,19 +236,25 @@ final class AnnotationRecorder: ObservableObject {
         annotations = dependencies.store.loadAll()
     }
 
-    private func finishSession() -> Session? {
+    /// The files stay owned, and the capsule and dictation block stay up, until the awaited teardown ends.
+    private func beginTeardown() -> Session? {
         guard let session, !isStopping else { return nil }
         session.limitTask?.cancel()
+        isStopping = true
         self.session = nil
-        activeAnnotation = nil
-        recordingStartedAt = nil
         return session
     }
 
+    private func endTeardown() {
+        isStopping = false
+        activeAnnotation = nil
+        recordingStartedAt = nil
+        ownedAnnotationID = nil
+    }
+
     private func checkStillWanted(_ generation: Int) throws {
-        guard generation == startGeneration, Labs.isEnabled(.annotate, in: dependencies.defaults) else {
-            throw AnnotationRecorderError.featureDisabled
-        }
+        guard Labs.isEnabled(.annotate, in: dependencies.defaults) else { throw AnnotationRecorderError.featureDisabled }
+        guard generation == startGeneration else { throw AnnotationRecorderError.cancelled }
     }
 
     private func seconds(_ nanoseconds: UInt64, since start: UInt64) -> TimeInterval {

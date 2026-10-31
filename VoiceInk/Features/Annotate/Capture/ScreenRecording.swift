@@ -48,6 +48,7 @@ final class ScreenCaptureKitRecording: NSObject, ScreenRecording, SCStreamDelega
     var onFrame: ((CMSampleBuffer) -> Void)?
 
     private struct State {
+        var recordingStarted = false
         var firstFrameNanoseconds: UInt64?
         var finish: CheckedContinuation<Void, Error>?
         var finished = false
@@ -87,20 +88,45 @@ final class ScreenCaptureKitRecording: NSObject, ScreenRecording, SCStreamDelega
         return recorded
     }
 
+    /// Stops capture and waits for the movie to close, for at most `finishTimeout` in all; a stream or delegate that
+    /// never answers is abandoned rather than awaited.
     func stop() async throws -> ScreenRecordingResult {
         guard let stream, let display else { throw ScreenRecordingError.notStarted }
         self.stream = nil
-        try? await stream.stopCapture()
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { try await self.waitForFinish() }
-            group.addTask {
-                try await Task.sleep(for: Self.finishTimeout)
-                throw ScreenRecordingError.finishTimedOut
-            }
-            try await group.next()
-            group.cancelAll()
+        let outcome = await Self.firstOutcome(timeout: Self.finishTimeout) {
+            try? await stream.stopCapture()
+            try await self.waitForFinish()
         }
+        try outcome.get()
         return ScreenRecordingResult(display: display, firstFrameNanoseconds: state.withLock { $0.firstFrameNanoseconds })
+    }
+
+    /// The operation's result or a timeout, whichever comes first; the loser keeps running unobserved.
+    static func firstOutcome(
+        timeout: Duration, _ operation: @escaping @Sendable () async throws -> Void
+    ) async -> Result<Void, Error> {
+        let pending = OSAllocatedUnfairLock<CheckedContinuation<Result<Void, Error>, Never>?>(initialState: nil)
+        @Sendable func resolve(_ result: Result<Void, Error>) {
+            pending.withLock { continuation in
+                continuation?.resume(returning: result)
+                continuation = nil
+            }
+        }
+        return await withCheckedContinuation { continuation in
+            pending.withLock { $0 = continuation }
+            Task {
+                do {
+                    try await operation()
+                    resolve(.success(()))
+                } catch {
+                    resolve(.failure(error))
+                }
+            }
+            Task {
+                try? await Task.sleep(for: timeout)
+                resolve(.failure(ScreenRecordingError.finishTimedOut))
+            }
+        }
     }
 
     /// Even pixel sizes with the long edge capped, keeping the display's aspect ratio.
@@ -142,8 +168,7 @@ final class ScreenCaptureKitRecording: NSObject, ScreenRecording, SCStreamDelega
     // MARK: - Delegates
 
     func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {
-        let now = DispatchTime.now().uptimeNanoseconds
-        state.withLock { if $0.firstFrameNanoseconds == nil { $0.firstFrameNanoseconds = now } }
+        state.withLock { $0.recordingStarted = true }
     }
 
     func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
@@ -162,6 +187,13 @@ final class ScreenCaptureKitRecording: NSObject, ScreenRecording, SCStreamDelega
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid else { return }
+        // ScreenCaptureKit stamps frames on the host clock, which is the uptime clock the narration uses; the first
+        // frame after the movie started recording places the movie on the annotation timeline.
+        let presentation = sampleBuffer.presentationTimeStamp
+        if presentation.isValid, presentation.seconds > 0 {
+            let nanoseconds = UInt64(presentation.seconds * 1_000_000_000)
+            state.withLock { if $0.recordingStarted, $0.firstFrameNanoseconds == nil { $0.firstFrameNanoseconds = nanoseconds } }
+        }
         onFrame?(sampleBuffer)
     }
 }
