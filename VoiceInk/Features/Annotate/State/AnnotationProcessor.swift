@@ -51,14 +51,19 @@ final class AnnotationProcessor: ObservableObject {
         self.environment = environment
         self.recorder = recorder
         recorder.onRecorded = { [weak self] manifest in self?.process(manifest.id) }
+        recorder.isProcessing = { [weak self] id in self?.processingID == id || self?.pendingIDs.contains(id) == true }
     }
+
+    private var pendingIDs = Set<UUID>()
 
     /// One annotation at a time; a newer one waits for the current one.
     func process(_ id: UUID) {
+        pendingIDs.insert(id)
         let previous = worker
         worker = Task { [weak self] in
             await previous?.value
             await self?.run(id)
+            self?.pendingIDs.remove(id)
         }
     }
 
@@ -92,16 +97,26 @@ final class AnnotationProcessor: ObservableObject {
             manifest.failure = TimedTranscriptionError.unsupportedModel.localizedDescription
         }
 
+        // The bundle can be trashed while its narration transcribes; then nothing is written or copied.
+        guard FileManager.default.fileExists(atPath: store.directory(for: id).path) else {
+            logger.notice("Annotation was removed during processing")
+            return
+        }
         let summary = AnnotationSummary.render(manifest, folder: store.directory(for: id))
         do {
             let url = store.url(for: id, file: AnnotationManifest.summaryFileName)
             try Data(summary.utf8).write(to: url, options: [.atomic])
             store.protect(url)
+            manifest.status = .ready
+            try store.save(manifest)
         } catch {
-            logger.error("Could not write the annotation summary: \(error, privacy: .public)")
+            logger.error("Could not write the annotation bundle: \(error, privacy: .public)")
+            manifest.status = .failed
+            manifest.failure = error.localizedDescription
+            recorder.update(manifest)
+            return
         }
-        manifest.status = .ready
-        recorder.update(manifest)
+        recorder.reload()
         environment.copy(summary)
         environment.notify(String(localized: "Annotation copied for your agent"))
     }
