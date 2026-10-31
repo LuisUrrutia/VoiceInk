@@ -1,4 +1,3 @@
-import CryptoKit
 import Darwin
 import FluidAudio
 import Foundation
@@ -50,7 +49,7 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
         }
 
         let audio = try AudioConverter().resampleAudioFile(URL(fileURLWithPath: audioPath))
-        let clips = try clipSpecifications(environment["VOICEINK_TCPP_BENCH_CLIPS"] ?? "3@14,30@0,90@30").map {
+        let clips = try InferenceBenchmark.clipSpecifications(environment["VOICEINK_TCPP_BENCH_CLIPS"] ?? "3@14,30@0,90@30").map {
             let start = $0.offset * 16_000
             let end = start + $0.seconds * 16_000
             guard end <= audio.count else { throw CocoaError(.fileReadTooLarge) }
@@ -60,7 +59,7 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
         try Transcribe.initBackends()
         var report = [
             "# transcribe.cpp threading benchmark",
-            "host=\(hostDescription()) runtime=\(Transcribe.version()) runs=\(runs) loadProcesses=\(loadProcessCount)",
+            "host=\(InferenceBenchmark.hostDescription()) runtime=\(Transcribe.version()) runs=\(runs) loadProcesses=\(loadProcessCount)",
             "productionPathQoS=\(await productionPathQoS())",
         ]
         var rows = ["model,load,clip_s,threads,qos,run,wall_ms,decode_ms,transcript_matches"]
@@ -72,7 +71,7 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
                     .first { $0.fileName == fileName },
                 "Unknown model file \(fileName)"
             )
-            guard try sha256(ofFileAt: modelPath) == artifact.expectedSHA256 else {
+            guard try InferenceBenchmark.sha256(ofFileAt: modelPath) == artifact.expectedSHA256 else {
                 return XCTFail("\(fileName) is not the revision the app ships")
             }
             let model = try Model(path: modelPath, options: ModelOptions(backend: .metal))
@@ -132,8 +131,8 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
                         let mismatches = samples.filter { $0.text != references[seconds] }.count
                         report.append(
                             "model=\(artifact.modelName) load=\(load) clip=\(seconds)s \(configuration.label) "
-                                + "wallMs=\(summary(samples.map(\.milliseconds))) "
-                                + "decodeMs=\(summary(samples.map(\.decodeMilliseconds))) mismatches=\(mismatches)"
+                                + "wallMs=\(InferenceBenchmark.summary(samples.map(\.milliseconds))) "
+                                + "decodeMs=\(InferenceBenchmark.summary(samples.map(\.decodeMilliseconds))) mismatches=\(mismatches)"
                         )
                     }
                 }
@@ -164,9 +163,7 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
                         let text = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !text.isEmpty { texts.append(text) }
                     }
-                    let elapsed = submittedAt.duration(to: .now)
-                    let milliseconds = Double(elapsed.components.seconds) * 1_000
-                        + Double(elapsed.components.attoseconds) / 1e15
+                    let milliseconds = InferenceBenchmark.milliseconds(submittedAt.duration(to: .now))
                     return Run(milliseconds: milliseconds, decodeMilliseconds: decodeMilliseconds, text: texts.joined(separator: " "))
                 })
             }
@@ -183,97 +180,8 @@ final class TranscribeCppThreadingBenchmarkTests: XCTestCase {
     nonisolated private static func wrapperHopQoS() async -> String {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
-                let qos: String = switch qos_class_self() {
-                case QOS_CLASS_USER_INTERACTIVE: "userInteractive"
-                case QOS_CLASS_USER_INITIATED: "userInitiated"
-                case QOS_CLASS_DEFAULT: "default"
-                case QOS_CLASS_UTILITY: "utility"
-                case QOS_CLASS_BACKGROUND: "background"
-                default: "unspecified"
-                }
-                continuation.resume(returning: qos)
+                continuation.resume(returning: InferenceBenchmark.label(qos_class_self()))
             }
         }
-    }
-
-    private func clipSpecifications(_ value: String) throws -> [(seconds: Int, offset: Int)] {
-        try value.split(separator: ",").map { entry in
-            let parts = entry.split(separator: "@").compactMap { Int($0) }
-            guard parts.count == 2 else { throw CocoaError(.formatting) }
-            return (parts[0], parts[1])
-        }
-    }
-
-    private func sha256(ofFileAt path: String) throws -> String {
-        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        while let data = try handle.read(upToCount: 16 << 20), !data.isEmpty {
-            hasher.update(data: data)
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func summary(_ values: [Double]) -> String {
-        guard !values.isEmpty else { return "none" }
-        let sorted = values.sorted()
-        func quantile(_ q: Double) -> Double {
-            let position = q * Double(sorted.count - 1)
-            let lower = Int(position.rounded(.down))
-            let upper = min(lower + 1, sorted.count - 1)
-            return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - Double(lower))
-        }
-        return String(
-            format: "n=%d,median=%.0f,p25=%.0f,p75=%.0f,min=%.0f,max=%.0f",
-            sorted.count, quantile(0.5), quantile(0.25), quantile(0.75), sorted.first!, sorted.last!
-        )
-    }
-
-    private func hostDescription() -> String {
-        var size = 0
-        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
-        var brand = [CChar](repeating: 0, count: size)
-        sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0)
-        let cpu = String(decoding: brand.prefix { $0 != 0 }.map(UInt8.init), as: UTF8.self)
-        return "\(cpu) cpus=\(ProcessInfo.processInfo.activeProcessorCount) macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)"
-    }
-}
-
-/// Busy-loop `yes` processes that exit on stop or when the test process exits.
-private final class CPULoad {
-    private let process = Process()
-
-    init(processCount: Int) throws {
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [
-            "-c",
-            """
-            trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM
-            i=0; while [ $i -lt \(processCount) ]; do yes > /dev/null & i=$((i + 1)); done
-            while kill -0 \(getpid()) 2>/dev/null; do sleep 1 & wait $!; done
-            kill $(jobs -p) 2>/dev/null
-            """,
-        ]
-        process.standardOutput = FileHandle.nullDevice
-        try process.run()
-    }
-
-    func stop() {
-        process.terminate()
-        process.waitUntilExit()
-    }
-}
-
-private struct SeededGenerator: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(seed: UInt64) { state = seed }
-
-    mutating func next() -> UInt64 {
-        state &+= 0x9E37_79B9_7F4A_7C15
-        var value = state
-        value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
-        return value ^ (value >> 31)
     }
 }
