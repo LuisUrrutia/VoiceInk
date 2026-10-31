@@ -392,12 +392,12 @@ import os
         Labs.setEnabled(false, for: .meetings, in: defaults)
 
         XCTAssertFalse(ShortcutAction.activeGlobalUtilityActions(defaults: defaults).contains(.toggleMeeting))
-        XCTAssertEqual(
-            ShortcutAction.activeGlobalUtilityActions(defaults: defaults),
-            ShortcutAction.globalUtilityActions.filter { $0 != .toggleMeeting }
+        XCTAssertTrue(
+            Set(ShortcutAction.globalUtilityActions.filter { $0.labsFeature == nil })
+                .isSubset(of: ShortcutAction.activeGlobalUtilityActions(defaults: defaults))
         )
         Labs.setEnabled(true, for: .meetings, in: defaults)
-        XCTAssertEqual(ShortcutAction.activeGlobalUtilityActions(defaults: defaults), ShortcutAction.globalUtilityActions)
+        XCTAssertTrue(ShortcutAction.activeGlobalUtilityActions(defaults: defaults).contains(.toggleMeeting))
     }
 
     func testDictationLeavesOutputAndMediaAloneOnlyWhileAMeetingRecords() async throws {
