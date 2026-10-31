@@ -53,6 +53,7 @@ final class RecordingDeliverySession {
     private(set) var isCancelled = false
     var playedStopToneAtRelease = false
     private var cancelPendingTask: (() -> Void)?
+    private var idleSleepHold: IdleSleepPrevention.Hold?
 
     init(destination: PasteDestination, timing: RecordingTimingTrace = RecordingTimingTrace()) {
         self.destination = destination
@@ -80,9 +81,18 @@ final class RecordingDeliverySession {
         if isCancelled { task.cancel() }
     }
 
+    /// Keeps the hold until this session ends: pipeline completion, failed start or cancellation.
+    func preventIdleSleep(_ hold: IdleSleepPrevention.Hold) {
+        guard !isCancelled else { return hold.release() }
+        idleSleepHold?.release()
+        idleSleepHold = hold
+    }
+
     func cancel() {
         isCancelled = true
         cancelPendingTask?()
         cancelPendingTask = nil
+        idleSleepHold?.release()
+        idleSleepHold = nil
     }
 }

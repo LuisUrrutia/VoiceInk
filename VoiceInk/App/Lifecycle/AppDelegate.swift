@@ -31,6 +31,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         !WindowManager.shared.requestMainWindow()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        IdleSleepPrevention.shared.releaseAll()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }

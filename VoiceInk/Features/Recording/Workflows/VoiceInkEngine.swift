@@ -119,7 +119,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     )
     var currentSession: TranscriptionSession?
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
-    private var activeRecordingDelivery: RecordingDeliverySession?
+    var activeRecordingDelivery: RecordingDeliverySession?
     private var activePipelineDelivery: RecordingDeliverySession?
     private(set) var activeRecordingStartID: UUID?
     var activeRecordingPreparation: RecordingTranscriptionPreparation?
@@ -151,6 +151,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private let speechDetector: SpeechDetecting?
     private let isNoSpeechGateEnabled: () -> Bool
     private let startSoundPlayback: @MainActor () -> SoundPlayback?
+    private let idleSleepPrevention: IdleSleepPrevention
 
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "VoiceInkEngine")
 
@@ -163,9 +164,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
         captureReadiness: CaptureReadinessController? = nil,
         speechDetector: SpeechDetecting? = nil,
         isNoSpeechGateEnabled: @escaping () -> Bool = { NoSpeechGateSettings.isEnabled },
-        startSoundPlayback: @escaping @MainActor () -> SoundPlayback? = { SoundManager.shared.lastStartSoundPlayback }
+        startSoundPlayback: @escaping @MainActor () -> SoundPlayback? = { SoundManager.shared.lastStartSoundPlayback },
+        idleSleepPrevention: IdleSleepPrevention = .shared
     ) {
         self.modelContext = modelContext
+        self.idleSleepPrevention = idleSleepPrevention
         self.whisperModelManager = whisperModelManager
         self.transcriptionModelManager = transcriptionModelManager
         self.enhancementService = enhancementService
@@ -365,6 +368,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             self.activeRecordingPreparation = preparation
             self.activeRecordingStartID = startID
             self.activeRecordingDelivery = capturedDelivery
+            capturedDelivery.preventIdleSleep(idleSleepPrevention.begin())
             let activeModeTask = ActiveWindowService.shared.beginApplyingConfiguration(modeId: modeId) {
                 [weak self] in
                 guard let self else { return false }
@@ -394,6 +398,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     !self.shouldCancelRecording
                 else {
                     preparation.cancel()
+                    self.endFailedRecordingDelivery(capturedDelivery)
                     if self.activeRecordingStartID == startID {
                         guard let finalizationID = self.recordingFinalization.begin() else { return }
                         defer { self.recordingFinalization.finish(finalizationID) }
@@ -493,6 +498,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         title: failure.title, type: .error, duration: 7.0,
                         actionButton: (failure.actionLabel, failure.action)
                     )
+                    self.endFailedRecordingDelivery(capturedDelivery)
                     guard let finalizationID = self.recordingFinalization.begin() else { return }
                     defer { self.recordingFinalization.finish(finalizationID) }
                     await self.recorder.stopRecording()
@@ -517,9 +523,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
             } catch {
                 preparation.cancel()
-                guard self.activeRecordingStartID == startID,
-                    let finalizationID = self.recordingFinalization.begin()
-                else { return }
+                guard self.activeRecordingStartID == startID else { return }
+                self.endFailedRecordingDelivery(capturedDelivery)
+                guard let finalizationID = self.recordingFinalization.begin() else { return }
                 defer { self.recordingFinalization.finish(finalizationID) }
                 self.logger.error("Recording failed to start: \(error, privacy: .public)")
                 let audioFailure = self.recordingAudioFailure(for: error)
@@ -554,6 +560,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 await self.recorderUIManager?.dismissRecorderPanel()
             }
         }
+    }
+
+    /// Only for starts that never reached Stop; Stop transfers the delivery to the pipeline.
+    private func endFailedRecordingDelivery(_ delivery: RecordingDeliverySession) {
+        delivery.cancel()
+        if activeRecordingDelivery === delivery { activeRecordingDelivery = nil }
     }
 
     @MainActor
