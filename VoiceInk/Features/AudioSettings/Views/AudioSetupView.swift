@@ -96,6 +96,7 @@ struct AudioSetupView: View {
 
     @ViewBuilder
     private var inputSettingsRows: some View {
+        MicrophoneInputStatusView(devices: audioDeviceManager, recorder: engine.recorder)
         if let temporary = audioDeviceManager.temporaryMicrophone {
             LabeledContent("Temporary Microphone", value: temporary.name)
             Button("Resume Automatic Selection") {
@@ -119,7 +120,7 @@ struct AudioSetupView: View {
                     if let selectedDeviceUID,
                         !audioDeviceManager.availableDevices.contains(where: { $0.uid == selectedDeviceUID })
                     {
-                        Text("Selected Microphone (Unavailable)").tag(MicrophoneSourceSelection.device(selectedDeviceUID))
+                        Text(notConnectedTitle(savedMicrophoneName)).tag(MicrophoneSourceSelection.device(selectedDeviceUID))
                     }
 
                     ForEach(audioDeviceManager.availableDevices, id: \.uid) { device in
@@ -140,11 +141,6 @@ struct AudioSetupView: View {
             set: { audioDeviceManager.setAvoidsBluetoothDefaultMicrophone($0) }
         ))
         .help("Keeps Bluetooth headphones out of their low-quality call mode when the system default microphone is Bluetooth.")
-
-        if let substitution = audioDeviceManager.bluetoothDefaultSubstitution {
-            Text(substitution.message)
-                .foregroundStyle(.secondary)
-        }
 
         Button {
             refreshMicrophones()
@@ -239,7 +235,7 @@ struct AudioSetupView: View {
                         .lineLimit(1)
 
                     if !isAvailable {
-                        Text("Unavailable")
+                        Text("Not connected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -340,6 +336,14 @@ struct AudioSetupView: View {
         if let savedUID = audioDeviceManager.userDefaults.selectedAudioDeviceUID { return savedUID }
         guard let selectedDeviceID = audioDeviceManager.selectedDeviceID else { return nil }
         return audioDeviceManager.availableDevices.first { $0.id == selectedDeviceID }?.uid
+    }
+
+    private var savedMicrophoneName: String {
+        audioDeviceManager.userDefaults.selectedAudioDeviceName ?? String(localized: "Selected Microphone")
+    }
+
+    private func notConnectedTitle(_ name: String) -> String {
+        String(localized: "\(name) (Not Connected)")
     }
 
     private var systemDefaultSourceTitle: String {

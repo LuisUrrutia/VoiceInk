@@ -57,8 +57,8 @@ struct MicrophoneMenu: View {
             )) {
                 Label("Use system default", appSymbol: "desktopcomputer")
             }
-            if let substitution = devices.bluetoothDefaultSubstitution {
-                Text(substitution.message)
+            if let message = devices.microphoneInputStatus.message {
+                Text(message)
             }
 
             Text("Use Microphone Temporarily")
@@ -70,6 +70,10 @@ struct MicrophoneMenu: View {
                     Label(device.name, appSymbol: "mic")
                 }
                 .disabled(!devices.isDeviceUsableForRecording(device.id))
+            }
+            ForEach(devices.savedMicrophonesNotConnected, id: \.self) { name in
+                Label("\(name) (Not Connected)", appSymbol: "mic.slash")
+                    .disabled(true)
             }
 
             if !devices.prioritizedDevices.isEmpty {

@@ -5,6 +5,7 @@ extension UserDefaults {
         static let audioInputMode = "audioInputMode"
         static let selectedAudioDeviceUID = "selectedAudioDeviceUID"
         static let selectedAudioDeviceModelUID = "selectedAudioDeviceModelUID"
+        static let selectedAudioDeviceName = "selectedAudioDeviceName"
         static let prioritizedDevices = "prioritizedDevices"
         static let audioInputChannelsByDeviceUID = "audioInputChannelsByDeviceUID"
         static let avoidsBluetoothDefaultMicrophone = "AvoidBluetoothDefaultMicrophone"
@@ -47,6 +48,12 @@ extension UserDefaults {
     var selectedAudioDeviceModelUID: String? {
         get { string(forKey: Keys.selectedAudioDeviceModelUID) }
         set { setValue(newValue, forKey: Keys.selectedAudioDeviceModelUID) }
+    }
+
+    /// Names the saved Custom microphone while it is not connected.
+    var selectedAudioDeviceName: String? {
+        get { string(forKey: Keys.selectedAudioDeviceName) }
+        set { setValue(newValue, forKey: Keys.selectedAudioDeviceName) }
     }
 
     var prioritizedDevicesData: Data? {

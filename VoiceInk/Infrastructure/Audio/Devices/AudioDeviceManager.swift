@@ -298,7 +298,7 @@ class AudioDeviceManager: ObservableObject {
             DispatchQueue.main.async {
                 self.temporaryMicrophone = nil
                 self.selectedDeviceID = id
-                self.updateCustomDeviceHints(deviceID: id, uid: uid, modelUID: modelUID)
+                self.updateCustomDeviceHints(deviceID: id, uid: uid, name: deviceToSelect.name, modelUID: modelUID)
                 self.notifyDeviceChange()
             }
         } else {
@@ -316,7 +316,7 @@ class AudioDeviceManager: ObservableObject {
                 self.inputMode = .custom
                 self.selectedDeviceID = id
                 self.userDefaults.audioInputModeRawValue = AudioInputMode.custom.rawValue
-                self.updateCustomDeviceHints(deviceID: id, uid: uid, modelUID: modelUID)
+                self.updateCustomDeviceHints(deviceID: id, uid: uid, name: deviceToSelect.name, modelUID: modelUID)
                 self.notifyDeviceChange()
             }
         } else {
@@ -492,8 +492,9 @@ class AudioDeviceManager: ObservableObject {
             let savedUID = userDefaults.selectedAudioDeviceUID,
             let found = findAvailableDevice(uid: savedUID, modelUID: userDefaults.selectedAudioDeviceModelUID),
             found.uid != savedUID || userDefaults.selectedAudioDeviceModelUID == nil
+                || userDefaults.selectedAudioDeviceName != found.name
         {
-            updateCustomDeviceHints(deviceID: found.id, uid: found.uid)
+            updateCustomDeviceHints(deviceID: found.id, uid: found.uid, name: found.name)
         }
         for saved in prioritizedDevices {
             guard let found = findAvailableDevice(uid: saved.id, modelUID: saved.modelUID),
@@ -599,8 +600,9 @@ class AudioDeviceManager: ObservableObject {
         savePrioritizedDevices()
     }
 
-    private func updateCustomDeviceHints(deviceID: AudioDeviceID, uid: String, modelUID: String? = nil) {
+    private func updateCustomDeviceHints(deviceID: AudioDeviceID, uid: String, name: String, modelUID: String? = nil) {
         userDefaults.selectedAudioDeviceUID = uid
+        userDefaults.selectedAudioDeviceName = name
         userDefaults.selectedAudioDeviceModelUID = modelUID ?? getDeviceModelUID(deviceID: deviceID)
     }
 

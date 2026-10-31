@@ -30,6 +30,7 @@ enum ConfigurationPreferences {
                 "primaryRecordingShortcut", "secondaryRecordingShortcut",
                 "primaryRecordingShortcutMode", "secondaryRecordingShortcutMode",
                 "audioInputMode", "selectedAudioDeviceUID", "selectedAudioDeviceModelUID",
+                "selectedAudioDeviceName",
                 "selectedStartSoundSelection", "selectedStopSoundSelection",
                 "selectedStartBuiltInSound", "selectedStopBuiltInSound",
                 "customStartSoundFilename", "customStopSoundFilename",
