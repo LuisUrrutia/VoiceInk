@@ -348,7 +348,7 @@ final class OfflineTranscribeCppService: TranscriptionService, @unchecked Sendab
     }
 }
 
-private extension Array where Element == Float {
+extension Array where Element == Float {
     /// Splits long-form audio near low-energy boundaries without overlapping samples.
     func energyAwareChunks(
         maximumCount: Int,
