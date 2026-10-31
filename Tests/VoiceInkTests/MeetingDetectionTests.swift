@@ -390,6 +390,21 @@ import XCTest
         XCTAssertFalse(MeetingSettings.detectsCalls(in: restored))
     }
 
+    func testAReleasedMonitorIsFreedAndStopsPolling() async throws {
+        var fixture: MonitorFixture? = makeMonitor()
+        let processes = try XCTUnwrap(fixture?.processes)
+        weak var monitor = fixture?.monitor
+        fixture?.monitor.start()
+        try await waitUntil { processes.calls > 0 }
+
+        fixture = nil
+        try await waitUntil { monitor == nil }
+        let calls = processes.calls
+        try await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertEqual(processes.calls, calls)
+    }
+
     func testCoreAudioListsProcessesWithoutThisProcess() {
         let processes = CoreAudioInputProcessListing().processesUsingInput()
 

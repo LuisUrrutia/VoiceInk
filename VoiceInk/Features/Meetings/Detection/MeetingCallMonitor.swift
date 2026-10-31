@@ -103,8 +103,10 @@ final class MeetingCallMonitor {
         }
         let interval = dependencies.pollInterval
         pollTask = Task { [weak self] in
+            // Ends with its monitor, so a released monitor leaves no loop behind.
             while !Task.isCancelled {
-                await self?.poll()
+                guard let monitor = self else { return }
+                await monitor.poll()
                 try? await Task.sleep(for: interval)
             }
         }
