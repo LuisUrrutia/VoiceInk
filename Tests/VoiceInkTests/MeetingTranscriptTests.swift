@@ -321,6 +321,27 @@ import os
         XCTAssertEqual(context.releases, 1)
     }
 
+    func testTheEchoCountIsSavedAndReplacedWhenTranscribedAgain() async throws {
+        let fixture = try makeCoordinator()
+        fixture.transcriber.text = "Ship the beta on Friday"
+        try await fixture.recorder.start()
+        let stopped = await fixture.recorder.stop()
+        let id = try XCTUnwrap(stopped?.id)
+        // The microphone carries the remote audio and words at the same moment, as speaker bleed would; 2 s of
+        // remote speech give the coupling estimate enough frames.
+        let bursts = [0.5, 0.9, 1.3, 1.7, 2.1]
+        try writeTrack(fixture.store.audioURL(for: id, track: .system), speechAt: bursts)
+        try writeTrack(fixture.store.audioURL(for: id, track: .microphone), speechAt: bursts)
+        await fixture.coordinator.waitUntilIdle()
+        XCTAssertEqual(try fixture.store.load(id: id).echoSuppressedUtterances, 1)
+
+        fixture.transcriber.microphoneSilent = true
+        fixture.coordinator.enqueue(id)
+        await fixture.coordinator.waitUntilIdle()
+
+        XCTAssertEqual(try fixture.store.load(id: id).echoSuppressedUtterances, 0)
+    }
+
     func testRecordingRequiresALocalModel() async throws {
         let fixture = try makeCoordinator(hasModel: false)
 
@@ -435,6 +456,9 @@ private final class FakeTimedTranscriber: TimedSpeechTranscribing {
     /// Seconds of non-silent audio received per track, in call order.
     var loudSeconds: [Double] = []
     var holdsCalls = false
+    var text = "speech"
+    /// Reports nothing for the second track of each meeting (the microphone).
+    var microphoneSilent = false
     private(set) var heldCalls = 0
     private(set) var maximumConcurrentCalls = 0
     private var activeCalls = 0
@@ -459,13 +483,14 @@ private final class FakeTimedTranscriber: TimedSpeechTranscribing {
         }
         if let failure { throw failure }
         loudSeconds.append(Double(samples.filter { abs($0) > 0.01 }.count) / 16_000)
+        if microphoneSilent, calls % 2 == 0 { return [] }
         if isWordless {
-            return TimedTranscriptSegment.untimed("speech", sampleCount: samples.count)
+            return TimedTranscriptSegment.untimed(text, sampleCount: samples.count)
         }
         guard let loud = samples.firstIndex(where: { abs($0) > 0.1 }) else { return [] }
         let start = Double(loud) / 16_000
         return [TimedTranscriptSegment(
-            text: "speech", start: start, end: start + 0.4, words: [TimedTranscriptWord(text: "speech", start: start, end: start + 0.4)]
+            text: text, start: start, end: start + 0.4, words: [TimedTranscriptWord(text: text, start: start, end: start + 0.4)]
         )]
     }
 

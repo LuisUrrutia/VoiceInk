@@ -65,7 +65,9 @@ final class MeetingEchoEnvelope {
         while start + length <= samples.count {
             var energy: Double = 0
             for index in start..<(start + length) { energy += Double(samples[index]) * Double(samples[index]) }
-            let index = Int(timeline.time(forFrame: start) * 1_000) / frameMilliseconds
+            // Rounded to a whole meeting sample before binning, so exact 20 ms boundaries never fall into the bin before.
+            let meetingSample = Int((timeline.time(forFrame: start) * MeetingTrackTimeline.sampleRate).rounded())
+            let index = meetingSample / length
             if frames.count <= index { frames += [Float](repeating: silentDecibels, count: index + 1 - frames.count) }
             frames[index] = Float(10 * log10(energy / Double(length) + 1e-10))
             start += length

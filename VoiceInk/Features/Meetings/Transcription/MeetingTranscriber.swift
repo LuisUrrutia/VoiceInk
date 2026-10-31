@@ -28,11 +28,12 @@ struct MeetingTranscriber {
             let url = store.audioURL(for: manifest.id, track: kind)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             var samples = try Self.readSamples(from: url)
+            // Echo calibration needs the recorded levels; silenced spans would read as missing coupling.
+            levels[kind] = MeetingEchoEnvelope.frames(of: samples, timeline: track.timeline)
             if kind == .microphone {
                 // Models without word times cannot drop dictated words afterwards, so their audio is silenced first.
                 Self.silence(manifest.dictationIntervals, in: &samples, timeline: track.timeline)
             }
-            levels[kind] = MeetingEchoEnvelope.frames(of: samples, timeline: track.timeline)
             var segments = try await transcribeTrack(samples)
             segments = segments.map { Self.meetingTime($0, timeline: track.timeline) }
             if kind == .microphone {
