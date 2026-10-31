@@ -57,6 +57,15 @@ final class DashboardSetupGuideTests: XCTestCase {
             { $0.useClipboardContext = true },
             { $0.isTextFormattingEnabled = false },
             { $0.isRealtimeTranscriptionEnabled = false },
+            { $0.selectedPrompt = PromptTemplates.defaultPromptId.uuidString },
+            { $0.outputMode = .respond },
+            { $0.useSelectedTextContext = true },
+            { $0.useScreenCapture = true },
+            { $0.autoSendKey = .enter },
+            { $0.customCommand = ModeCustomCommand(command: "pbcopy") },
+            { $0.appConfigs = [AppConfig(bundleIdentifier: "com.apple.Notes", appName: "Notes")] },
+            { $0.urlConfigs = [URLConfig(url: "github.com")] },
+            { $0.triggerGroups = [ModeTriggerGroup(name: "Notes", urlConfigs: [URLConfig(url: "notion.so")])] },
         ]
 
         for customize in customizations {
@@ -77,6 +86,28 @@ final class DashboardSetupGuideTests: XCTestCase {
         let steps = DashboardSetupGuide.steps(for: configuration(modes: [dictation, notes]))
 
         XCTAssertFalse(steps.contains(.customizeModes))
+    }
+
+    func testUnchangedStarterMadeDefaultHidesModelAndModeSteps() {
+        var dictation = starterDictation()
+        dictation.isDefault = false
+        var enhancement = starterMode(.enhance)
+        enhancement.isDefault = true
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [dictation, enhancement]))
+
+        XCTAssertEqual(steps, [.setShortcuts, .addVocabulary])
+    }
+
+    func testEnhancementProviderOrModelAloneIsNotCustomization() {
+        // Onboarding sets the provider and model without recording them, so they have no baseline to compare.
+        var enhancement = starterMode(.enhance)
+        enhancement.selectedAIProvider = "Anthropic"
+        enhancement.selectedAIModel = "claude-sonnet-5-5"
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [starterDictation(), enhancement]))
+
+        XCTAssertEqual(steps, [.chooseModel, .customizeModes, .setShortcuts, .addVocabulary])
     }
 
     func testChangedDefaultModelHidesOnlyModelStep() {
