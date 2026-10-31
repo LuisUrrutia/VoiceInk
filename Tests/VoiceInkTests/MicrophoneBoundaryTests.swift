@@ -27,6 +27,26 @@ final class MicrophoneBoundaryTests: XCTestCase {
 
     private enum Gesture { case mouse, modifier, systemKey }
 
+    func testSecureInputPausesPreRollEvenWhenTheTapIsEnabled() {
+        let tap = BoundaryTap()
+        var secureInput = false
+        let monitor = ShortcutMonitor(
+            makeEventTap: { _, handler in tap.handler = handler; return tap },
+            isSecureEventInputEnabled: { secureInput }
+        )
+        monitor.start(shortcuts: [.primaryRecording: .rightCommand],
+                      onShortcutDown: { _, _ in }, onShortcutUp: { _, _ in })
+        defer { monitor.stop() }
+        XCTAssertEqual(monitor.earlyCaptureAvailability(for: [.primaryRecording]), true)
+
+        secureInput = true
+
+        XCTAssertTrue(monitor.isMonitoring(.primaryRecording))
+        XCTAssertEqual(monitor.earlyCaptureAvailability(for: [.primaryRecording]), false)
+        secureInput = false
+        XCTAssertEqual(monitor.earlyCaptureAvailability(for: [.primaryRecording]), true)
+    }
+
     private func checkDelayedDispatch(action: ShortcutAction, gesture: Gesture = .mouse) async throws {
         let tap = BoundaryTap()
         let hardware = BoundaryHardware()
@@ -37,7 +57,7 @@ final class MicrophoneBoundaryTests: XCTestCase {
         var receivedTime: TimeInterval?
         let monitor = ShortcutMonitor(
             makeEventTap: { _, handler in tap.handler = handler; return tap },
-            allowsInput: { true }, allowsDispatch: { true }
+            allowsInput: { true }, allowsDispatch: { true }, isSecureEventInputEnabled: { false }
         )
         let shortcut: Shortcut
         switch gesture {
@@ -51,6 +71,7 @@ final class MicrophoneBoundaryTests: XCTestCase {
             onShortcutUp: { _, _ in },
             onPressCaptured: { _, eventTime in press.hold(at: eventTime) }
         )
+        XCTAssertEqual(monitor.earlyCaptureAvailability(for: [action]), true)
         defer { monitor.stop() }
         let event: CGEvent
         let type: CGEventType

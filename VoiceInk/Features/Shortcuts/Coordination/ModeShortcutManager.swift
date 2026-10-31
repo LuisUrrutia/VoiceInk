@@ -10,6 +10,10 @@ class ModeShortcutManager {
     private var shortcutChangeObserver: NSObjectProtocol?
     private var monitoredActions = Set<ShortcutAction>()
 
+    var earlyCaptureAvailability: Bool? {
+        shortcutMonitor.earlyCaptureAvailability(for: monitoredActions)
+    }
+
     init(
         modeProvider: @escaping @MainActor () -> RecordingShortcutManager.Mode,
         shortcutModeHandler: RecordingShortcutModeHandler,

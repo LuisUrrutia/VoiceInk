@@ -6,6 +6,7 @@ import os
 
 @MainActor
 final class ShortcutMonitor {
+    nonisolated static let captureAvailabilityDidChange = Notification.Name("ShortcutCaptureAvailabilityDidChange")
     typealias EventTapFactory = @Sendable (CGEventMask, @escaping @Sendable (CGEventType, CGEvent) -> Bool) throws -> any ShortcutEventTap
     typealias ShortcutCallback = @MainActor (ShortcutAction, TimeInterval) async -> Void
 
@@ -15,6 +16,7 @@ final class ShortcutMonitor {
     private var systemHotKeys: [ShortcutAction: SystemHotKey] = [:]
     private var systemHotKeyShortcuts: [ShortcutAction: Shortcut] = [:]
     private let workspaceNotificationCenter: NotificationCenter
+    private let isSecureEventInputEnabled: @MainActor () -> Bool
     private var lifecycleObservers: [NSObjectProtocol] = []
 
     init(
@@ -27,6 +29,7 @@ final class ShortcutMonitor {
         heldRecordingShortcut: @escaping @Sendable () -> Shortcut? = { nil },
         allowsInput: @escaping @Sendable () -> Bool = { UserSessionInputPolicy.allowsShortcutHandling },
         allowsDispatch: @escaping @MainActor @Sendable () -> Bool = { UserSessionInputPolicy.allowsShortcutDispatch },
+        isSecureEventInputEnabled: @escaping @MainActor () -> Bool = { IsSecureEventInputEnabled() },
         workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) {
         UserSessionInputPolicy.startObserving()
@@ -40,6 +43,7 @@ final class ShortcutMonitor {
             allowsDispatch: allowsDispatch
         )
         self.workspaceNotificationCenter = workspaceNotificationCenter
+        self.isSecureEventInputEnabled = isSecureEventInputEnabled
         ShortcutDiagnostics.register(self, owner: owner)
         for (name, reason) in [
             (NSWorkspace.didWakeNotification, "wake"),
@@ -121,6 +125,14 @@ final class ShortcutMonitor {
         if systemHotKeys[action] != nil { return true }
         let worker = worker
         return tapThread.performAndWait { worker.isMonitoring(action) }
+    }
+
+    func earlyCaptureAvailability(for actions: Set<ShortcutAction>) -> Bool? {
+        let worker = worker
+        guard let available = tapThread.performAndWait({ worker.earlyCaptureAvailability(for: actions) }) else {
+            return nil
+        }
+        return available && !isSecureEventInputEnabled()
     }
 
     func updateStandaloneModifierActions(_ actions: Set<ShortcutAction>) {
@@ -267,6 +279,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         onPressCaptured: (@Sendable (ShortcutAction, TimeInterval) -> Void)? = nil,
         reason: String = "refresh"
     ) -> Bool {
+        defer { notifyCaptureAvailabilityChanged() }
         guard !shortcuts.isEmpty else {
             stop(reason: reason)
             return true
@@ -357,6 +370,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     }
 
     func stop(reason: String = "stop") {
+        defer { notifyCaptureAvailabilityChanged() }
         if !shortcuts.isEmpty {
             ShortcutDiagnostics.notice("monitor owner=\(owner) generation=\(generation) result=stopped reason=\(reason) pressed=\(pressedActionSummary)")
         }
@@ -423,6 +437,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     }
 
     func recoverEventTap(reason: String = "health-check") {
+        defer { notifyCaptureAvailabilityChanged() }
         guard !shortcuts.isEmpty else { return }
         observeEnvironment(reason: reason)
         let inputAllowed = observeInputPolicy()
@@ -776,6 +791,15 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
 
     func isMonitoring(_ action: ShortcutAction) -> Bool {
         shortcuts[action] != nil && eventTap?.isEnabled == true
+    }
+
+    func earlyCaptureAvailability(for actions: Set<ShortcutAction>) -> Bool? {
+        guard !actions.isDisjoint(with: shortcuts.keys) else { return nil }
+        return eventTap?.isValid == true && eventTap?.isEnabled == true
+    }
+
+    private func notifyCaptureAvailabilityChanged() {
+        NotificationCenter.default.post(name: ShortcutMonitor.captureAvailabilityDidChange, object: nil)
     }
 
     private enum ShortcutTransition {

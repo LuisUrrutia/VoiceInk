@@ -153,6 +153,14 @@ class RecordingShortcutManager: ObservableObject {
             shortcutModeHandler: shortcutModeHandler,
             preRollPress: engine.recorder.preRollPress
         )
+        engine.recorder.setPreRollObserverProvider { [weak self] in
+            guard let self else { return false }
+            let availability = [
+                self.shortcutMonitor.earlyCaptureAvailability(for: [.primaryRecording, .secondaryRecording]),
+                self.modeShortcutManager.earlyCaptureAvailability,
+            ].compactMap { $0 }
+            return !availability.isEmpty && availability.allSatisfy { $0 }
+        }
 
         shortcutChangeObserver = NotificationCenter.default.addObserver(
             forName: ShortcutStore.shortcutDidChange,

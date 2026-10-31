@@ -14,9 +14,12 @@ class Recorder: NSObject, ObservableObject {
     let deviceManager: AudioDeviceManager
     private let defaults: UserDefaults
     private let isMicrophoneAuthorized: @MainActor () -> Bool
+    private var isPreRollObserverAvailable: @MainActor () -> Bool
+    @Published private(set) var hasPreRollObserver = false
     private var lifecycleCancellable: AnyCancellable?
     private var keepReadyCancellable: AnyCancellable?
     private var permissionCheckCancellable: AnyCancellable?
+    private var observerAvailabilityCancellable: AnyCancellable?
     private var isSystemSleeping = false
     var recordingDeviceChangeObserver: NSObjectProtocol?
     var recordingDeviceNotificationTask: Task<Void, Never>?
@@ -55,11 +58,13 @@ class Recorder: NSObject, ObservableObject {
         defaults: UserDefaults = .standard,
         isMicrophoneAuthorized: @escaping @MainActor () -> Bool = {
             AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        }
+        },
+        isPreRollObserverAvailable: @escaping @MainActor () -> Bool = { false }
     ) {
         self.deviceManager = deviceManager
         self.defaults = defaults
         self.isMicrophoneAuthorized = isMicrophoneAuthorized
+        self.isPreRollObserverAvailable = isPreRollObserverAvailable
         recorder = hardware
         super.init()
         preRollPress.bind(hardware)
@@ -77,6 +82,10 @@ class Recorder: NSObject, ObservableObject {
                     self?.updateIdleCapture(reason: "setting")
                 }
             }
+        observerAvailabilityCancellable = NotificationCenter.default.publisher(for: ShortcutMonitor.captureAvailabilityDidChange)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.updateIdleCapture(reason: "shortcut-observer") }
+            }
         setupRecordingDeviceChangeObserver()
         schedulePrepareForCurrentDevice(reason: "init")
         updateIdleCapture(reason: "init")
@@ -84,6 +93,11 @@ class Recorder: NSObject, ObservableObject {
 
     func startMicrophoneTest(toOutputFile url: URL) async throws {
         try await startRecording(toOutputFile: url, applyRecordingEffects: false)
+    }
+
+    func setPreRollObserverProvider(_ provider: @escaping @MainActor () -> Bool) {
+        isPreRollObserverAvailable = provider
+        updateIdleCapture(reason: "observer-provider")
     }
 
     /// Retains idle pre-roll for a press until its recording starts; a no-op unless the microphone is kept ready.
@@ -123,10 +137,17 @@ class Recorder: NSObject, ObservableObject {
         coreAudioRecorder.onAudioChunk = onAudioChunk
         recorder = coreAudioRecorder
 
+        hasPreRollObserver = isPreRollObserverAvailable()
+        let canUsePreRoll = defaults.keepMicrophoneReady && hasPreRollObserver
+        if !canUsePreRoll {
+            audioSetupQueue.async { coreAudioRecorder.stopIdleCapture() }
+        }
+
         do {
             do {
                 try await startHardwareRecording(
-                    coreAudioRecorder, to: url, deviceID: deviceID, preRollPressNanoseconds: preRollPressNanoseconds
+                    coreAudioRecorder, to: url, deviceID: deviceID,
+                    preRollPressNanoseconds: canUsePreRoll ? preRollPressNanoseconds : nil
                 )
             } catch {
                 guard recordingStartID == playbackSessionID else { throw CancellationError() }
@@ -320,16 +341,17 @@ class Recorder: NSObject, ObservableObject {
     }
 
     private var shouldKeepMicrophoneReady: Bool {
-        defaults.keepMicrophoneReady && !isSystemSleeping && isMicrophoneAuthorized()
+        defaults.keepMicrophoneReady && !isSystemSleeping && isMicrophoneAuthorized() && isPreRollObserverAvailable()
     }
 
     /// Opens or closes the idle microphone; an open microphone is not an active recording.
     func updateIdleCapture(reason: String) {
+        hasPreRollObserver = isPreRollObserverAvailable()
         // A recording owns the input; stopping it reconciles idle capture again.
         guard !deviceManager.isRecordingActive else { return }
 
         let deviceID = shouldKeepMicrophoneReady ? deviceManager.resolveCurrentRecordingDevice().deviceID : nil
-        updatePermissionChecks(enabled: deviceID != nil)
+        updatePermissionChecks(enabled: defaults.keepMicrophoneReady && !isSystemSleeping && isMicrophoneAuthorized())
         guard let deviceID else {
             if let hardware = recorder {
                 audioSetupQueue.async { hardware.stopIdleCapture() }
@@ -353,7 +375,7 @@ class Recorder: NSObject, ObservableObject {
         }
     }
 
-    /// Microphone authorization has no change notification, so poll while the microphone stays open.
+    /// Permission revocation and silent tap failures have no reliable change notification.
     private func updatePermissionChecks(enabled: Bool) {
         guard enabled else {
             permissionCheckCancellable = nil
@@ -363,8 +385,7 @@ class Recorder: NSObject, ObservableObject {
         permissionCheckCancellable = Timer.publish(every: 5, tolerance: 1, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self, !self.isMicrophoneAuthorized() else { return }
-                self.updateIdleCapture(reason: "permission-revoked")
+                self?.updateIdleCapture(reason: "readiness-check")
             }
     }
 

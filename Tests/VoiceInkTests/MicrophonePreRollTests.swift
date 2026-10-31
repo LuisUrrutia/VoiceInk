@@ -145,6 +145,7 @@ final class IdleMicrophoneCaptureTests: XCTestCase {
     private var defaults: UserDefaults!
     private var suiteName: String!
     private var authorized = true
+    private var observerAvailable = true
 
     override func setUp() {
         super.setUp()
@@ -152,6 +153,7 @@ final class IdleMicrophoneCaptureTests: XCTestCase {
         defaults = UserDefaults(suiteName: suiteName)
         defaults.audioInputModeRawValue = AudioInputMode.systemDefault.rawValue
         authorized = true
+        observerAvailable = true
     }
 
     override func tearDown() {
@@ -172,6 +174,19 @@ final class IdleMicrophoneCaptureTests: XCTestCase {
         XCTAssertFalse(hardware.events.contains { $0.hasPrefix("idle:") })
     }
 
+    func testKeepReadyDoesNotOpenBeforeShortcutObserverIsBound() async {
+        defaults.keepMicrophoneReady = true
+        let devices = IdleCaptureDevices(userDefaults: defaults)
+        let hardware = IdleCaptureHardware()
+        let recorder = Recorder(
+            hardware: hardware, deviceManager: devices, defaults: defaults, isMicrophoneAuthorized: { true }
+        )
+
+        await settle(recorder)
+
+        XCTAssertFalse(hardware.events.contains { $0.hasPrefix("idle:") })
+    }
+
     func testSettingOpensTheEffectiveInputAndTurningItOffClosesIt() async {
         let (recorder, hardware, _) = makeRecorder()
 
@@ -180,6 +195,36 @@ final class IdleMicrophoneCaptureTests: XCTestCase {
         defaults.keepMicrophoneReady = false
 
         await waitFor(recorder, hardware) { $0.lastIdleEvent == "stopIdle" }
+    }
+
+    func testObserverLossPausesIdleCaptureAndRecoveryReopensIt() async {
+        let (recorder, hardware, _) = makeRecorder(keepReady: true)
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "idle:1" }
+
+        observerAvailable = false
+        NotificationCenter.default.post(name: ShortcutMonitor.captureAvailabilityDidChange, object: nil)
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "stopIdle" }
+        XCTAssertFalse(recorder.hasPreRollObserver)
+        XCTAssertTrue(defaults.keepMicrophoneReady)
+
+        observerAvailable = true
+        NotificationCenter.default.post(name: ShortcutMonitor.captureAvailabilityDidChange, object: nil)
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "idle:1" }
+        XCTAssertTrue(recorder.hasPreRollObserver)
+    }
+
+    func testCarbonStartWithoutObserverClosesIdleCaptureAndExcludesPreRoll() async throws {
+        let (recorder, hardware, _) = makeRecorder(keepReady: true)
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "idle:1" }
+        hardware.clearEvents()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).wav")
+        observerAvailable = false
+
+        try await recorder.startRecording(toOutputFile: url, applyRecordingEffects: false, preRollPressNanoseconds: 42)
+
+        XCTAssertEqual(hardware.events, ["stopIdle", "start:1:none"])
+        XCTAssertFalse(recorder.hasPreRollObserver)
+        await recorder.stopRecording()
     }
 
     func testSleepClosesTheIdleMicrophoneAndWakeReopensIt() async {
@@ -274,7 +319,8 @@ final class IdleMicrophoneCaptureTests: XCTestCase {
         let hardware = IdleCaptureHardware()
         let recorder = Recorder(
             hardware: hardware, deviceManager: devices, defaults: defaults,
-            isMicrophoneAuthorized: { [unowned self] in self.authorized }
+            isMicrophoneAuthorized: { [unowned self] in self.authorized },
+            isPreRollObserverAvailable: { [unowned self] in self.observerAvailable }
         )
         return (recorder, hardware, devices)
     }
