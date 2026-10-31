@@ -40,12 +40,6 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section("Recording setup") {
-                    CaptureReadinessView(engine: engine, shortcuts: recordingShortcutManager) {
-                        Task { await recorderUIManager.toggleRecordingFromSetup() }
-                    }
-                    Button("Refresh recording shortcut") { recordingShortcutManager.updateShortcutStatus() }
-                }
                 Section("Appearance") {
                     AppearancePicker(selection: $appAppearancePreference)
                         .onChange(of: appAppearancePreference) {
@@ -121,6 +115,8 @@ struct SettingsView: View {
                             withAnimation { recordingShortcutManager.secondaryRecordingShortcut = .custom }
                         }
                     }
+
+                    shortcutAvailabilityIssue
 
                 } header: {
                     HStack(spacing: 4) {
@@ -389,6 +385,24 @@ struct SettingsView: View {
         keyCode: UInt16(kVK_Escape),
         modifierFlags: []
     )
+
+    @ViewBuilder
+    private var shortcutAvailabilityIssue: some View {
+        let availability = recordingShortcutManager.hotkeyAvailability
+        if availability == .unavailable || availability == .needsAccessibility {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Label(availability.message, appSymbol: "exclamationmark.triangle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if availability == .needsAccessibility {
+                    Button("Open Accessibility Settings") {
+                        engine.captureReadiness.openPrivacySettings(.accessibility)
+                    }
+                } else {
+                    Button("Refresh") { recordingShortcutManager.updateShortcutStatus() }
+                }
+            }
+        }
+    }
 
     @ViewBuilder
     private func shortcutModePicker(binding: Binding<RecordingShortcutManager.Mode>) -> some View {
