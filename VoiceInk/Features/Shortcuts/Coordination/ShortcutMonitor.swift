@@ -226,7 +226,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     private var physicalKeyTapIssue = "none"
     private var lastPhysicalKeyTapFailureLogAt: TimeInterval?
     // Recent HID key presses, which another app's global hot key may have hidden from the session.
-    private var physicalKeyDownTimes: [TimeInterval] = []
+    private var physicalKeyDowns: [(time: TimeInterval, modifierFlags: NSEvent.ModifierFlags)] = []
     // Registered hot keys own exact presses of these actions.
     private var systemHotKeyActions: Set<ShortcutAction> = []
     private var reservedShortcuts: [Shortcut] = []
@@ -431,7 +431,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         eventTap = nil
         physicalKeyTap?.stop()
         physicalKeyTap = nil
-        physicalKeyDownTimes = []
+        physicalKeyDowns = []
         chordBreakerTimers.values.forEach { $0.invalidate() }
         chordBreakerTimers = [:]
         notifyMonitoringReset(Set(shortcuts.keys))
@@ -492,10 +492,12 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     }
 
     func recoverEventTap(reason: String = "health-check") {
-        defer { notifyCaptureAvailabilityChanged() }
+        defer {
+            updatePhysicalKeyTap()
+            notifyCaptureAvailabilityChanged()
+        }
         guard !shortcuts.isEmpty else { return }
         observeEnvironment(reason: reason)
-        updatePhysicalKeyTap()
         let inputAllowed = observeInputPolicy()
         guard let eventTap, eventTap.isValid else {
             if self.eventTap != nil {
@@ -650,11 +652,13 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         }
 
         updatePressedKeyCodes(kind: kind, inputCode: inputCode)
-        invalidateStandaloneModifierCandidateForKeyboardEvent(
-            kind: kind,
-            inputCode: inputCode,
-            modifierFlags: modifierFlags
-        )
+        if isChordEvidence {
+            invalidateStandaloneModifierCandidateForKeyboardEvent(
+                kind: kind,
+                inputCode: inputCode,
+                modifierFlags: modifierFlags
+            )
+        }
 
         if kind == .keyDown, isChordEvidence {
             handleShortcutInterruptions(keyCode: inputCode, modifierFlags: modifierFlags, eventTime: eventTime)
@@ -1083,8 +1087,10 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     }
 
     private func isOvertakenByPhysicalKey(action: ShortcutAction, pressedAt: TimeInterval) -> Bool {
-        isChordEvidenceAction(action) && physicalKeyDownTimes.contains { time in
-            time > pressedAt && time - pressedAt < Self.physicalChordOvertakeWindow
+        guard isChordEvidenceAction(action), let shortcut = shortcuts[action]?.shortcut else { return false }
+        return physicalKeyDowns.contains { keyDown in
+            keyDown.time > pressedAt && keyDown.time - pressedAt < Self.physicalChordOvertakeWindow
+                && Self.isHeld(shortcut, by: keyDown.modifierFlags)
         }
     }
 
@@ -1092,7 +1098,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         guard let makePhysicalKeyTap, shortcuts.keys.contains(where: isChordEvidenceAction) else {
             physicalKeyTap?.stop()
             physicalKeyTap = nil
-            physicalKeyDownTimes = []
+            physicalKeyDowns = []
             return
         }
         if let physicalKeyTap, physicalKeyTap.isValid {
@@ -1101,6 +1107,11 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         }
         physicalKeyTap?.stop()
         physicalKeyTap = nil
+        // Without Accessibility the session tap fails, and a listen-only keyboard tap could prompt for Input Monitoring.
+        guard eventTap?.isEnabled == true else {
+            physicalKeyTapIssue = "awaiting-session-tap"
+            return
+        }
         physicalKeyTapRevision &+= 1
         let revision = physicalKeyTapRevision
         do {
@@ -1143,17 +1154,22 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         else { return }
 
         let eventTime = PhysicalKeyEventTime.seconds(rawTimestamp: event.timestamp, now: ProcessInfo.processInfo.systemUptime)
-        if physicalKeyDownTimes.count == Self.physicalKeyDownHistory { physicalKeyDownTimes.removeFirst() }
-        physicalKeyDownTimes.append(eventTime)
+        if physicalKeyDowns.count == Self.physicalKeyDownHistory { physicalKeyDowns.removeFirst() }
+        physicalKeyDowns.append((eventTime, modifierFlags))
         for action in Array(shortcuts.keys) where isChordEvidenceAction(action) {
+            // A key typed just after the release can overtake the session's release event.
             guard var state = shortcuts[action], state.isDown, state.requiresStandaloneRelease, !state.isInterrupted,
-                let pressedAt = state.pressedAt, eventTime >= pressedAt
+                let pressedAt = state.pressedAt, eventTime >= pressedAt, Self.isHeld(state.shortcut, by: modifierFlags)
             else { continue }
             physicalChords += 1
             state.isInterrupted = true
             shortcuts[action] = state
         }
         handleShortcutInterruptions(keyCode: keyCode, modifierFlags: modifierFlags, eventTime: eventTime, isPhysicalEvidence: true)
+    }
+
+    private static func isHeld(_ shortcut: Shortcut, by modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        shortcut.isModifierOnly && !shortcut.shouldReleaseModifierEvent(keyCode: shortcut.keyCode, modifierFlags: modifierFlags)
     }
 
     private func scheduleChordBreaker(for action: ShortcutAction, pressedAt: TimeInterval) {
@@ -1261,12 +1277,11 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
                 !state.isInterrupted,
                 let pressedAt = state.pressedAt,
                 state.shortcut.isInterruptedByAdditionalKeyDown(keyCode: keyCode),
-                // HID evidence covers only modifier-only shortcuts; delayed evidence from before the press is not a chord.
-                !isPhysicalEvidence || (state.shortcut.isModifierOnly && eventTime >= pressedAt),
                 // A held modifier-only shortcut plus any key is a chord at any time (Hex `dictate.held-chord`).
-                eventTime - pressedAt <= Self.shortcutInterruptionWindow
-                    || (state.shortcut.isModifierOnly
-                        && !state.shortcut.shouldReleaseModifierEvent(keyCode: state.shortcut.keyCode, modifierFlags: modifierFlags))
+                // HID evidence counts only then: it can overtake the session's press or release event.
+                isPhysicalEvidence
+                    ? Self.isHeld(state.shortcut, by: modifierFlags) && eventTime >= pressedAt
+                    : eventTime - pressedAt <= Self.shortcutInterruptionWindow || Self.isHeld(state.shortcut, by: modifierFlags)
             else {
                 continue
             }

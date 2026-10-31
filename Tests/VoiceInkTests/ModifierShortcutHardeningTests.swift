@@ -60,6 +60,15 @@ final class ModifierShortcutHardeningTests: XCTestCase {
         await harness.drain()
 
         XCTAssertEqual(harness.events.interruptions, [])
+
+        let candidate = MonitorHarness(shortcut: Self.option, standalone: true)
+        let tappedAt = candidate.now - 2
+        candidate.modifier(down: true, at: tappedAt)
+        candidate.session(.keyDown, key: UInt16(kVK_ANSI_V), flags: [.option, .command], at: tappedAt + 0.05, sourcePID: getpid())
+        candidate.session(.keyUp, key: UInt16(kVK_ANSI_V), flags: [.option, .command], at: tappedAt + 0.06, sourcePID: getpid())
+        candidate.modifier(down: false, at: tappedAt + 0.1)
+        await candidate.drain()
+        assertTimes(candidate.events.downs, [tappedAt], "VoiceInk's own paste keeps a tap clean")
     }
 
     // MARK: Keys consumed by other apps' global hot keys
@@ -114,6 +123,33 @@ final class ModifierShortcutHardeningTests: XCTestCase {
         assertTimes(harness.events.downs, [pressedAt], "A key typed before the press is not its chord")
     }
 
+    func testKeyTypedAfterTheReleaseIsNotAChordWhenItOvertakesTheRelease() async throws {
+        let held = MonitorHarness(shortcut: Self.option)
+        let pressedAt = held.now - 2
+        held.modifier(down: true, at: pressedAt)
+        held.physical(key: Self.digitOne, flags: [], at: pressedAt + 0.6)
+        held.modifier(down: false, at: pressedAt + 0.5)
+        await held.drain()
+        XCTAssertEqual(held.events.interruptions, [], "A finished push-to-talk hold keeps its dictation")
+        XCTAssertEqual(held.events.ups.count, 1)
+
+        let tap = MonitorHarness(shortcut: Self.option, standalone: true)
+        let tappedAt = tap.now - 2
+        tap.modifier(down: true, at: tappedAt)
+        tap.physical(key: Self.digitOne, flags: [], at: tappedAt + 0.15)
+        tap.modifier(down: false, at: tappedAt + 0.1)
+        await tap.drain()
+        assertTimes(tap.events.downs, [tappedAt], "A clean tap still fires")
+
+        let late = MonitorHarness(shortcut: Self.option)
+        let quickAt = late.now - 2
+        late.physical(key: Self.digitOne, flags: [], at: quickAt + 0.12)
+        late.modifier(down: true, at: quickAt)
+        late.modifier(down: false, at: quickAt + 0.1)
+        await late.drain()
+        assertTimes(late.events.downs, [quickAt], "A key after a quick tap does not drop its late press")
+    }
+
     func testHiddenChordDuringAStandaloneCandidateNeverTriggersIt() async throws {
         let harness = MonitorHarness(shortcut: Self.option, standalone: true)
         let pressedAt = harness.now - 3
@@ -141,6 +177,13 @@ final class ModifierShortcutHardeningTests: XCTestCase {
         assertTimes(harness.events.downs, [pressedAt])
         assertTimes(harness.events.interruptions, [pressedAt])
         XCTAssertTrue(harness.monitor.diagnosticSummary.contains("physicalTap=none physicalTapIssue=unavailable"))
+    }
+
+    func testHIDTapWaitsForTheSessionTapSoItNeverPromptsForInputMonitoring() async throws {
+        let harness = MonitorHarness(shortcut: Self.option, sessionTapAvailable: false)
+
+        XCTAssertNil(harness.physicalTap.handler)
+        XCTAssertTrue(harness.monitor.diagnosticSummary.contains("physicalTap=none physicalTapIssue=awaiting-session-tap"))
     }
 
     // MARK: Chord breaker
@@ -340,13 +383,18 @@ private final class MonitorHarness {
         standalone: Bool = false,
         chordBreakerDelay: TimeInterval? = nil,
         physicalFlags: CGEventFlags = .maskAlternate,
-        physicalTapAvailable: Bool = true
+        physicalTapAvailable: Bool = true,
+        sessionTapAvailable: Bool = true
     ) {
         let sessionTap = sessionTap
         let physicalTap = physicalTap
         let breakers = breakers
         monitor = ShortcutMonitor(
-            makeEventTap: { _, handler in sessionTap.handler = handler; return sessionTap },
+            makeEventTap: { _, handler in
+                guard sessionTapAvailable else { throw ShortcutEventTapError.creationFailed }
+                sessionTap.handler = handler
+                return sessionTap
+            },
             allowsInput: { true }, allowsDispatch: { true }, isSecureEventInputEnabled: { false },
             makePhysicalKeyTap: { handler in
                 guard physicalTapAvailable else { throw ShortcutEventTapError.creationFailed }
