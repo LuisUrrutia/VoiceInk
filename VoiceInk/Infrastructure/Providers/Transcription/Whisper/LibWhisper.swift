@@ -19,7 +19,7 @@ actor WhisperContext {
     private var threadCountOverride: Int32?
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "WhisperContext")
 
-    private init() {}
+    init() {}
 
     init(context: OpaquePointer) {
         self.context = context
@@ -80,7 +80,7 @@ actor WhisperContext {
         params.print_timestamps = true
         params.print_special = false
         params.translate = false
-        params.n_threads = threadCountOverride ?? Self.defaultThreadCount()
+        params.n_threads = threadCount
         params.offset_ms = 0
         params.no_context = true
         params.single_segment = false
@@ -177,6 +177,9 @@ actor WhisperContext {
     func setLanguage(_ language: String?) {
         self.language = language
     }
+
+    /// The `n_threads` that `fullTranscribe` passes to whisper.cpp.
+    var threadCount: Int32 { threadCountOverride ?? Self.defaultThreadCount() }
 
     func setThreadCount(_ count: Int32?) {
         threadCountOverride = count

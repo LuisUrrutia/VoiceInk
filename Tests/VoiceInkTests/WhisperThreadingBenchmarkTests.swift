@@ -18,7 +18,10 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
 
     private struct Clip {
         let seconds: Int
+        let offset: Int
         let samples: [Float]
+
+        var label: String { "\(seconds)s@\(offset)" }
     }
 
     private struct Run {
@@ -29,6 +32,19 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
     func testDefaultThreadCountLeavesTwoCoresAndCapsAtEight() {
         XCTAssertEqual([1, 2, 3, 4, 10, 16, 32].map { WhisperContext.defaultThreadCount(processorCount: $0) },
                        [1, 1, 1, 2, 8, 8, 8])
+    }
+
+    func testThreadCountOverrideReachesTheNativeParameterAndResets() async {
+        let context = WhisperContext()
+        let defaultCount = await context.threadCount
+        await context.setThreadCount(1)
+        let overridden = await context.threadCount
+        await context.setThreadCount(nil)
+        let reset = await context.threadCount
+
+        XCTAssertEqual(defaultCount, WhisperContext.defaultThreadCount())
+        XCTAssertEqual(overridden, 1)
+        XCTAssertEqual(reset, WhisperContext.defaultThreadCount())
     }
 
     func testMeasureInferenceThreadsAndQoS() async throws {
@@ -57,7 +73,11 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
             let start = $0.offset * 16_000
             let end = start + $0.seconds * 16_000
             guard end <= audio.count else { throw CocoaError(.fileReadTooLarge) }
-            return Clip(seconds: $0.seconds, samples: Array(audio[start..<end]))
+            return Clip(seconds: $0.seconds, offset: $0.offset, samples: Array(audio[start..<end]))
+        }
+        guard runs > 0, !configurations.isEmpty, !clips.isEmpty, !loads.isEmpty,
+              Set(clips.map(\.label)).count == clips.count else {
+            return XCTFail("Need positive runs, distinct clips and at least one thread count, QoS class and load")
         }
 
         let previousVAD = UserDefaults.standard.object(forKey: "IsVADEnabled")
@@ -70,7 +90,7 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
             "defaultThreads=\(WhisperContext.defaultThreadCount()) productionPathQoS=\(await Self.productionPathQoS())",
         ]
         // unix_s matches rows to samples of other system load.
-        var rows = ["model,load,clip_s,threads,qos,run,wall_ms,transcript_matches,unix_s"]
+        var rows = ["model,load,clip_s,clip_offset_s,threads,qos,run,wall_ms,transcript_matches,unix_s"]
 
         for modelPath in modelPaths.split(separator: ",").map(String.init) {
             let modelURL = URL(fileURLWithPath: modelPath)
@@ -91,12 +111,12 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
                 "model=\(name) sha256=\(try InferenceBenchmark.sha256(ofFileAt: modelPath)) coreMLEncoder=\(hasCoreMLEncoder)"
             )
 
-            var references: [Int: String] = [:]
+            var references: [String: String] = [:]
             for clip in clips {
                 let warmup = try await Self.transcribe(clip.samples, context: context, request: request,
                                                        configuration: .init(threads: nil, qos: .userInitiated))
-                references[clip.seconds] = warmup.text
-                report.append("reference model=\(name) clip=\(clip.seconds)s: \(warmup.text)")
+                references[clip.label] = warmup.text
+                report.append("reference model=\(name) clip=\(clip.label): \(warmup.text)")
             }
 
             for load in loads {
@@ -112,26 +132,26 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
                     for (configuration, clip) in trials {
                         let run = try await Self.transcribe(clip.samples, context: context, request: request,
                                                             configuration: configuration)
-                        let matches = run.text == references[clip.seconds]
-                        results["\(clip.seconds)|\(configuration.label)", default: []].append(run)
+                        let matches = run.text == references[clip.label]
+                        results["\(clip.label)|\(configuration.label)", default: []].append(run)
                         rows.append(
-                            "\(name),\(load),\(clip.seconds),\(configuration.threads.map(String.init) ?? "default"),"
+                            "\(name),\(load),\(clip.seconds),\(clip.offset),\(configuration.threads.map(String.init) ?? "default"),"
                                 + "\(InferenceBenchmark.label(configuration.qos.rawValue)),\(round),"
                                 + String(format: "%.1f,", run.milliseconds) + "\(matches),"
                                 + String(format: "%.0f", Date().timeIntervalSince1970)
                         )
                         if !matches {
-                            report.append("mismatch model=\(name) load=\(load) clip=\(clip.seconds)s \(configuration.label): \(run.text)")
+                            report.append("mismatch model=\(name) load=\(load) clip=\(clip.label) \(configuration.label): \(run.text)")
                         }
                     }
                 }
 
                 for clip in clips {
                     for configuration in configurations {
-                        let samples = results["\(clip.seconds)|\(configuration.label)"] ?? []
-                        let mismatches = samples.filter { $0.text != references[clip.seconds] }.count
+                        let samples = results["\(clip.label)|\(configuration.label)"] ?? []
+                        let mismatches = samples.filter { $0.text != references[clip.label] }.count
                         report.append(
-                            "model=\(name) load=\(load) clip=\(clip.seconds)s \(configuration.label) "
+                            "model=\(name) load=\(load) clip=\(clip.label) \(configuration.label) "
                                 + "wallMs=\(InferenceBenchmark.summary(samples.map(\.milliseconds))) mismatches=\(mismatches)"
                         )
                     }
@@ -140,6 +160,7 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
             await context.releaseResources()
         }
 
+        XCTAssertEqual(rows.count - 1, modelPaths.split(separator: ",").count * loads.count * runs * configurations.count * clips.count)
         try (report + ["", "# raw"] + rows).joined(separator: "\n").appending("\n")
             .write(toFile: reportPath, atomically: true, encoding: .utf8)
     }
@@ -203,6 +224,9 @@ private extension WhisperContext {
         }
         setThreadCount(threads)
         defer { setThreadCount(nil) }
+        guard threadCount == threads ?? Self.defaultThreadCount() else {
+            throw CocoaError(.featureUnsupported, userInfo: [NSDebugDescriptionErrorKey: "n_threads is \(threadCount)"])
+        }
         let start = ContinuousClock.now
         let text = try transcribe(samples: samples, request: request)
         return (InferenceBenchmark.milliseconds(start.duration(to: .now)), text)
