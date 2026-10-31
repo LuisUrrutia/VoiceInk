@@ -64,6 +64,7 @@ final class ShortcutMonitor {
         onStandaloneModifierChord: (@MainActor (ShortcutAction) -> Void)? = nil,
         onMonitoringReset: (@MainActor (Set<ShortcutAction>) -> Void)? = nil,
         onMissedRelease: (@MainActor (ShortcutAction) -> Void)? = nil,
+        onPressCaptured: (@Sendable (ShortcutAction, TimeInterval) -> Void)? = nil,
         reason: String = "refresh"
     ) -> Bool {
         let systemHotKeyActions = registerSystemHotKeys(for: shortcuts)
@@ -81,6 +82,7 @@ final class ShortcutMonitor {
                 onStandaloneModifierChord: onStandaloneModifierChord,
                 onMonitoringReset: onMonitoringReset,
                 onMissedRelease: onMissedRelease,
+                onPressCaptured: onPressCaptured,
                 reason: reason
             )
         }
@@ -186,6 +188,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     // Registered hot keys own exact presses of these actions.
     private var systemHotKeyActions: Set<ShortcutAction> = []
     private var reservedShortcuts: [Shortcut] = []
+    private var onPressCaptured: (@Sendable (ShortcutAction, TimeInterval) -> Void)?
     private var onShortcutDown: ShortcutCallback?
     private var onShortcutUp: ShortcutCallback?
     private var onShortcutInterrupted: ShortcutCallback?
@@ -261,6 +264,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         onStandaloneModifierChord: (@MainActor (ShortcutAction) -> Void)? = nil,
         onMonitoringReset: (@MainActor (Set<ShortcutAction>) -> Void)? = nil,
         onMissedRelease: (@MainActor (ShortcutAction) -> Void)? = nil,
+        onPressCaptured: (@Sendable (ShortcutAction, TimeInterval) -> Void)? = nil,
         reason: String = "refresh"
     ) -> Bool {
         guard !shortcuts.isEmpty else {
@@ -290,6 +294,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         self.interruptibleActions = interruptibleActions
         self.standaloneModifierActions = standaloneModifierActions
         self.systemHotKeyActions = systemHotKeyActions
+        self.onPressCaptured = onPressCaptured
         self.onShortcutDown = onShortcutDown
         self.onShortcutUp = onShortcutUp
         self.onShortcutInterrupted = onShortcutInterrupted
@@ -371,6 +376,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         standaloneModifierActions = []
         systemHotKeyActions = []
         reservedShortcuts = []
+        onPressCaptured = nil
         onShortcutDown = nil
         onShortcutUp = nil
         onShortcutInterrupted = nil
@@ -579,6 +585,11 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
                 continue
             }
             if systemHotKeyActions.contains(action) {
+                if kind == .keyDown, !isAutoRepeat,
+                    matchesInput(state.shortcut, kind: kind, inputCode: inputCode, modifierFlags: modifierFlags)
+                {
+                    onPressCaptured?(action, eventTime)
+                }
                 // Hot keys own exact presses; the tap still matches cancellation with held recording modifiers.
                 guard action == .cancelRecorder || action == .recorderPanelEscape,
                     kind != .keyDown || !matchesInput(state.shortcut, kind: kind, inputCode: inputCode, modifierFlags: modifierFlags)
@@ -949,6 +960,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
             state.modifierFlagsAtPress = modifierFlags
             state.requiresStandaloneRelease = standaloneModifierActions.contains(action)
             if state.requiresStandaloneRelease {
+                onPressCaptured?(action, eventTime)
                 // Drop keys that are no longer held.
                 pressedKeyCodes = pressedKeyCodes.filter(isKeyDown)
             }
@@ -1039,6 +1051,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     }
 
     private func dispatchShortcutDown(for action: ShortcutAction, eventTime: TimeInterval, recoveredMissedRelease: Bool = false) {
+        onPressCaptured?(action, eventTime)
         dispatch(onShortcutDown, action: action, eventTime: eventTime, transition: "down", recoveredMissedRelease: recoveredMissedRelease)
     }
 

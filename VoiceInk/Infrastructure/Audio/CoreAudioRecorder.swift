@@ -75,7 +75,8 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private let audioProcessingScheduled = ManagedAtomic(false)
     private let captureActive = ManagedAtomic(false)
     private let renderCallbacksInFlight = ManagedAtomic<UInt32>(0)
-    private let firstAudioTimestamp = ManagedAtomic<UInt64>(0)
+    private let firstAudioTimestamp = RecordingFirstAudioTimestamp()
+    private let idleCaptureActive = ManagedAtomic(false)
     private let capturedThroughTimestamp = ManagedAtomic<UInt64>(0)
     private let hostTimeBase: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
@@ -90,8 +91,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private(set) var attachedPreRollDuration: TimeInterval = 0
 
     var firstAudioTimestampNanoseconds: UInt64? {
-        let timestamp = firstAudioTimestamp.load(ordering: .relaxed)
-        return timestamp == 0 ? nil : timestamp
+        firstAudioTimestamp.nanoseconds
     }
 
     var capturedThroughNanoseconds: UInt64? {
@@ -197,6 +197,15 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         do {
             recordingURL = url
             attachedPreRollDuration = 0
+            idleCaptureActive.store(false, ordering: .releasing)
+            if preRollPressNanoseconds == nil
+                || pendingPreRollPress.load(ordering: .acquiring) != preRollPressNanoseconds
+            {
+                let boundary = preRollPressNanoseconds ?? DispatchTime.now().uptimeNanoseconds
+                if firstAudioTimestamp.nanoseconds.map({ $0 < boundary }) ?? true {
+                    firstAudioTimestamp.arm(at: boundary)
+                }
+            }
 
             // The output file is per recording; the AUHAL setup above is reused.
             let attachedPreRoll = try withAudioProcessingQueue {
@@ -215,16 +224,12 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             if isCaptureRunning {
                 // Live input continues on the running unit; queued blocks follow the attached pre-roll.
                 attachedPreRollDuration = attachedPreRoll
-                firstAudioTimestamp.store(
-                    attachedPreRoll > 0 ? DispatchTime.now().uptimeNanoseconds : 0, ordering: .relaxed
-                )
                 isRecording = true
                 logger.notice(
                     "🎙️ Recording started from idle capture with \(Int(attachedPreRoll * 1000), privacy: .public) ms of pre-roll"
                 )
             } else {
                 resetAudioProcessingState()
-                firstAudioTimestamp.store(0, ordering: .relaxed)
                 try startAudioUnit()
                 isRecording = true
             }
@@ -254,12 +259,16 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             withAudioProcessingQueue { preRoll = nil }
             throw error
         }
+        firstAudioTimestamp.disarm()
+        idleCaptureActive.store(true, ordering: .releasing)
         logger.notice("🎙️ Idle capture started on device \(deviceID, privacy: .public)")
     }
 
     /// Closes idle capture and discards its history, keeping the prepared AUHAL.
     func stopIdleCapture() {
         guard !isRecording, isCaptureRunning, let unit = audioUnit else { return }
+        idleCaptureActive.store(false, ordering: .releasing)
+        firstAudioTimestamp.disarm()
         stopRunningAudioUnit(unit)
         drainAudioProcessingQueue()
         withAudioProcessingQueue {
@@ -280,7 +289,12 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     /// Retains idle audio from one window before `pressNanoseconds` until the recording starts.
     /// The hold lapses after `PreRollBuffer.pendingPressLimitNanoseconds`. Safe from any thread.
     func holdPreRoll(forPressAt pressNanoseconds: UInt64) {
-        pendingPreRollPress.store(pressNanoseconds, ordering: .relaxed)
+        guard idleCaptureActive.load(ordering: .acquiring) else { return }
+        if pendingPreRollPress.exchange(pressNanoseconds, ordering: .acquiringAndReleasing) != pressNanoseconds,
+            firstAudioTimestamp.nanoseconds.map({ $0 < pressNanoseconds }) ?? true
+        {
+            firstAudioTimestamp.arm(at: pressNanoseconds)
+        }
     }
 
     /// Stops the current recording
@@ -291,6 +305,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
 
         let wasRecording = isRecording
         isRecording = false
+        firstAudioTimestamp.disarm()
         captureActive.store(false, ordering: .releasing)
 
         if wasRecording, let unit = audioUnit {
@@ -824,6 +839,8 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     }
 
     private func teardownPreparedAudioUnit() {
+        idleCaptureActive.store(false, ordering: .releasing)
+        firstAudioTimestamp.disarm()
         captureActive.store(false, ordering: .releasing)
         if let unit = audioUnit {
             AudioOutputUnitStop(unit)
@@ -940,14 +957,12 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         }
 
         let capturedAt = DispatchTime.now().uptimeNanoseconds
-        if inNumberFrames > 0, firstAudioTimestamp.load(ordering: .relaxed) == 0 {
-            _ = firstAudioTimestamp.compareExchange(expected: 0, desired: capturedAt, ordering: .relaxed)
-        }
+        if inNumberFrames > 0 { firstAudioTimestamp.capture(at: capturedAt) }
 
-        capturedThroughTimestamp.store(
-            capturedEndNanoseconds(timeStamp: inTimeStamp.pointee, frameCount: inNumberFrames, sampleRate: inputSampleRate),
-            ordering: .releasing
+        let capturedEnd = capturedEndNanoseconds(
+            timeStamp: inTimeStamp.pointee, frameCount: inNumberFrames, sampleRate: inputSampleRate
         )
+        capturedThroughTimestamp.store(capturedEnd, ordering: .releasing)
 
         // Calculate audio meters from input buffer
         calculateMeters(from: &bufferList, frameCount: inNumberFrames)
@@ -956,7 +971,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             &bufferList,
             frameCount: inNumberFrames,
             inputSampleRate: inputSampleRate,
-            capturedAt: capturedAt
+            capturedAt: capturedEnd
         )
 
         return noErr

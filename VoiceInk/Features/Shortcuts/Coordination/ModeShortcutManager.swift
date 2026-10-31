@@ -6,15 +6,18 @@ class ModeShortcutManager {
     private let monitoringLifecycle = ShortcutMonitoringLifecycle()
     private let modeProvider: @MainActor () -> RecordingShortcutManager.Mode
     private let shortcutModeHandler: RecordingShortcutModeHandler
+    private let preRollPress: RecordingPreRollPress
     private var shortcutChangeObserver: NSObjectProtocol?
     private var monitoredActions = Set<ShortcutAction>()
 
     init(
         modeProvider: @escaping @MainActor () -> RecordingShortcutManager.Mode,
-        shortcutModeHandler: RecordingShortcutModeHandler
+        shortcutModeHandler: RecordingShortcutModeHandler,
+        preRollPress: RecordingPreRollPress
     ) {
         self.modeProvider = modeProvider
         self.shortcutModeHandler = shortcutModeHandler
+        self.preRollPress = preRollPress
 
         refreshModeShortcuts(reason: "startup")
 
@@ -117,6 +120,7 @@ class ModeShortcutManager {
             onMissedRelease: { [weak self] action in
                 self?.shortcutModeHandler.recoverMissedRelease(for: action)
             },
+            onPressCaptured: { [preRollPress] _, eventTime in preRollPress.hold(at: eventTime) },
             reason: reason
         )
     }

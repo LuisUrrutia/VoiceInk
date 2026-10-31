@@ -122,9 +122,12 @@ class RecordingShortcutManager: ObservableObject {
             finishHeldRecording: {
                 recorderUIManager.finishHeldShortcutRecording()
             },
-            toggleRecorderPanel: { modeId in
+            toggleRecorderPanel: { modeId, eventTime in
                 // Every handler stop is a release or finishing press that transcribes.
-                await recorderUIManager.toggleRecorderPanel(modeId: modeId, keepsReleaseTail: true)
+                await recorderUIManager.toggleRecorderPanel(
+                    modeId: modeId, keepsReleaseTail: true,
+                    preRollPressNanoseconds: UInt64(eventTime * 1_000_000_000)
+                )
             },
             cancelRecording: {
                 await recorderUIManager.cancelRecording()
@@ -147,7 +150,8 @@ class RecordingShortcutManager: ObservableObject {
             modeProvider: {
                 primaryRecordingShortcutModeSource.primaryMode
             },
-            shortcutModeHandler: shortcutModeHandler
+            shortcutModeHandler: shortcutModeHandler,
+            preRollPress: engine.recorder.preRollPress
         )
 
         shortcutChangeObserver = NotificationCenter.default.addObserver(
@@ -243,6 +247,10 @@ class RecordingShortcutManager: ObservableObject {
             },
             onMissedRelease: { [weak self] action in
                 self?.shortcutModeHandler.recoverMissedRelease(for: action)
+            },
+            onPressCaptured: { [preRollPress = engine.recorder.preRollPress] action, eventTime in
+                guard action == .primaryRecording || action == .secondaryRecording else { return }
+                preRollPress.hold(at: eventTime)
             },
             reason: reason
         )
@@ -371,7 +379,7 @@ final class RecordingShortcutModeHandler {
     private let recordingState: @MainActor () -> RecordingState
     private let isShortcutHeld: @MainActor (ShortcutAction) -> Bool
     private let finishHeldRecording: @MainActor () -> Void
-    private let toggleRecorderPanel: @MainActor (UUID?) async -> Void
+    private let toggleRecorderPanel: @MainActor (UUID?, TimeInterval) async -> Void
     private let cancelRecording: @MainActor () async -> Void
 
     private var shortcutPressStartTime: TimeInterval?
@@ -397,7 +405,7 @@ final class RecordingShortcutModeHandler {
         recordingState: @escaping @MainActor () -> RecordingState,
         isShortcutHeld: @escaping @MainActor (ShortcutAction) -> Bool,
         finishHeldRecording: @escaping @MainActor () -> Void,
-        toggleRecorderPanel: @escaping @MainActor (UUID?) async -> Void,
+        toggleRecorderPanel: @escaping @MainActor (UUID?, TimeInterval) async -> Void,
         cancelRecording: @escaping @MainActor () async -> Void,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
@@ -530,7 +538,7 @@ final class RecordingShortcutModeHandler {
                 return
             }
             logDecision(action, phase: "down", result: "toggle-recorder", detail: "mode=toggle")
-            await toggleRecorderPanel(modeId)
+            await toggleRecorderPanel(modeId, eventTime)
 
         case .hybrid:
             if isHandsFreeRecording {
@@ -540,7 +548,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "down", result: "stop-hands-free", detail: "mode=\(mode.rawValue)")
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, eventTime)
                 return
             }
 
@@ -550,7 +558,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "down", result: "start-recording", detail: "mode=\(mode.rawValue)")
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, eventTime)
             } else {
                 logDecision(action, phase: "down", result: "wait-for-release", detail: "mode=\(mode.rawValue)")
             }
@@ -562,7 +570,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "down", result: "start-recording", detail: "mode=pushToTalk")
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, eventTime)
             } else {
                 logDecision(action, phase: "down", result: "recorder-already-visible", detail: "mode=pushToTalk")
             }
@@ -606,7 +614,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "up", result: "stop-recording", detail: "mode=pushToTalk")
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, eventTime)
             } else {
                 logDecision(action, phase: "up", result: "recorder-hidden", detail: "mode=pushToTalk")
             }
@@ -618,7 +626,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "up", result: "stop-recording", detail: "mode=hybrid duration=\(String(format: "%.3f", pressDuration))")
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, eventTime)
             } else {
                 logDecision(action, phase: "up", result: "hands-free", detail: "mode=hybrid duration=\(String(format: "%.3f", pressDuration))")
                 isHandsFreeRecording = true
@@ -638,7 +646,7 @@ final class RecordingShortcutModeHandler {
                 eventTime - firstRelease <= doubleTapThreshold
             {
                 logDecision(action, phase: "up", result: "double-tap-triggered", detail: "interval=\(String(format: "%.3f", eventTime - firstRelease))")
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, pressedAt)
                 if stateRevision == releaseRevision {
                     isHandsFreeRecording = isRecorderVisible()
                 }

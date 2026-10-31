@@ -6,7 +6,10 @@ import os
 
 @MainActor
 class Recorder: NSObject, ObservableObject {
-    var recorder: (any RecordingHardware)?
+    var recorder: (any RecordingHardware)? {
+        didSet { preRollPress.bind(recorder) }
+    }
+    nonisolated let preRollPress = RecordingPreRollPress()
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "Recorder")
     let deviceManager: AudioDeviceManager
     private let defaults: UserDefaults
@@ -59,6 +62,7 @@ class Recorder: NSObject, ObservableObject {
         self.isMicrophoneAuthorized = isMicrophoneAuthorized
         recorder = hardware
         super.init()
+        preRollPress.bind(hardware)
         lifecycleCancellable = LifecycleObserver.shared.publisher(
             for: [.audioDeviceChanged, .systemWillSleep, .systemDidWake, .applicationDidBecomeActive]
         ).sink { [weak self] event in

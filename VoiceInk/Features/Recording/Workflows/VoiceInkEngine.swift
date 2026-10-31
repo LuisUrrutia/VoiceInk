@@ -222,7 +222,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     func toggleRecord(
         modeId: UUID? = nil, isAssistantFollowUp: Bool = false, sendAfterPaste: Bool = false,
-        deliverySession: RecordingDeliverySession? = nil, releaseTail: RecordingReleaseTail? = nil
+        deliverySession: RecordingDeliverySession? = nil, releaseTail: RecordingReleaseTail? = nil,
+        preRollPressNanoseconds: UInt64? = nil
     ) async {
         let capturedDelivery = deliverySession ?? RecordingDeliverySession.capture()
         await recordingFinalization.waitUntilFinished()
@@ -328,7 +329,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         } else {
             guard recordingState == .idle else { return }
             capturedDelivery.timing.mark(.engineStart)
-            recorder.holdPreRoll(forPressAt: capturedDelivery.timing.originNanoseconds)
+            let pressNanoseconds = preRollPressNanoseconds ?? capturedDelivery.timing.originNanoseconds
+            recorder.holdPreRoll(forPressAt: pressNanoseconds)
             let canContinueAssistantSession = isAssistantFollowUp && assistantSession.canSendFollowUp
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
@@ -384,7 +386,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
                 preparation.timing.mark(.audioStartRequested)
                 try await self.recorder.startRecording(
-                    toOutputFile: permanentURL, preRollPressNanoseconds: preparation.timing.originNanoseconds
+                    toOutputFile: permanentURL, preRollPressNanoseconds: pressNanoseconds
                 )
 
                 guard self.activeRecordingStartID == startID,

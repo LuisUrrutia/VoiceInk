@@ -367,7 +367,7 @@ private final class TailHandlerFixture {
         recordingState: { self.state },
         isShortcutHeld: { _ in self.held },
         finishHeldRecording: {},
-        toggleRecorderPanel: { _ in
+        toggleRecorderPanel: { _, _ in
             self.toggles += 1
             switch self.state {
             case .idle:

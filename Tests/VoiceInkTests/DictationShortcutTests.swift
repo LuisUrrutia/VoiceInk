@@ -99,16 +99,29 @@ final class DictationShortcutTests: XCTestCase {
         XCTAssertEqual(double.toggles, 1)
     }
 
+    func testRecordingGesturesForwardTheirPhysicalPressTimes() async {
+        let toggle = HandlerFixture()
+        await toggle.down(at: 10, mode: .toggle)
+        XCTAssertEqual(toggle.eventTimes, [10])
+        let double = HandlerFixture()
+        await double.down(at: 10, mode: .doubleTap)
+        await double.up(at: 10.05, mode: .doubleTap)
+        await double.down(at: 10.1, mode: .doubleTap)
+        await double.up(at: 10.2, mode: .doubleTap)
+        XCTAssertEqual(double.eventTimes, [10.1])
+    }
+
     @MainActor private final class HandlerFixture {
         var now: TimeInterval = 0
         var visible = false
         var toggles = 0
+        var eventTimes: [TimeInterval] = []
         var held = false
         lazy var handler = RecordingShortcutModeHandler(
             canHandleShortcutAction: { true }, isRecorderVisible: { self.visible },
             recordingState: { self.visible ? .recording : .idle },
             isShortcutHeld: { _ in self.held }, finishHeldRecording: {},
-            toggleRecorderPanel: { _ in self.visible.toggle(); self.toggles += 1 },
+            toggleRecorderPanel: { _, eventTime in self.visible.toggle(); self.toggles += 1; self.eventTimes.append(eventTime) },
             cancelRecording: { self.visible = false }, now: { self.now }
         )
         func down(at time: TimeInterval, mode: RecordingShortcutManager.Mode) async {

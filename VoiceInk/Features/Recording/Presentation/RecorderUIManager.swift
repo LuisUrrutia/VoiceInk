@@ -222,13 +222,15 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     // MARK: - Recorder Panel Management
 
     /// `keepsReleaseTail` marks a shortcut gesture whose stop transcribes; other stops end immediately.
-    func toggleRecorderPanel(modeId: UUID? = nil, keepsReleaseTail: Bool = false) async {
+    func toggleRecorderPanel(
+        modeId: UUID? = nil, keepsReleaseTail: Bool = false, preRollPressNanoseconds: UInt64? = nil
+    ) async {
         let releaseTail = keepsReleaseTail ? RecordingReleaseTail.now() : nil
         guard let engine = engine else {
             ShortcutDiagnostics.error("recorder-toggle result=rejected reason=engine-unavailable")
             return
         }
-        let deliverySession = RecordingDeliverySession.capture()
+        let deliverySession = RecordingDeliverySession.capture(shortcutPressNanoseconds: preRollPressNanoseconds)
         ShortcutDiagnostics.notice("recorder-toggle state=\(engine.recordingState) visible=\(isRecorderPanelVisible) modeID=\(modeId?.uuidString ?? "none") followUpAvailable=\(engine.assistantSession.canSendFollowUp)")
 
         if isRecorderPanelVisible {
@@ -243,7 +245,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                     await engine.toggleRecord(
                         modeId: modeId,
                         isAssistantFollowUp: true,
-                        deliverySession: deliverySession
+                        deliverySession: deliverySession, preRollPressNanoseconds: preRollPressNanoseconds
                     )
                 } else {
                     await dismissRecorderPanel()
@@ -254,7 +256,9 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         } else {
             SoundManager.shared.playStartSound()
             isRecorderPanelVisible = true
-            await engine.toggleRecord(modeId: modeId, deliverySession: deliverySession)
+            await engine.toggleRecord(
+                modeId: modeId, deliverySession: deliverySession, preRollPressNanoseconds: preRollPressNanoseconds
+            )
         }
     }
 
