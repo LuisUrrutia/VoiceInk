@@ -51,13 +51,22 @@ final class RecordingDeliverySession {
     let destination: PasteDestination
     let timing: RecordingTimingTrace
     private(set) var isCancelled = false
-    var playedStopToneAtRelease = false
+    private(set) var feedback = DictationFeedback()
     private var cancelPendingTask: (() -> Void)?
     private var idleSleepHold: IdleSleepPrevention.Hold?
+    private let playFeedback: @MainActor (DictationFeedback.Tone) -> Void
+    private let now: () -> TimeInterval
 
-    init(destination: PasteDestination, timing: RecordingTimingTrace = RecordingTimingTrace()) {
+    init(
+        destination: PasteDestination,
+        timing: RecordingTimingTrace = RecordingTimingTrace(),
+        playFeedback: (@MainActor (DictationFeedback.Tone) -> Void)? = nil,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
         self.destination = destination
         self.timing = timing
+        self.playFeedback = playFeedback ?? DictationFeedback.playWithSoundManager
+        self.now = now
     }
 
     static func capture(
@@ -94,5 +103,21 @@ final class RecordingDeliverySession {
         cancelPendingTask = nil
         idleSleepHold?.release()
         idleSleepHold = nil
+    }
+
+    // Canceled and superseded sessions stay silent.
+    func recordingStopped() {
+        guard !isCancelled, let tone = feedback.recordingStopped(at: now()) else { return }
+        playFeedback(tone)
+    }
+
+    func pasteFinished(_ result: CursorPaster.PasteResult) {
+        guard !isCancelled, let tone = feedback.pasteFinished(result, at: now()) else { return }
+        playFeedback(tone)
+    }
+
+    func dictationFailed() {
+        guard !isCancelled, let tone = feedback.failed() else { return }
+        playFeedback(tone)
     }
 }
