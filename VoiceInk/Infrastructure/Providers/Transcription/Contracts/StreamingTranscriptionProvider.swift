@@ -46,6 +46,9 @@ protocol StreamingTranscriptionProvider: AnyObject {
     /// Provider-specific decision made when the user stops recording.
     var stopDisposition: StreamingStopDisposition { get }
 
+    /// Longest time from Stop to the final transcript, covering the audio backlog, commit and final event.
+    var finishDeadline: Duration { get }
+
     /// Connect to the streaming transcription endpoint
     func connect(model: any TranscriptionModel, language: String?) async throws
 
@@ -68,5 +71,6 @@ protocol StreamingTranscriptionProvider: AnyObject {
 
 extension StreamingTranscriptionProvider {
     var stopDisposition: StreamingStopDisposition { .finalizeStreaming }
+    var finishDeadline: Duration { .seconds(10) }
     var finalizationEvents: AsyncStream<String>? { nil }
 }

@@ -5,6 +5,9 @@ import os
 /// Streams audio through FluidAudio's Unified manager.
 @MainActor
 final class FluidAudioUnifiedStreamingProvider: StreamingTranscriptionProvider {
+    /// Measured realtime stops finish in under 0.2 s; a backlog drains at about 0.11 s per second of audio, and
+    /// the streaming service drops audio past 2,048 chunks (about 22 s), so 3 s lets any admitted backlog finish.
+    nonisolated static let finishDeadline: Duration = .seconds(3)
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "FluidAudioUnifiedStreaming")
     private let models: UnifiedModelCache<StreamingUnifiedAsrManager>
     private let processing = UnifiedModelAccess()
@@ -13,6 +16,7 @@ final class FluidAudioUnifiedStreamingProvider: StreamingTranscriptionProvider {
     private var eventsContinuation: AsyncStream<StreamingTranscriptionEvent>.Continuation?
 
     nonisolated let transcriptionEvents: AsyncStream<StreamingTranscriptionEvent>
+    nonisolated var finishDeadline: Duration { Self.finishDeadline }
 
     init(fluidAudioService: FluidAudioTranscriptionService) {
         self.models = fluidAudioService.unifiedStreamingModels
