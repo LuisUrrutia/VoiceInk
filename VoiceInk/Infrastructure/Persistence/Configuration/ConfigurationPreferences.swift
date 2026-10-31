@@ -10,7 +10,7 @@ enum ConfigurationPreferences {
         let groups: [(Kind, [String])] = [
             (.boolean, [
                 "enableAnnouncements", "VoiceInkChecksForUpdatesOnLaunch", "IsMenuBarOnly", "ShowMenuBarIcon", "ShowLiveTranscript",
-                "PinPasteTargetToRecordStart", "restoreClipboardAfterPaste", "isSystemMuteEnabled",
+                "PinPasteTargetToRecordStart", "restoreClipboardAfterPaste", "isSystemMuteEnabled", "isSystemAudioLoweringEnabled",
                 "isPauseMediaEnabled", "IsTextFormattingEnabled", "IsVADEnabled", "AppendTrailingSpace",
                 "PrewarmModelOnWake", "SkipShortEnhancement", "EnhancementRetryOnTimeout",
                 "IsAutoLearnDictionaryEnabled", "IsTranscriptionCleanupEnabled", "IsAudioCleanupEnabled",
@@ -34,7 +34,10 @@ enum ConfigurationPreferences {
                 "customStartSoundFilename", "customStopSoundFilename",
                 "vocabularySortMode", "wordReplacementSortMode",
             ]),
-            (.number, ["clipboardRestoreDelay", "audioResumptionDelay", "localCLITimeoutSeconds", "audioPlaybackRate"]),
+            (.number, [
+                "clipboardRestoreDelay", "audioResumptionDelay", "systemAudioLoweringLevel", "localCLITimeoutSeconds",
+                "audioPlaybackRate",
+            ]),
             (.integer, [
                 "CloudTranscriptionTimeout", "ShortEnhancementWordThreshold", "EnhancementTimeoutSeconds",
                 "TranscriptionRetentionMinutes", "AudioRetentionPeriod", "AutoLearnDictionaryMinimumCorrections",

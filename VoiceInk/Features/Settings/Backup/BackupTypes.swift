@@ -93,6 +93,8 @@ struct GeneralBackup: Codable {
     let isSystemMuteEnabled: Bool?
     let isPauseMediaEnabled: Bool?
     let audioResumptionDelay: Double?
+    var isSystemAudioLoweringEnabled: Bool? = nil
+    var systemAudioLoweringLevel: Double? = nil
     let isTextFormattingEnabled: Bool?
     let isExperimentalFeaturesEnabled: Bool?
     let restoreClipboardAfterPaste: Bool?
@@ -126,6 +128,14 @@ struct GeneralBackup: Codable {
         if let avoidsBluetoothDefaultMicrophone {
             devices.setAvoidsBluetoothDefaultMicrophone(avoidsBluetoothDefaultMicrophone)
         }
+    }
+
+    /// Missing fields keep the current choice, so older backups select Mute only when they enable it.
+    func recordingOutputBehavior(restoring current: RecordingOutputAudioBehavior) -> RecordingOutputAudioBehavior {
+        RecordingOutputAudioBehavior(
+            isMuteEnabled: isSystemMuteEnabled ?? (current == .mute),
+            isLoweringEnabled: isSystemAudioLoweringEnabled ?? (current == .lower)
+        )
     }
 
     func iconVisibility(restoring current: AppIconVisibility) -> AppIconVisibility {
