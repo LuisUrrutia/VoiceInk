@@ -4,7 +4,7 @@ import os
 
 extension Recorder {
     func setupRecordingDeviceChangeObserver() {
-        recordingDeviceChangeObserver = NotificationCenter.default.addObserver(
+        recordingDeviceChangeObserver = deviceManager.notificationCenter.addObserver(
             forName: .recordingDeviceChangeRequired,
             object: nil,
             queue: .main

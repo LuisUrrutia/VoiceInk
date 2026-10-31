@@ -1,4 +1,5 @@
 import AVFoundation
+import AppKit
 import Combine
 import CoreAudio
 import Foundation
@@ -41,6 +42,10 @@ class Recorder: NSObject, ObservableObject {
     private let smoothedValuesLock = NSLock()
     private var smoothedAverage: Float = 0
     private var smoothedPeak: Float = 0
+    /// True while a dictation's input has delivered no usable level; never stops the recording.
+    @Published private(set) var isInputSilent = false
+    private let inputSignalMonitoring: InputSignalMonitoring
+    private var inputSignalTask: Task<Void, Never>?
 
     /// Audio chunk callback for streaming. Can be updated while recording;
     /// changes are forwarded to the live CoreAudioRecorder.
@@ -60,9 +65,11 @@ class Recorder: NSObject, ObservableObject {
         isMicrophoneAuthorized: @escaping @MainActor () -> Bool = {
             AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         },
-        isPreRollObserverAvailable: @escaping @MainActor () -> Bool = { false }
+        isPreRollObserverAvailable: @escaping @MainActor () -> Bool = { false },
+        inputSignalMonitoring: InputSignalMonitoring = InputSignalMonitoring()
     ) {
         self.deviceManager = deviceManager
+        self.inputSignalMonitoring = inputSignalMonitoring
         self.defaults = defaults
         self.isMicrophoneAuthorized = isMicrophoneAuthorized
         self.isPreRollObserverAvailable = isPreRollObserverAvailable
@@ -93,7 +100,7 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func startMicrophoneTest(toOutputFile url: URL) async throws {
-        try await startRecording(toOutputFile: url, applyRecordingEffects: false)
+        try await startRecording(toOutputFile: url, applyRecordingEffects: false, monitorsInputSignal: false)
     }
 
     func setPreRollObserverProvider(_ provider: @escaping @MainActor () -> Bool) {
@@ -107,10 +114,12 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func startRecording(
-        toOutputFile url: URL, applyRecordingEffects: Bool = true, preRollPressNanoseconds: UInt64? = nil
+        toOutputFile url: URL, applyRecordingEffects: Bool = true, monitorsInputSignal: Bool = true,
+        preRollPressNanoseconds: UInt64? = nil
     ) async throws {
         await recordingFinalization.waitUntilFinished()
         try Task.checkCancellation()
+        stopInputSignalMonitoring()
         recordingError = nil
         let resolution = deviceManager.resolveCurrentRecordingDevice()
         guard var deviceID = resolution.deviceID else {
@@ -171,6 +180,7 @@ class Recorder: NSObject, ObservableObject {
             deviceManager.recordingDidStart(deviceID: deviceID)
             showRecordingDeviceNotification(for: deviceID)
             resetAudioMeter()
+            if monitorsInputSignal { startInputSignalMonitoring(coreAudioRecorder) }
         } catch {
             guard recordingStartID == playbackSessionID else { throw CancellationError() }
             logger.error(
@@ -219,6 +229,7 @@ class Recorder: NSObject, ObservableObject {
         }
         defer { recordingFinalization.finish(finalizationID) }
 
+        stopInputSignalMonitoring()
         recordingDeviceNotificationTask?.cancel()
         recordingDeviceNotificationTask = nil
         guard !hasStoppedRecording else { return nil }
@@ -450,6 +461,38 @@ class Recorder: NSObject, ObservableObject {
         return audioMeter
     }
 
+    /// Polls the meters the render callback already publishes; detection never runs on that callback.
+    private func startInputSignalMonitoring(_ hardware: any RecordingHardware) {
+        let monitoring = inputSignalMonitoring
+        inputSignalTask = Task { @MainActor [weak self] in
+            var detector = NoInputSignalDetector(
+                startedAt: DispatchTime.now().uptimeNanoseconds,
+                quietDurationNanoseconds: monitoring.quietDurationNanoseconds
+            )
+            while !Task.isCancelled {
+                guard let self else { return }
+                detector.observe(
+                    peakDBFS: hardware.peakPower, capturedThrough: hardware.capturedThroughNanoseconds,
+                    inputID: self.deviceManager.activeRecordingDeviceID, at: DispatchTime.now().uptimeNanoseconds
+                )
+                if detector.isWarning != self.isInputSilent {
+                    self.isInputSilent = detector.isWarning
+                    if detector.isWarning {
+                        self.logger.notice("Recording input delivers no usable level")
+                        monitoring.announce(String(localized: "No sound. Pick another mic?"))
+                    }
+                }
+                try? await Task.sleep(for: monitoring.pollInterval)
+            }
+        }
+    }
+
+    private func stopInputSignalMonitoring() {
+        inputSignalTask?.cancel()
+        inputSignalTask = nil
+        isInputSilent = false
+    }
+
     private func resetAudioMeter() {
         smoothedValuesLock.lock()
         smoothedAverage = 0
@@ -460,14 +503,27 @@ class Recorder: NSObject, ObservableObject {
     // MARK: - Cleanup
 
     deinit {
+        inputSignalTask?.cancel()
         recordingDeviceNotificationTask?.cancel()
         audioMuteTask?.cancel()
         mediaPauseTask?.cancel()
         audioRestorationTask?.cancel()
         if let observer = recordingDeviceChangeObserver {
-            NotificationCenter.default.removeObserver(observer)
+            deviceManager.notificationCenter.removeObserver(observer)
         }
         recorder?.teardown()
+    }
+}
+
+struct InputSignalMonitoring {
+    var pollInterval: Duration = .milliseconds(100)
+    var quietDurationNanoseconds = NoInputSignalDetector.quietDurationNanoseconds
+    var announce: @MainActor (String) -> Void = { message in
+        guard let application = NSApp else { return }
+        NSAccessibility.post(
+            element: application, notification: .announcementRequested,
+            userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue]
+        )
     }
 }
 
