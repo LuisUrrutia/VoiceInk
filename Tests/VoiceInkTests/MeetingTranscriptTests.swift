@@ -70,8 +70,48 @@ import os
 
         let kept = MeetingTranscript.removingDictation(from: segments, intervals: [.init(start: 4.9, end: 6)])
 
-        XCTAssertEqual(kept.map(\.text), ["I think so"])
+        // A wordless segment is kept: its dictated audio is silenced before transcription instead.
+        XCTAssertEqual(kept.map(\.text), ["I think so", "untimed dictation"])
         XCTAssertEqual(kept.first?.end, 9.2)
+    }
+
+    func testDictatedMicrophoneAudioIsSilencedBeforeTranscriptionAcrossAGap() {
+        var timeline = MeetingTrackTimeline()
+        timeline.record(frame: 0, at: 0)
+        timeline.record(frame: 32_000, at: 5)
+        var samples = [Float](repeating: 0.5, count: 64_000)
+
+        MeetingTranscriber.silence([.init(start: 1, end: 1.5), .init(start: 3, end: 5.5)], in: &samples, timeline: timeline)
+
+        XCTAssertEqual(timeline.frame(forTime: 3), 32_000)
+        XCTAssertTrue(samples[16_000..<24_000].allSatisfy { $0 == 0 })
+        XCTAssertTrue(samples[24_000..<32_000].allSatisfy { $0 == 0.5 })
+        XCTAssertTrue(samples[32_000..<40_000].allSatisfy { $0 == 0 })
+        XCTAssertTrue(samples[0..<16_000].allSatisfy { $0 == 0.5 })
+        XCTAssertTrue(samples[40_000...].allSatisfy { $0 == 0.5 })
+    }
+
+    func testWordlessModelsNeverReceiveDictatedAudioButKeepTheRestOfTheirSegment() async throws {
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"))
+        var manifest = MeetingManifest(title: "Sync")
+        _ = try store.createDirectory(for: manifest.id)
+        try writeTrack(store.audioURL(for: manifest.id, track: .microphone), speechAt: [0.5, 0.9, 1.3, 1.7, 2.1])
+        try writeTrack(store.audioURL(for: manifest.id, track: .system), speechAt: [1.2])
+        manifest.updateTrack(.microphone) { $0.timeline.record(frame: 0, at: 0) }
+        manifest.updateTrack(.system) { $0.timeline.record(frame: 0, at: 0) }
+        manifest.dictationIntervals = [.init(start: 1.25, end: 1.75)]
+        let fake = FakeTimedTranscriber()
+        fake.isWordless = true
+
+        let turns = try await MeetingTranscriber(
+            transcriber: fake, model: try parakeet(), context: TranscriptionRequestContext(languages: ["en"])
+        ).transcribe(manifest, store: store)
+
+        // Them is transcribed first; You's 2 s of speech lose the dictated 0.5 s.
+        XCTAssertEqual(fake.loudSeconds.count, 2)
+        XCTAssertEqual(fake.loudSeconds[0], 0.4, accuracy: 0.05)
+        XCTAssertEqual(fake.loudSeconds[1], 1.5, accuracy: 0.06)
+        XCTAssertEqual(turns.map(\.speaker), [.you, .them])
     }
 
     func testTurnsInterleaveSpeakersAndMergeCloseEntries() {
@@ -171,8 +211,9 @@ import os
         XCTAssertEqual(turns[0].start, 0.5, accuracy: 0.25)
         XCTAssertEqual(turns[1].start, 3.0, accuracy: 0.25)
         XCTAssertEqual(turns.map(\.text), ["speech", "speech"])
-        XCTAssertEqual(waits, 3)
-        XCTAssertEqual(fake.calls, 3)
+        // The dictated burst at 3 s is silenced before voice detection, so no chunk is sent for it.
+        XCTAssertEqual(waits, 2)
+        XCTAssertEqual(fake.calls, 2)
     }
 
     func testModelChoiceKeepsACurrentLocalModelAndPrefersWordTimesOtherwise() throws {
@@ -227,6 +268,59 @@ import os
         XCTAssertEqual(try fixture.store.load(id: recorded.id).status, .transcribed)
     }
 
+    func testMeetingsAreTranscribedOneAtATimeWithBalancedHoldsAndReleases() async throws {
+        let fixture = try makeCoordinator()
+        fixture.transcriber.holdsCalls = true
+        var ids: [UUID] = []
+        for title in ["One", "Two"] {
+            try await fixture.recorder.start(title: title)
+            let stopped = await fixture.recorder.stop()
+            let id = try XCTUnwrap(stopped?.id)
+            try writeTrack(fixture.store.audioURL(for: id, track: .microphone), speechAt: [0.5])
+            ids.append(id)
+        }
+        try await waitUntil { fixture.transcriber.heldCalls == 1 }
+        fixture.coordinator.enqueue(ids[0])
+        fixture.coordinator.enqueue(ids[1])
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(fixture.transcriber.heldCalls, 1)
+        XCTAssertEqual(fixture.coordinator.transcribingID, ids[0])
+
+        fixture.transcriber.releaseHeldCalls()
+        await fixture.coordinator.waitUntilIdle()
+
+        XCTAssertEqual(fixture.transcriber.calls, 2)
+        XCTAssertEqual(fixture.transcriber.maximumConcurrentCalls, 1)
+        XCTAssertEqual(fixture.transcriber.releaseCount, 2)
+        XCTAssertEqual(ids.map { try? fixture.store.load(id: $0).status }, [.transcribed, .transcribed])
+        await withCheckedContinuation { continuation in fixture.sleepQueue.async { continuation.resume() } }
+        XCTAssertTrue(fixture.power.liveAssertions.isEmpty)
+    }
+
+    func testAMeetingWhisperJobLoadsItsOwnContextOnceAndReleasesIt() async throws {
+        let whisper = try XCTUnwrap(TranscriptionModelRegistry.models.first { $0.name == "ggml-base" })
+        let modelFile = root.appendingPathComponent("ggml-base.bin")
+        FileManager.default.createFile(atPath: modelFile.path, contents: Data())
+        var loads: [String] = []
+        let context = FakeWhisperContext()
+        let transcriber = MeetingWhisperTranscriber(
+            modelURL: { $0 == "ggml-base" ? modelFile : nil },
+            loadContext: { path in
+                loads.append(path)
+                return context
+            }
+        )
+        let request = TranscriptionRequestContext(languages: ["en"])
+
+        _ = try await transcriber.transcribeTimed(samples: [0.1], model: whisper, context: request)
+        _ = try await transcriber.transcribeTimed(samples: [0.1], model: whisper, context: request)
+        await transcriber.releaseResources()
+
+        XCTAssertEqual(loads, [modelFile.path])
+        XCTAssertEqual(context.calls, 2)
+        XCTAssertEqual(context.releases, 1)
+    }
+
     func testRecordingRequiresALocalModel() async throws {
         let fixture = try makeCoordinator(hasModel: false)
 
@@ -268,6 +362,14 @@ import os
             samples[index] = speaking ? Int16(8_000 * sin(Double(index) * 0.2)) : 0
         }
         try file.write(from: buffer)
+    }
+
+    private func waitUntil(timeout: Duration = .seconds(2), _ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return XCTFail("Condition not met in time") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
 
     private struct CoordinatorFixture {
@@ -323,16 +425,43 @@ private final class DictationState {
 }
 
 /// Reports one "speech" segment per chunk at the chunk's loudest sample.
+@MainActor
 private final class FakeTimedTranscriber: TimedSpeechTranscribing {
     var calls = 0
     var releaseCount = 0
     var failure: Error?
+    /// Reports one segment without words, like Unified, Nemotron or Whisper.
+    var isWordless = false
+    /// Seconds of non-silent audio received per track, in call order.
+    var loudSeconds: [Double] = []
+    var holdsCalls = false
+    private(set) var heldCalls = 0
+    private(set) var maximumConcurrentCalls = 0
+    private var activeCalls = 0
+    private var held: [CheckedContinuation<Void, Never>] = []
+
+    func releaseHeldCalls() {
+        holdsCalls = false
+        held.forEach { $0.resume() }
+        held = []
+    }
 
     func transcribeTimed(
         samples: [Float], model: any TranscriptionModel, context: TranscriptionRequestContext
     ) async throws -> [TimedTranscriptSegment] {
         calls += 1
+        activeCalls += 1
+        maximumConcurrentCalls = max(maximumConcurrentCalls, activeCalls)
+        defer { activeCalls -= 1 }
+        if holdsCalls {
+            heldCalls += 1
+            await withCheckedContinuation { held.append($0) }
+        }
         if let failure { throw failure }
+        loudSeconds.append(Double(samples.filter { abs($0) > 0.01 }.count) / 16_000)
+        if isWordless {
+            return TimedTranscriptSegment.untimed("speech", sampleCount: samples.count)
+        }
         guard let loud = samples.firstIndex(where: { abs($0) > 0.1 }) else { return [] }
         let start = Double(loud) / 16_000
         return [TimedTranscriptSegment(
@@ -358,16 +487,32 @@ private final class SilentSystemAudio: SystemAudioCapturing, @unchecked Sendable
 }
 
 private final class TranscriptPowerAssertions: PowerAssertionClient, @unchecked Sendable {
-    private let state = OSAllocatedUnfairLock(initialState: (names: [String](), next: IOPMAssertionID(1)))
+    private let state = OSAllocatedUnfairLock(initialState: (names: [String](), live: Set<IOPMAssertionID>(), next: IOPMAssertionID(1)))
     var createdNames: [String] { state.withLock { $0.names } }
+    var liveAssertions: Set<IOPMAssertionID> { state.withLock { $0.live } }
 
     func createIdleSleepAssertion(named name: String) -> Result<IOPMAssertionID, IdleSleepPreventionError> {
         state.withLock {
             $0.names.append(name)
             $0.next += 1
+            $0.live.insert($0.next)
             return .success($0.next)
         }
     }
 
-    func releaseAssertion(_ id: IOPMAssertionID) -> IOReturn { kIOReturnSuccess }
+    func releaseAssertion(_ id: IOPMAssertionID) -> IOReturn {
+        state.withLock { $0.live.remove(id) != nil ? kIOReturnSuccess : kIOReturnNotFound }
+    }
+}
+
+private final class FakeWhisperContext: TimedWhisperContext {
+    var calls = 0
+    var releases = 0
+
+    func transcribeTimed(samples: [Float], request: TranscriptionRequestContext) async throws -> [TimedTranscriptSegment] {
+        calls += 1
+        return []
+    }
+
+    func releaseResources() async { releases += 1 }
 }

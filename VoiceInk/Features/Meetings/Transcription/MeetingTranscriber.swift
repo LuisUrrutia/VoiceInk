@@ -20,7 +20,11 @@ struct MeetingTranscriber {
             guard let track = manifest.track(kind) else { continue }
             let url = store.audioURL(for: manifest.id, track: kind)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            let samples = try Self.readSamples(from: url)
+            var samples = try Self.readSamples(from: url)
+            if kind == .microphone {
+                // Models without word times cannot drop dictated words afterwards, so their audio is silenced first.
+                Self.silence(manifest.dictationIntervals, in: &samples, timeline: track.timeline)
+            }
             var segments = try await transcribeTrack(samples)
             segments = segments.map { Self.meetingTime($0, timeline: track.timeline) }
             if kind == .microphone {
@@ -47,6 +51,16 @@ struct MeetingTranscriber {
                 .map { $0.shifted(by: offset) }
         }
         return segments
+    }
+
+    /// Zeroes the samples captured during each interval; the file itself is unchanged.
+    static func silence(_ intervals: [MeetingManifest.Interval], in samples: inout [Float], timeline: MeetingTrackTimeline) {
+        for interval in intervals {
+            let start = min(samples.count, timeline.frame(forTime: interval.start))
+            let end = min(samples.count, timeline.frame(forTime: interval.end))
+            guard start < end else { continue }
+            for index in start..<end { samples[index] = 0 }
+        }
     }
 
     static func meetingTime(_ segment: TimedTranscriptSegment, timeline: MeetingTrackTimeline) -> TimedTranscriptSegment {
