@@ -21,6 +21,8 @@ class PlaybackController: ObservableObject {
     private var lastKnownTrackInfo: TrackInfo?
     private var stateRequests: [UUID: CheckedContinuation<TrackInfo?, Never>] = [:]
 
+    nonisolated static let pauseBrowserMediaKey = "isPauseBrowserMediaEnabled"
+
     @Published var isPauseMediaEnabled: Bool = UserDefaults.standard.bool(forKey: "isPauseMediaEnabled") {
         didSet {
             UserDefaults.standard.set(isPauseMediaEnabled, forKey: "isPauseMediaEnabled")
@@ -33,8 +35,24 @@ class PlaybackController: ObservableObject {
         }
     }
 
+    /// Applies only with Pause Media; requesting its permission belongs to the settings control.
+    @Published var isPauseBrowserMediaEnabled: Bool = UserDefaults.standard.bool(forKey: PlaybackController.pauseBrowserMediaKey) {
+        didSet {
+            UserDefaults.standard.set(isPauseBrowserMediaEnabled, forKey: Self.pauseBrowserMediaKey)
+            if !isPauseBrowserMediaEnabled { browserMediaPauser.forgetPause() }
+        }
+    }
+
+    private let browserMediaPauser: BrowserMediaPauser
+    private var pausesBrowserMedia: Bool { isPauseMediaEnabled && isPauseBrowserMediaEnabled }
+
     private init() {
         mediaController = MediaRemoteAdapter.MediaController()
+        browserMediaPauser = BrowserMediaPauser(
+            permission: TCCSystemAudioRecordingPermission(),
+            commands: MediaRemoteBrowserMediaCommands(mediaController: mediaController),
+            makeListener: { CoreAudioBrowserAudioListener($0) }
+        )
 
         setupMediaControllerCallbacks()
 
@@ -65,6 +83,7 @@ class PlaybackController: ObservableObject {
     private func stopMediaTracking() {
         recordingSessionID = UUID()
         ownedPause = nil
+        browserMediaPauser.forgetPause()
         mediaController.stopListening()
         isMediaPlaying = false
         lastKnownTrackInfo = nil
@@ -73,10 +92,23 @@ class PlaybackController: ObservableObject {
     func beginRecordingSession() -> UUID {
         recordingSessionID = UUID()
         // A new recording inherits a pause whose restoration has not completed.
+        browserMediaPauser.abandonPendingResume()
         return recordingSessionID
     }
 
+    /// One pause is owned at a time: a browser pause and a Now Playing pause would
+    /// both resume through the same system command.
     func pauseMedia(sessionID: UUID) async {
+        await browserMediaPauser.settle()
+        guard !browserMediaPauser.ownsPause else { return }
+        await pauseNowPlayingMedia(sessionID: sessionID)
+        guard ownedPause == nil, pausesBrowserMedia, sessionID == recordingSessionID, !Task.isCancelled else {
+            return
+        }
+        await browserMediaPauser.pause()
+    }
+
+    private func pauseNowPlayingMedia(sessionID: UUID) async {
         guard sessionID == recordingSessionID, !Task.isCancelled, isPauseMediaEnabled else {
             return
         }
@@ -111,6 +143,11 @@ class PlaybackController: ObservableObject {
 
     func resumeMedia(sessionID: UUID) async {
         guard sessionID == recordingSessionID, !Task.isCancelled, isPauseMediaEnabled else {
+            return
+        }
+        await browserMediaPauser.settle()
+        if browserMediaPauser.ownsPause {
+            await restoreBrowserPlayback(sessionID: sessionID)
             return
         }
         guard let pause = ownedPause else {
@@ -186,6 +223,19 @@ class PlaybackController: ObservableObject {
         ownedPause = nil
     }
 
+    private func restoreBrowserPlayback(sessionID: UUID) async {
+        let delay = MediaController.shared.audioResumptionDelay
+        if delay > 0 {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+        }
+        guard !Task.isCancelled, pausesBrowserMedia, sessionID == recordingSessionID else { return }
+        await browserMediaPauser.resume()
+    }
+
     private func fetchCurrentTrackInfo() async -> TrackInfo? {
         let requestID = UUID()
         return await withTaskCancellationHandler {
@@ -243,5 +293,19 @@ class PlaybackController: ObservableObject {
     private func isAppStillRunning(bundleId: String) -> Bool {
         let runningApps = NSWorkspace.shared.runningApplications
         return runningApps.contains { $0.bundleIdentifier == bundleId }
+    }
+}
+
+/// MediaRemote's explicit play and pause through the adapter's listener process.
+private struct MediaRemoteBrowserMediaCommands: BrowserMediaCommandSending, @unchecked Sendable {
+    // The adapter serializes commands on its own queue.
+    let mediaController: MediaRemoteAdapter.MediaController
+
+    func send(_ command: BrowserMediaCommand) -> Bool {
+        switch command {
+        case .play: mediaController.play()
+        case .pause: mediaController.pause()
+        }
+        return true
     }
 }

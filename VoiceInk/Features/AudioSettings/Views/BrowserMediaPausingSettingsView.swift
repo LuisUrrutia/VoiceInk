@@ -1,0 +1,94 @@
+import AppKit
+import SwiftUI
+
+@MainActor
+final class SystemAudioRecordingPermissionModel: ObservableObject {
+    @Published private(set) var authorization: SystemAudioRecordingAuthorization
+    @Published private(set) var isWaitingForAnswer = false
+    private let permission: any SystemAudioRecordingPermissionChecking
+
+    init(permission: any SystemAudioRecordingPermissionChecking = TCCSystemAudioRecordingPermission()) {
+        self.permission = permission
+        authorization = permission.authorization()
+    }
+
+    func refresh() {
+        authorization = permission.authorization()
+        if authorization != .notDetermined { isWaitingForAnswer = false }
+    }
+
+    /// Asks only from the settings control, never while dictating.
+    func requestIfUndetermined() {
+        refresh()
+        guard !isWaitingForAnswer else { return }
+        let asked = permission.request { [weak self] _ in
+            Task { @MainActor in
+                self?.isWaitingForAnswer = false
+                self?.refresh()
+            }
+        }
+        isWaitingForAnswer = asked
+    }
+}
+
+@MainActor
+struct BrowserMediaPausingSettingsView: View {
+    @ObservedObject var playbackController: PlaybackController
+    @StateObject private var permission = SystemAudioRecordingPermissionModel()
+
+    var body: some View {
+        Toggle(isOn: isEnabled) {
+            HStack(spacing: 4) {
+                Text("Also Pause the Browser")
+                InfoTip(
+                    LocalizedStringKey(
+                        "Pause a browser tab that is audibly playing, and play it again after dictation only if VoiceInk paused it and you did not restart it. Browsers using the microphone, such as calls, are left alone. VoiceInk listens to the browser's own output without recording it, which requires Screen & System Audio Recording permission."
+                    )
+                )
+            }
+        }
+        .disabled(!playbackController.isPauseMediaEnabled)
+
+        if playbackController.isPauseMediaEnabled && playbackController.isPauseBrowserMediaEnabled {
+            LabeledContent("Screen & System Audio Recording") {
+                permissionStatus
+            }
+            .onAppear { permission.refresh() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                permission.refresh()
+            }
+        }
+    }
+
+    private var isEnabled: Binding<Bool> {
+        Binding(
+            get: { playbackController.isPauseBrowserMediaEnabled },
+            set: { enabled in
+                playbackController.isPauseBrowserMediaEnabled = enabled
+                if enabled { permission.requestIfUndetermined() }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var permissionStatus: some View {
+        switch permission.authorization {
+        case .granted:
+            Text("Allowed").foregroundStyle(.secondary)
+        case .notDetermined where permission.isWaitingForAnswer:
+            Text("Waiting for your answer…").foregroundStyle(.secondary)
+        case .notDetermined:
+            Button("Allow") { permission.requestIfUndetermined() }
+        case .denied:
+            Button("Open System Settings") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .help("Allow VoiceInk under System Audio Recording Only, then return to VoiceInk.")
+        case .unknown:
+            Text("Unavailable on this Mac").foregroundStyle(.secondary)
+                .help("VoiceInk cannot check this permission, so it leaves the browser alone.")
+        }
+    }
+}

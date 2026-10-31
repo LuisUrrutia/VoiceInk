@@ -49,6 +49,7 @@ final class SystemInfoService {
             RECORDING FEEDBACK:
             Sound Feedback: \(CustomSoundManager.shared.hasAnyRecordingSoundEnabled)
             Pause Media While Recording: \(UserDefaults.standard.bool(forKey: "isPauseMediaEnabled"))
+            Also Pause the Browser: \(UserDefaults.standard.bool(forKey: PlaybackController.pauseBrowserMediaKey))
             Mute Audio While Recording: \(UserDefaults.standard.bool(forKey: "isSystemMuteEnabled"))
             Lower Audio While Recording: \(UserDefaults.standard.bool(forKey: MediaController.loweringKey)) (\(UserDefaults.standard.double(forKey: MediaController.loweringLevelKey)))
             Audio Resumption Delay: \(UserDefaults.standard.double(forKey: "audioResumptionDelay"))s

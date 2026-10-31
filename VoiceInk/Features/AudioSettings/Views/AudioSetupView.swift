@@ -62,6 +62,8 @@ struct AudioSetupView: View {
 
                     Toggle("Pause Media While Recording", isOn: $playbackController.isPauseMediaEnabled)
 
+                    BrowserMediaPausingSettingsView(playbackController: playbackController)
+
                     LabeledContent("Resume Delay") {
                         resumeDelayMenu
                             .disabled(!canEditResumeDelay)

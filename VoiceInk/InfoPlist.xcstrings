@@ -120,6 +120,36 @@
         }
       }
     },
+    "NSAudioCaptureUsageDescription" : {
+      "comment" : "Privacy - Audio Capture Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk hört den Audiopegel Ihres Browsers, ohne ihn aufzunehmen, um einen spielenden Tab während des Diktierens anzuhalten und fortzusetzen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "VoiceInk listens to your browser's audio level, without recording it, to pause and resume a playing tab while you dictate."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk écoute le niveau audio de votre navigateur, sans l'enregistrer, pour mettre en pause puis reprendre un onglet en lecture pendant que vous dictez."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk 会监听浏览器的音频电平（不会录制），以便在您听写时暂停并恢复正在播放的标签页。"
+          }
+        }
+      }
+    },
     "NSHumanReadableCopyright" : {
       "comment" : "Copyright (human-readable)",
       "extractionState" : "extracted_with_value",

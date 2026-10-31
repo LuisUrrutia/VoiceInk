@@ -105,6 +105,7 @@ struct GeneralBackup: Codable {
     var pinPasteTargetToRecordStart: Bool? = nil
     var remoteClipboardPushCommand: String? = nil
     var avoidsBluetoothDefaultMicrophone: Bool? = nil
+    var isPauseBrowserMediaEnabled: Bool? = nil
     /// Keyed by `CustomSoundManager.SoundType`; a missing type keeps its current sound.
     var feedbackSounds: [String: CustomSoundManager.SoundBackup]? = nil
     let isAutoLearnDictionaryEnabled: Bool?
