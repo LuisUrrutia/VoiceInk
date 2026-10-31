@@ -77,6 +77,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     /// Called with meetings found interrupted, so transcription can finish them.
     var onInterrupted: (([MeetingManifest]) -> Void)?
     private var maintenanceTask: Task<Void, Never>?
+    /// The meeting a start is creating; its files are open, so recovery must leave them alone.
+    private var startingMeetingID: UUID?
     private var maintenanceCancellable: AnyCancellable?
 
     private var session: Session?
@@ -193,6 +195,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
 
         let store = dependencies.store
         var manifest = MeetingManifest(title: title ?? Self.defaultTitle(for: Date()), provider: provider)
+        startingMeetingID = manifest.id
+        defer { startingMeetingID = nil }
         let directory = try store.createDirectory(for: manifest.id)
         let startNanoseconds = dependencies.now()
         let systemAudio = dependencies.makeSystemAudio()
@@ -309,7 +313,15 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
                 self.apply(session.systemAudio.snapshot(), to: .system, in: &session.manifest)
                 self.apply(session.microphone.snapshot(), to: .microphone, in: &session.manifest)
                 self.session?.manifest = session.manifest
-                try? self.dependencies.store.save(session.manifest)
+                // A crash skips Stop, so the saved copy also excludes the dictation still in progress.
+                var saved = session.manifest
+                if let start = self.openDictationStart {
+                    saved.dictationIntervals.append(MeetingManifest.Interval(
+                        start: max(0, self.seconds(start, since: session.startNanoseconds)),
+                        end: self.seconds(self.dependencies.now(), since: session.startNanoseconds)
+                    ))
+                }
+                try? self.dependencies.store.save(saved)
             }
         }
     }
@@ -319,7 +331,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     @discardableResult
     func recoverInterruptedMeetings() -> [MeetingManifest] {
         let store = dependencies.store
-        for var manifest in store.loadAll() where manifest.status == .recording && manifest.id != activeMeeting?.id {
+        let ownIDs = Set([activeMeeting?.id, startingMeetingID].compactMap { $0 })
+        for var manifest in store.loadAll() where manifest.status == .recording && !ownIDs.contains(manifest.id) {
             var duration: TimeInterval = 0
             for kind in MeetingManifest.TrackKind.allCases {
                 let url = store.audioURL(for: manifest.id, track: kind)
@@ -338,11 +351,12 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
             logger.notice("Recovered interrupted meeting id=\(manifest.id.uuidString, privacy: .public)")
         }
         reloadMeetings()
-        return meetings.filter { $0.status == .interrupted }
+        return meetings.filter { $0.status == .interrupted && !ownIDs.contains($0.id) }
     }
 
     /// Moves audio past the retention period to the Trash; transcripts in the user's folder are never touched.
     func applyRetention() {
+        reloadMeetings()
         let expired = MeetingAudioRetention.current(in: dependencies.defaults).expired(meetings, now: dependencies.date())
         for manifest in expired { delete(manifest) }
         if !expired.isEmpty { logger.notice("Moved expired meeting audio to the Trash count=\(expired.count, privacy: .public)") }
