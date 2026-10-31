@@ -127,6 +127,11 @@ enum ShortcutAction: Hashable, Sendable {
         .quickAddToDictionary,
     ]
 
+    /// Global utility actions whose feature is on; a disabled Labs feature keeps its stored binding unregistered.
+    static func activeGlobalUtilityActions(defaults: UserDefaults = .standard) -> [Self] {
+        globalUtilityActions.filter { $0 != .toggleMeeting || Labs.isEnabled(.meetings, in: defaults) }
+    }
+
     /// Stored actions outside modes, including those added after the KeyboardShortcuts migration.
     static let storedGlobalActions: [Self] = legacyKeyboardShortcutActions + [.rawRecording, .toggleMeeting]
 

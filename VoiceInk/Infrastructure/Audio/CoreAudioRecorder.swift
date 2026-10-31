@@ -116,6 +116,20 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         }
     }
 
+    private var _onCaptureProgress: ((_ writtenFrames: Int, _ capturedEndNanoseconds: UInt64) -> Void)?
+    var onCaptureProgress: ((_ writtenFrames: Int, _ capturedEndNanoseconds: UInt64) -> Void)? {
+        get {
+            audioChunkLock.lock()
+            defer { audioChunkLock.unlock() }
+            return _onCaptureProgress
+        }
+        set {
+            audioChunkLock.lock()
+            _onCaptureProgress = newValue
+            audioChunkLock.unlock()
+        }
+    }
+
     // MARK: - Initialization
 
     init() {
@@ -1165,6 +1179,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             try audioWriter.append(
                 samples, frameCount: frameCount, sampleRate: inputSampleRate, channelCount: inputChannels
             )
+            onCaptureProgress?(audioWriter.writtenFrames, endNanoseconds)
         } catch {
             recordProcessingFailure(error)
         }

@@ -19,7 +19,6 @@ final class MeetingMicrophoneCapture {
 
     private struct Progress {
         var result = MeetingTrackCaptureResult()
-        var frames = 0
         var meetingStartNanoseconds: UInt64 = 0
     }
 
@@ -39,9 +38,9 @@ final class MeetingMicrophoneCapture {
         }
         progress.withLock { $0 = Progress(meetingStartNanoseconds: meetingStartNanoseconds) }
         let hardware = makeHardware()
-        hardware.onAudioChunk = { [progress, weak hardware] data in
-            let capturedThrough = hardware?.capturedThroughNanoseconds ?? DispatchTime.now().uptimeNanoseconds
-            Self.record(data, capturedThrough: capturedThrough, into: progress)
+        hardware.onAudioChunk = { [progress] data in Self.recordLevel(of: data, into: progress) }
+        hardware.onCaptureProgress = { [progress] writtenFrames, capturedEnd in
+            Self.record(writtenFrames: writtenFrames, capturedEnd: capturedEnd, into: progress)
         }
         let channels = deviceManager.selectedInputChannels(for: deviceID)
         try await perform { try hardware.startRecording(toOutputFile: url, deviceID: deviceID, selectedInputChannels: channels) }
@@ -59,6 +58,7 @@ final class MeetingMicrophoneCapture {
             queue.async {
                 hardware.stopRecording()
                 hardware.onAudioChunk = nil
+                hardware.onCaptureProgress = nil
                 continuation.resume(returning: hardware.recordingError)
                 hardware.teardown()
             }
@@ -77,6 +77,7 @@ final class MeetingMicrophoneCapture {
             queue.sync {
                 hardware.stopRecording()
                 hardware.onAudioChunk = nil
+                hardware.onCaptureProgress = nil
             }
         }
         return progress.withLock { $0.result }
@@ -121,19 +122,18 @@ final class MeetingMicrophoneCapture {
     }
 
     /// Runs on the recorder's processing queue with the exact PCM16 written to the WAV.
+    nonisolated private static func recordLevel(of data: Data, into progress: OSAllocatedUnfairLock<Progress>) {
+        let heard = data.withUnsafeBytes { bytes in bytes.bindMemory(to: Int16.self).contains { $0 != 0 } }
+        if heard { progress.withLock { $0.result.heardSignal = true } }
+    }
+
+    /// The written frame count ends where that input block's capture ended, whatever the converter's chunking.
     nonisolated private static func record(
-        _ data: Data, capturedThrough: UInt64, into progress: OSAllocatedUnfairLock<Progress>
+        writtenFrames: Int, capturedEnd: UInt64, into progress: OSAllocatedUnfairLock<Progress>
     ) {
-        let frameCount = data.count / MemoryLayout<Int16>.size
-        let heard = data.withUnsafeBytes { bytes in
-            bytes.bindMemory(to: Int16.self).contains { $0 != 0 }
-        }
         progress.withLock { progress in
-            progress.frames += frameCount
-            let end = Double(Int64(bitPattern: capturedThrough &- progress.meetingStartNanoseconds)) / 1_000_000_000
-            let start = end - Double(frameCount) / MeetingTrackTimeline.sampleRate
-            progress.result.timeline.record(frame: progress.frames - frameCount, at: start)
-            if heard { progress.result.heardSignal = true }
+            let end = Double(Int64(bitPattern: capturedEnd &- progress.meetingStartNanoseconds)) / 1_000_000_000
+            progress.result.timeline.record(frame: writtenFrames, at: end)
         }
     }
 }

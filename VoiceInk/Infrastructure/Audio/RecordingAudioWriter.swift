@@ -11,6 +11,7 @@ final class RecordingAudioWriter {
     private var writtenFrameCount = 0
 
     var writtenDuration: TimeInterval { Double(writtenFrameCount) / Self.outputSampleRate }
+    var writtenFrames: Int { writtenFrameCount }
     private static let outputSampleRate: Double = 16_000
 
     init(url: URL, sampleRate: Double, channelCount: UInt32) throws {

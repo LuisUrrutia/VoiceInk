@@ -65,7 +65,11 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     var onRecorded: ((MeetingManifest) -> Void)?
 
     private var session: Session?
+    /// Dictation capture is tracked whether or not a meeting records, so one that overlaps a start is not lost.
     private var openDictationStart: UInt64?
+    private var recentDictations: [(start: UInt64, end: UInt64)] = []
+    /// Changes when the Labs switch turns off, invalidating a start that is still awaiting.
+    private var startGeneration = 0
     private var labsCancellable: AnyCancellable?
 
     private struct Session {
@@ -96,17 +100,26 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     var suppressesDictationOutputEffects: Bool { isRecording || isStarting }
 
     func dictationCaptureBegan() {
-        guard session != nil else { return }
         openDictationStart = dependencies.now()
     }
 
     func dictationCaptureEnded() {
-        guard let start = openDictationStart, var session else { return }
+        guard let start = openDictationStart else { return }
         openDictationStart = nil
-        session.manifest.dictationIntervals.append(
-            MeetingManifest.Interval(start: seconds(start, since: session.startNanoseconds),
-                                     end: seconds(dependencies.now(), since: session.startNanoseconds))
+        let end = dependencies.now()
+        recentDictations.append((start, end))
+        if recentDictations.count > 8 { recentDictations.removeFirst() }
+        appendDictation(from: start, to: end)
+    }
+
+    /// Records the part of a dictation that falls inside the current meeting.
+    private func appendDictation(from start: UInt64, to end: UInt64) {
+        guard var session, end > session.startNanoseconds else { return }
+        let interval = MeetingManifest.Interval(
+            start: max(0, seconds(start, since: session.startNanoseconds)), end: seconds(end, since: session.startNanoseconds)
         )
+        guard !session.manifest.dictationIntervals.contains(interval) else { return }
+        session.manifest.dictationIntervals.append(interval)
         self.session = session
     }
 
@@ -130,8 +143,9 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     private func labsSwitchChanged(_ isEnabled: Bool) async {
         if isEnabled {
             await requestSystemAudioAccess()
-        } else if isRecording {
-            _ = await stop()
+        } else {
+            startGeneration += 1
+            if isRecording { _ = await stop() }
         }
     }
 
@@ -155,7 +169,9 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         guard dependencies.isMicrophoneAuthorized() else { throw MeetingRecorderError.microphoneNotAuthorized }
         isStarting = true
         defer { isStarting = false }
+        let generation = startGeneration
         guard await requestSystemAudioAccess().allowsCapture else { throw MeetingRecorderError.systemAudioDenied }
+        try checkStillWanted(generation)
 
         let store = dependencies.store
         var manifest = MeetingManifest(title: title ?? Self.defaultTitle(for: Date()), provider: provider)
@@ -168,14 +184,24 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
             try systemAudio.start(writingTo: store.audioURL(for: manifest.id, track: .system), meetingStartNanoseconds: startNanoseconds)
             do {
                 try await microphone.start(writingTo: store.audioURL(for: manifest.id, track: .microphone), meetingStartNanoseconds: startNanoseconds)
+                do {
+                    try checkStillWanted(generation)
+                } catch {
+                    _ = await microphone.stop()
+                    throw error
+                }
             } catch {
                 _ = systemAudio.stop()
                 throw error
             }
         } catch {
-            manifest.status = .failed
-            manifest.failure = error.localizedDescription
-            try? store.save(manifest)
+            if error as? MeetingRecorderError == .featureDisabled {
+                try? store.delete(id: manifest.id)
+            } else {
+                manifest.status = .failed
+                manifest.failure = error.localizedDescription
+                try? store.save(manifest)
+            }
             reloadMeetings()
             logger.error("Meeting failed to start: \(error, privacy: .public)")
             throw error
@@ -189,9 +215,17 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         )
         session.stallTask = superviseSystemAudio(systemAudio, startNanoseconds: startNanoseconds)
         self.session = session
+        for dictation in recentDictations { appendDictation(from: dictation.start, to: dictation.end) }
         activeMeeting = manifest
         recordingStartedAt = Date()
         reloadMeetings()
+    }
+
+    /// A start that awaited consent or the microphone gives up if Meetings was turned off meanwhile.
+    private func checkStillWanted(_ generation: Int) throws {
+        guard generation == startGeneration, Labs.isEnabled(.meetings, in: dependencies.defaults) else {
+            throw MeetingRecorderError.featureDisabled
+        }
     }
 
     /// Closes both tracks and the manifest; returns the recorded meeting.
@@ -200,10 +234,10 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         isStopping = true
         defer { isStopping = false }
         session.stallTask?.cancel()
-        if openDictationStart != nil { dictationCaptureEnded() }
+        let endNanoseconds = dependencies.now()
+        if let start = openDictationStart { appendDictation(from: start, to: endNanoseconds) }
         if let updated = self.session { session.manifest = updated.manifest }
 
-        let endNanoseconds = dependencies.now()
         let system = session.systemAudio.stop()
         let microphone = await session.microphone.stop()
         session.sleepHold.release()
@@ -219,7 +253,6 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
             logger.error("Could not save meeting manifest: \(error, privacy: .public)")
         }
         self.session = nil
-        openDictationStart = nil
         activeMeeting = nil
         recordingStartedAt = nil
         reloadMeetings()
@@ -232,7 +265,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     func closeForTermination() {
         guard let session else { return }
         session.stallTask?.cancel()
-        if openDictationStart != nil { dictationCaptureEnded() }
+        if let start = openDictationStart { appendDictation(from: start, to: dependencies.now()) }
         var manifest = self.session?.manifest ?? session.manifest
         manifest.duration = seconds(dependencies.now(), since: session.startNanoseconds)
         apply(session.systemAudio.stop(), to: .system, in: &manifest)
