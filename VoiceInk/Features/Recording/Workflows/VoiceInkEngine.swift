@@ -24,6 +24,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published var partialTranscript: String = ""
     @Published private(set) var recordingError: String?
     @Published private(set) var recordingNotice: String?
+    /// Stops still running their pipeline; Cancel makes the state idle before a canceled pipeline saves History.
+    @Published private(set) var unfinishedPipelineCount = 0
     private var recordingNoticeTask: Task<Void, Never>?
     let captureReadiness: CaptureReadinessController
     private var readinessSubscription: AnyCancellable?
@@ -181,6 +183,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             guard let finalizationID = finalization.beginCapture() else { return }
             defer { finalization.finishCapture(finalizationID) }
             guard let capture else { return }
+            pipelineDidBegin()
+            defer { pipelineDidEnd() }
             // Before the handoff clears the capture, so a held output keeps waiting through the hardware stop.
             isStoppingCaptureHardware = true
             let job = beginJob(stopping: capture, sendAfterPaste: sendAfterPaste)
@@ -1306,6 +1310,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
         timing?.mark(.wavClosed, outcome: recorder.recordingError == nil ? .completed : .failed)
     }
+
+    /// True while a recording, stop pipeline, finalization or microphone test could still lose audio or History.
+    var hasUnfinishedDictationWork: Bool {
+        AppRelauncher.blocksRelaunch(
+            recordingState: recordingState, unfinishedPipelines: unfinishedPipelineCount,
+            finalizationRunning: finalization.isRunning, microphoneTestBusy: microphoneDiagnostic.isBusy
+        )
+    }
+
+    func pipelineDidBegin() { unfinishedPipelineCount += 1 }
+    func pipelineDidEnd() { unfinishedPipelineCount -= 1 }
 
     /// Capture and finalization that hold no model lease still keep the idle timer from unloading.
     var isUsingTranscriptionModels: Bool {

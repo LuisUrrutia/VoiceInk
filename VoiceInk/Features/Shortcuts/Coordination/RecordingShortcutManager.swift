@@ -216,11 +216,9 @@ class RecordingShortcutManager: ObservableObject {
 
         refreshShortcutMonitoring(reason: "startup")
         // The monitor refreshes on activation and, while setup is visible, live; a grant starts the taps without waiting for the health check.
-        accessibilitySubscription = permissionMonitor.$snapshot.map(\.accessibility).removeDuplicates().dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.refreshShortcutMonitoring(reason: "accessibility-change")
-            }
+        accessibilitySubscription = permissionMonitor.observeAccessibilityChanges { [weak self] _ in
+            self?.refreshShortcutMonitoring(reason: "accessibility-change")
+        }
         captureAvailabilitySubscription = NotificationCenter.default
             .publisher(for: ShortcutMonitor.captureAvailabilityDidChange)
             .receive(on: DispatchQueue.main)

@@ -186,6 +186,43 @@ final class ModifierShortcutHardeningTests: XCTestCase {
         XCTAssertTrue(harness.monitor.diagnosticSummary.contains("physicalTap=none physicalTapIssue=awaiting-session-tap"))
     }
 
+    func testRefreshAfterLiveAccessibilityGrantStartsTheSessionTapThenTheHIDTap() async throws {
+        let accessibility = OSAllocatedUnfairLock(initialState: false)
+        let sessionTap = FakeTap()
+        let physicalTap = FakeTap()
+        let monitor = ShortcutMonitor(
+            makeEventTap: { _, handler in
+                guard accessibility.withLock({ $0 }) else { throw ShortcutEventTapError.creationFailed }
+                sessionTap.handler = handler
+                return sessionTap
+            },
+            allowsInput: { true }, allowsDispatch: { true }, isSecureEventInputEnabled: { false },
+            makePhysicalKeyTap: { handler in
+                physicalTap.handler = handler
+                return physicalTap
+            },
+            postChordBreaker: { _ in true }
+        )
+        defer { monitor.stop() }
+        let start = {
+            _ = monitor.start(
+                shortcuts: [.primaryRecording: Self.option], interruptibleActions: [.primaryRecording],
+                onShortcutDown: { _, _ in }, onShortcutUp: { _, _ in }
+            )
+        }
+        start()
+        XCTAssertFalse(monitor.isMonitoring(.primaryRecording))
+        XCTAssertNil(physicalTap.handler)
+
+        // The Accessibility subscription runs the same refresh as a configuration change.
+        accessibility.withLock { $0 = true }
+        start()
+
+        XCTAssertTrue(monitor.isMonitoring(.primaryRecording))
+        XCTAssertNotNil(sessionTap.handler)
+        XCTAssertNotNil(physicalTap.handler)
+    }
+
     // MARK: Chord breaker
 
     func testHeldPushToTalkPressBreaksTheChordOnceAfterTheHoldThreshold() async throws {

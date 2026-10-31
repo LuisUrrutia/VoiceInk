@@ -101,7 +101,6 @@ struct DashboardContent: View {
             permissions.refresh()
             updaterViewModel.checkForUpdatesIfDue()
         }
-        .livePermissionRefresh(isActive: !isAccessibilityEnabled)
         .onReceive(NotificationCenter.default.publisher(for: .sessionMetricsDidChange)) { _ in
             DashboardStatsCache.shared.markStale()
 
@@ -151,7 +150,7 @@ struct DashboardContent: View {
             }
 
             if !isAccessibilityEnabled {
-                accessibilityReminder
+                accessibilityReminder.livePermissionRefresh()
             }
 
             if !setupSteps.isEmpty {

@@ -57,6 +57,54 @@ final class RecordingFinalizationTests: XCTestCase {
         XCTAssertNil(engine.recordedFile)
     }
 
+    func testUnfinishedStopPipelineBlocksRelaunchAfterThePresentationStateIsIdle() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("held-pipeline.wav")
+        let hardware = try HeldRecordingHardware(url: url)
+        defer { hardware.releaseStop() }
+        let engine = try makeEngine(hardware: hardware, directory: directory)
+        let modeEntered = expectation(description: "mode resolution entered")
+        let pendingCreated = expectation(forNotification: .transcriptionCreated, object: nil) { _ in true }
+        var modeCompletion: CheckedContinuation<Void, Never>?
+        let preparation = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
+        preparation.ownModeResolution(Task {
+            await withCheckedContinuation { continuation in
+                modeCompletion = continuation
+                modeEntered.fulfill()
+            }
+            return nil
+        })
+        preparation.start(
+            resolveConfiguration: { _ in nil }, retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
+        )
+        engine.activeRecordingPreparation = preparation
+        engine.recordedFile = url
+        engine.recordingState = .recording
+        await fulfillment(of: [modeEntered], timeout: 3)
+        XCTAssertFalse(engine.relauncher.canRelaunch)
+
+        let stop = Task { await engine.toggleRecord() }
+        await fulfillment(of: [hardware.stopEntered], timeout: 3)
+        hardware.releaseStop()
+        await fulfillment(of: [pendingCreated], timeout: 3)
+        // Cancel publishes idle before the canceled pipeline saves its History entry.
+        engine.recordingState = .idle
+
+        XCTAssertEqual(engine.unfinishedPipelineCount, 1)
+        XCTAssertTrue(engine.hasUnfinishedDictationWork)
+        XCTAssertFalse(engine.relauncher.canRelaunch)
+
+        let cancel = Task { await engine.cancelRecording() }
+        modeCompletion?.resume()
+        await cancel.value
+        await stop.value
+
+        XCTAssertEqual(try history(in: engine).first?.transcriptionStatus, TranscriptionStatus.canceled.rawValue)
+        XCTAssertEqual(engine.unfinishedPipelineCount, 0)
+        XCTAssertFalse(engine.hasUnfinishedDictationWork)
+    }
+
     func testCaptureFailureIsRetainedAfterAwaitedStopAndDoesNotEnterTranscription() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

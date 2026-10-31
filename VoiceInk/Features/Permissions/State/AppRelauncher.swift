@@ -25,8 +25,10 @@ struct AppRelauncher {
     /// A recording, its pipeline or a microphone test must finish first so its audio and History are kept.
     var canRelaunch: Bool { !gate.isPending && !isBusy() }
 
-    static func blocksRelaunch(recordingState: RecordingState, microphoneTestBusy: Bool) -> Bool {
-        recordingState != .idle || microphoneTestBusy
+    static func blocksRelaunch(
+        recordingState: RecordingState, unfinishedPipelines: Int, finalizationRunning: Bool, microphoneTestBusy: Bool
+    ) -> Bool {
+        recordingState != .idle || unfinishedPipelines > 0 || finalizationRunning || microphoneTestBusy
     }
 
     @discardableResult
@@ -63,11 +65,6 @@ final class AppRelaunchGate {
 
 extension VoiceInkEngine {
     var relauncher: AppRelauncher {
-        AppRelauncher(isBusy: { [weak self] in
-            guard let self else { return true }
-            return AppRelauncher.blocksRelaunch(
-                recordingState: self.recordingState, microphoneTestBusy: self.microphoneDiagnostic.isBusy
-            )
-        })
+        AppRelauncher(isBusy: { [weak self] in self?.hasUnfinishedDictationWork ?? true })
     }
 }

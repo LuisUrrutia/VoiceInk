@@ -75,6 +75,13 @@ final class PermissionMonitor: ObservableObject {
         if current != snapshot { snapshot = current }
     }
 
+    /// Delivers each Accessibility change on the main queue, after `snapshot` holds the new value.
+    func observeAccessibilityChanges(_ handler: @escaping @MainActor (Bool) -> Void) -> AnyCancellable {
+        $snapshot.map(\.accessibility).removeDuplicates().dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { granted in MainActor.assumeIsolated { handler(granted) } }
+    }
+
     /// Owners are held weakly; a released owner stops its refresh at the next tick.
     func setLiveRefresh(_ isActive: Bool, for owner: AnyObject) {
         let id = ObjectIdentifier(owner)

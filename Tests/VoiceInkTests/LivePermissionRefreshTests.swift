@@ -1,4 +1,5 @@
 import Combine
+import SwiftUI
 import XCTest
 
 @testable import VoiceInk
@@ -122,6 +123,54 @@ final class LivePermissionRefreshTests: XCTestCase {
         XCTAssertEqual(published.map(\.accessibility), [true])
         subscription.cancel()
         monitor.setLiveRefresh(false, for: self)
+    }
+
+    func testAccessibilityObserversRunAfterTheSnapshotChangesAndOnlyOnChange() async {
+        let monitor = makeMonitor()
+        var delivered: [(granted: Bool, snapshot: Bool)] = []
+        let changed = expectation(description: "accessibility change delivered")
+        let subscription = monitor.observeAccessibilityChanges { granted in
+            delivered.append((granted, monitor.snapshot.accessibility))
+            changed.fulfill()
+        }
+
+        permissions.snapshot.microphone = .granted
+        monitor.refresh()
+        permissions.snapshot.accessibility = true
+        monitor.refresh()
+        monitor.refresh()
+        await fulfillment(of: [changed], timeout: 3)
+
+        XCTAssertEqual(delivered.map(\.granted), [true])
+        XCTAssertEqual(delivered.map(\.snapshot), [true], "Refreshes must read the granted value from the monitor")
+        subscription.cancel()
+    }
+
+    func testModifierPollsOnlyWhileItsBranchIsShown() throws {
+        let monitor = makeMonitor()
+        let model = BranchModel()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [], backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: BranchView(model: model, monitor: monitor))
+        defer { window.contentView = nil }
+
+        func settle() {
+            window.contentView?.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        settle()
+        XCTAssertTrue(monitor.isLiveRefreshing, "The reminder is visible")
+
+        model.showsReminder = false
+        settle()
+        XCTAssertFalse(monitor.isLiveRefreshing, "Insights replaced the reminder")
+
+        model.showsReminder = true
+        settle()
+        XCTAssertTrue(monitor.isLiveRefreshing)
+
+        window.contentView = NSHostingView(rootView: EmptyView())
+        settle()
+        XCTAssertFalse(monitor.isLiveRefreshing, "Removing the hosting view releases the owner")
     }
 
     func testOnboardingRowsFlipWhenMacOSGrantsDuringPolling() {
@@ -255,12 +304,22 @@ final class LivePermissionRefreshTests: XCTestCase {
         XCTAssertTrue(relauncher.canRelaunch)
     }
 
-    func testEveryActiveRecordingPhaseAndMicrophoneTestBlocksRelaunch() {
-        for state in [RecordingState.starting, .recording, .transcribing, .enhancing, .busy] {
-            XCTAssertTrue(AppRelauncher.blocksRelaunch(recordingState: state, microphoneTestBusy: false), "\(state)")
+    func testEveryActiveRecordingPhasePipelineFinalizationAndMicrophoneTestBlocksRelaunch() {
+        func blocks(
+            _ state: RecordingState = .idle, pipelines: Int = 0, finalization: Bool = false, test: Bool = false
+        ) -> Bool {
+            AppRelauncher.blocksRelaunch(
+                recordingState: state, unfinishedPipelines: pipelines, finalizationRunning: finalization,
+                microphoneTestBusy: test
+            )
         }
-        XCTAssertTrue(AppRelauncher.blocksRelaunch(recordingState: .idle, microphoneTestBusy: true))
-        XCTAssertFalse(AppRelauncher.blocksRelaunch(recordingState: .idle, microphoneTestBusy: false))
+        for state in [RecordingState.starting, .recording, .transcribing, .enhancing, .busy] {
+            XCTAssertTrue(blocks(state), "\(state)")
+        }
+        XCTAssertTrue(blocks(pipelines: 1), "Cancel sets idle before a canceled pipeline saves History")
+        XCTAssertTrue(blocks(finalization: true))
+        XCTAssertTrue(blocks(test: true))
+        XCTAssertFalse(blocks())
     }
 
     func testHelperWaitsForTheProcessToExitBeforeReopening() throws {
@@ -294,6 +353,23 @@ final class LivePermissionRefreshTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
         return defaults
+    }
+}
+
+private final class BranchModel: ObservableObject {
+    @Published var showsReminder = true
+}
+
+private struct BranchView: View {
+    @ObservedObject var model: BranchModel
+    let monitor: PermissionMonitor
+
+    var body: some View {
+        if model.showsReminder {
+            Text("Allow Accessibility").livePermissionRefresh(monitor: monitor)
+        } else {
+            Text("Insights")
+        }
     }
 }
 

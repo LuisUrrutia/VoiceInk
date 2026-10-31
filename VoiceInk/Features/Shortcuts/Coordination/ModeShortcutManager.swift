@@ -27,11 +27,9 @@ class ModeShortcutManager {
         self.preRollPress = preRollPress
 
         refreshModeShortcuts(reason: "startup")
-        accessibilitySubscription = (permissionMonitor ?? .shared).$snapshot.map(\.accessibility).removeDuplicates().dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.refreshModeShortcuts(reason: "accessibility-change")
-            }
+        accessibilitySubscription = (permissionMonitor ?? .shared).observeAccessibilityChanges { [weak self] _ in
+            self?.refreshModeShortcuts(reason: "accessibility-change")
+        }
 
         shortcutChangeObserver = NotificationCenter.default.addObserver(
             forName: ShortcutStore.shortcutDidChange,
