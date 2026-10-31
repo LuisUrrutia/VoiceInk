@@ -96,6 +96,7 @@ If you encounter any issues or have questions, please:
 
 ### Essential Dependencies
 - [Phosphor Icons](https://phosphoricons.com) - Custom symbols for navigation and common actions (MIT; bundled license in `VoiceInk/Resources/Licenses/`)
+- [Hex](https://github.com/anomalyco/hex) - Default "Hex Classic" recording start sound (MIT; bundled license and provenance in `VoiceInk/Resources/Licenses/`)
 - [Sparkle](https://github.com/sparkle-project/Sparkle) - Keeping VoiceInk up to date
 - [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) - User-customizable keyboard shortcuts
 - [LaunchAtLogin](https://github.com/sindresorhus/LaunchAtLogin) - Launch at login functionality
