@@ -52,7 +52,7 @@ actor WhisperContext {
     func fullTranscribe(samples: [Float]) -> Bool {
         guard let context = context else { return false }
 
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        var params = decodingParameters()
 
         let selectedLanguage = language ?? "auto"
         if selectedLanguage != "auto" {
@@ -74,17 +74,6 @@ actor WhisperContext {
             promptCString = nil
             params.initial_prompt = nil
         }
-
-        params.print_realtime = true
-        params.print_progress = false
-        params.print_timestamps = true
-        params.print_special = false
-        params.translate = false
-        params.n_threads = threadCount
-        params.offset_ms = 0
-        params.no_context = true
-        params.single_segment = false
-        params.temperature = 0.2
 
         whisper_reset_timings(context)
 
@@ -118,6 +107,22 @@ actor WhisperContext {
         promptCString = nil
 
         return success
+    }
+
+    /// Request-independent whisper_full settings; language, prompt and VAD are added per request.
+    func decodingParameters() -> whisper_full_params {
+        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        params.print_realtime = true
+        params.print_progress = false
+        params.print_timestamps = true
+        params.print_special = false
+        params.translate = false
+        params.n_threads = threadCountOverride ?? Self.defaultThreadCount()
+        params.offset_ms = 0
+        params.no_context = true
+        params.single_segment = false
+        params.temperature = 0.2
+        return params
     }
 
     func segmentTexts() -> [String] {
@@ -177,9 +182,6 @@ actor WhisperContext {
     func setLanguage(_ language: String?) {
         self.language = language
     }
-
-    /// The `n_threads` that `fullTranscribe` passes to whisper.cpp.
-    var threadCount: Int32 { threadCountOverride ?? Self.defaultThreadCount() }
 
     func setThreadCount(_ count: Int32?) {
         threadCountOverride = count

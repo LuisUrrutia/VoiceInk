@@ -36,11 +36,11 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
 
     func testThreadCountOverrideReachesTheNativeParameterAndResets() async {
         let context = WhisperContext()
-        let defaultCount = await context.threadCount
+        let defaultCount = await context.nativeThreadCount
         await context.setThreadCount(1)
-        let overridden = await context.threadCount
+        let overridden = await context.nativeThreadCount
         await context.setThreadCount(nil)
-        let reset = await context.threadCount
+        let reset = await context.nativeThreadCount
 
         XCTAssertEqual(defaultCount, WhisperContext.defaultThreadCount())
         XCTAssertEqual(overridden, 1)
@@ -75,9 +75,10 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
             guard end <= audio.count else { throw CocoaError(.fileReadTooLarge) }
             return Clip(seconds: $0.seconds, offset: $0.offset, samples: Array(audio[start..<end]))
         }
-        guard runs > 0, !configurations.isEmpty, !clips.isEmpty, !loads.isEmpty,
+        let modelPathList = modelPaths.split(separator: ",").map(String.init)
+        guard !modelPathList.isEmpty, runs > 0, !configurations.isEmpty, !clips.isEmpty, !loads.isEmpty,
               Set(clips.map(\.label)).count == clips.count else {
-            return XCTFail("Need positive runs, distinct clips and at least one thread count, QoS class and load")
+            return XCTFail("Need a model, positive runs, distinct clips and at least one thread count, QoS class and load")
         }
 
         let previousVAD = UserDefaults.standard.object(forKey: "IsVADEnabled")
@@ -92,7 +93,7 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
         // unix_s matches rows to samples of other system load.
         var rows = ["model,load,clip_s,clip_offset_s,threads,qos,run,wall_ms,transcript_matches,unix_s"]
 
-        for modelPath in modelPaths.split(separator: ",").map(String.init) {
+        for modelPath in modelPathList {
             let modelURL = URL(fileURLWithPath: modelPath)
             let name = modelURL.deletingPathExtension().lastPathComponent
             let model = try XCTUnwrap(
@@ -160,7 +161,7 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
             await context.releaseResources()
         }
 
-        XCTAssertEqual(rows.count - 1, modelPaths.split(separator: ",").count * loads.count * runs * configurations.count * clips.count)
+        XCTAssertEqual(rows.count - 1, modelPathList.count * loads.count * runs * configurations.count * clips.count)
         try (report + ["", "# raw"] + rows).joined(separator: "\n").appending("\n")
             .write(toFile: reportPath, atomically: true, encoding: .utf8)
     }
@@ -215,6 +216,8 @@ private final class QoSQueueExecutor: TaskExecutor, @unchecked Sendable {
 }
 
 private extension WhisperContext {
+    var nativeThreadCount: Int32 { decodingParameters().n_threads }
+
     /// Runs the production `transcribe`, then restores the default thread count.
     func benchmarkTranscribe(
         samples: [Float], request: TranscriptionRequestContext, threads: Int32?, qos: DispatchQoS.QoSClass
@@ -224,8 +227,8 @@ private extension WhisperContext {
         }
         setThreadCount(threads)
         defer { setThreadCount(nil) }
-        guard threadCount == threads ?? Self.defaultThreadCount() else {
-            throw CocoaError(.featureUnsupported, userInfo: [NSDebugDescriptionErrorKey: "n_threads is \(threadCount)"])
+        guard nativeThreadCount == threads ?? Self.defaultThreadCount() else {
+            throw CocoaError(.featureUnsupported, userInfo: [NSDebugDescriptionErrorKey: "n_threads is \(nativeThreadCount)"])
         }
         let start = ContinuousClock.now
         let text = try transcribe(samples: samples, request: request)
