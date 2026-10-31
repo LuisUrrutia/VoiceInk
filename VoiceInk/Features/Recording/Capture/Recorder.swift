@@ -295,9 +295,9 @@ class Recorder: NSObject, ObservableObject {
         sessionID: UUID?, afterOutputUnmuted: (@MainActor () -> Void)?
     ) {
         audioRestorationTask?.cancel()
-        audioRestorationTask = Task { [mediaController, playbackController] in
+        audioRestorationTask = Task { [mediaController, outputEffects] in
             if let sessionID {
-                await mediaController.restoreSystemAudio(sessionID: sessionID)
+                await outputEffects.restoreOutput(sessionID)
             }
             // A muted or lowered output must be audible before the release tone plays.
             if let afterOutputUnmuted {
@@ -305,7 +305,7 @@ class Recorder: NSObject, ObservableObject {
                 if !Task.isCancelled { afterOutputUnmuted() }
             }
             if let sessionID {
-                await playbackController.resumeMedia(sessionID: sessionID)
+                await outputEffects.resumeMedia(sessionID)
             }
         }
     }
@@ -547,6 +547,9 @@ class Recorder: NSObject, ObservableObject {
 struct RecordingOutputEffects {
     var pauseMedia: @MainActor (UUID) async -> Void
     var quietOutput: @MainActor (UUID) -> Void
+    /// Undoes only what that session applied, after the Resume Delay.
+    var restoreOutput: @MainActor (UUID) async -> Void = { await MediaController.shared.restoreSystemAudio(sessionID: $0) }
+    var resumeMedia: @MainActor (UUID) async -> Void = { await PlaybackController.shared.resumeMedia(sessionID: $0) }
 
     static let system = RecordingOutputEffects(
         pauseMedia: { await PlaybackController.shared.pauseMedia(sessionID: $0) },

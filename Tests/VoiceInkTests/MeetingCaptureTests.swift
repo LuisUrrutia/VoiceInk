@@ -312,6 +312,36 @@ import os
         XCTAssertEqual(quiets, 0)
     }
 
+    func testAMeetingStartingAfterADictationQuietedOutputRestoresIt() async throws {
+        let directory = root.appendingPathComponent("restore", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fixture = makeRecorder()
+        let coordinator = RecordingCoordinatorSpy()
+        coordinator.suppresses = false
+        var quieted: [UUID] = []
+        var restored: [UUID] = []
+        var resumed: [UUID] = []
+        let recorder = Recorder(
+            hardware: FakeMeetingMicrophoneHardware(), deviceManager: MeetingAudioDevices(userDefaults: defaults),
+            defaults: defaults, isMicrophoneAuthorized: { true }, meetingCoordinator: coordinator,
+            outputEffects: RecordingOutputEffects(
+                pauseMedia: { _ in }, quietOutput: { quieted.append($0) },
+                restoreOutput: { restored.append($0) }, resumeMedia: { resumed.append($0) }
+            )
+        )
+        try await recorder.startRecording(toOutputFile: directory.appendingPathComponent("a.wav"))
+        try await waitUntil { quieted.count == 1 }
+
+        coordinator.suppresses = true
+        try await fixture.recorder.start()
+        try await waitUntil { resumed.count == 1 }
+
+        XCTAssertEqual(restored, quieted)
+        XCTAssertEqual(resumed, quieted)
+        await recorder.stopRecording()
+        _ = await fixture.recorder.stop()
+    }
+
     func testAVisibleRecorderPanelUpdatesTheMeetingReservationWhenTheSwitchChanges() async throws {
         let ui = RecorderUIManager()
         let panel = RecorderPanelShortcutManager(recorderUIManager: ui, defaults: defaults)
