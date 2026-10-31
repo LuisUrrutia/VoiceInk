@@ -224,6 +224,62 @@ final class HistoryAccessTests: XCTestCase {
         }
     }
 
+    func testStoppingRevokesAcceptedConnectionsAndPendingResults() async throws {
+        let socketURL = socketDirectory.appendingPathComponent("r.sock")
+        let server = HistoryAccessServer(socketURL: socketURL) { _ in
+            try? await Task.sleep(for: .milliseconds(400))
+            return Data("retained text".utf8)
+        }
+        try server.start()
+        let inFlight = try Self.openConnection(socketURL.path)
+        let partial = try Self.openConnection(socketURL.path)
+        Self.write(Data("{\"version\":1,\"command\":\"list\"}\n".utf8), to: inFlight)
+        Self.write(Data("{\"version\":1,".utf8), to: partial)
+        try await Task.sleep(for: .milliseconds(150))
+
+        server.stop()
+        Self.write(Data("\"command\":\"list\"}\n".utf8), to: partial)
+
+        let afterStop = await Self.readAll(partial)
+        let pending = await Self.readAll(inFlight)
+        XCTAssertEqual(afterStop, Data())
+        XCTAssertEqual(pending, Data())
+    }
+
+    func testIndeterminateProbeKeepsALiveSocketServing() async throws {
+        let socketURL = socketDirectory.appendingPathComponent("p.sock")
+        let live = HistoryAccessServer(socketURL: socketURL) { _ in Data("live".utf8) }
+        try live.start()
+        defer { live.stop() }
+
+        XCTAssertEqual(HistoryAccessServer.probeSocket(socketURL.path), .live)
+        XCTAssertThrowsError(
+            try HistoryAccessServer(socketURL: socketURL, probe: { _ in .indeterminate(EMFILE) }) { $0 }.start()
+        ) {
+            XCTAssertEqual($0 as? HistoryAccessServer.StartError, .system(operation: "probe", code: EMFILE))
+        }
+
+        let reply = try await exchange(socketURL.path, Data("{}\n".utf8))
+        XCTAssertEqual(reply, Data("live".utf8))
+    }
+
+    func testRequestsMustArriveBeforeTheDeadline() async throws {
+        let socketURL = socketDirectory.appendingPathComponent("d.sock")
+        let server = HistoryAccessServer(socketURL: socketURL, requestDeadline: 0.5) { _ in Data("answered".utf8) }
+        try server.start()
+        defer { server.stop() }
+        let slow = try Self.openConnection(socketURL.path)
+
+        for byte in Array("{\"version\":1}".utf8).prefix(4) {
+            Self.write(Data([byte]), to: slow)
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        Self.write(Data("\n".utf8), to: slow)
+
+        let reply = await Self.readAll(slow)
+        XCTAssertEqual(reply, Data())
+    }
+
     // MARK: - Opt-in
 
     func testAccessIsOffByDefaultAndFollowsTheMachineLocalPreference() throws {
@@ -278,6 +334,46 @@ final class HistoryAccessTests: XCTestCase {
 
     private func milliseconds(_ date: Date) -> Int64 {
         Int64((date.timeIntervalSince1970 * 1000).rounded())
+    }
+
+    private nonisolated static func openConnection(_ path: String) throws -> Int32 {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: Array(path.utf8)) }
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var enabled: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard connected == 0 else {
+            close(descriptor)
+            throw POSIXError(.ECONNREFUSED)
+        }
+        return descriptor
+    }
+
+    private nonisolated static func write(_ payload: Data, to descriptor: Int32) {
+        payload.withUnsafeBytes { _ = Darwin.send(descriptor, $0.baseAddress!, $0.count, 0) }
+    }
+
+    /// Reads until the server closes the connection, then closes it.
+    private nonisolated static func readAll(_ descriptor: Int32) async -> Data {
+        await Task.detached {
+            defer { close(descriptor) }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let count = recv(descriptor, &buffer, buffer.count, 0)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer[..<count])
+            }
+            return data
+        }.value
     }
 
     private nonisolated func exchange(_ path: String, _ payload: Data) async throws -> Data {

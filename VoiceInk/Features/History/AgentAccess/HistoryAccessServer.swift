@@ -13,22 +13,39 @@ final class HistoryAccessServer: @unchecked Sendable {
         case system(operation: String, code: Int32)
     }
 
+    enum SocketProbe: Equatable {
+        case live
+        case dead
+        /// The probe itself failed, so the socket's state is unknown and it must be kept.
+        case indeterminate(Int32)
+    }
+
     static let maximumConnections = 4
     static let ioTimeoutSeconds = 5
 
     let socketURL: URL
     private let handler: @Sendable (Data) async -> Data
+    private let probe: (String) -> SocketProbe
+    private let requestDeadline: TimeInterval
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "HistoryAccess")
     private let lock = NSLock()
     private var listener: DispatchSourceRead?
-    private var boundFile: (device: dev_t, inode: ino_t)?
-    private var activeConnections = 0
+    private var boundFile: (dev_t, ino_t)?
+    private var isServing = false
+    private var clients: Set<Int32> = []
     private let acceptQueue = DispatchQueue(label: "com.prakashjoshipax.voiceink.history-access.accept")
     private let connectionQueue = DispatchQueue(
         label: "com.prakashjoshipax.voiceink.history-access.connection", attributes: .concurrent)
 
-    init(socketURL: URL, handler: @escaping @Sendable (Data) async -> Data) {
+    init(
+        socketURL: URL,
+        requestDeadline: TimeInterval = TimeInterval(ioTimeoutSeconds),
+        probe: @escaping (String) -> SocketProbe = HistoryAccessServer.probeSocket,
+        handler: @escaping @Sendable (Data) async -> Data
+    ) {
         self.socketURL = socketURL
+        self.requestDeadline = requestDeadline
+        self.probe = probe
         self.handler = handler
     }
 
@@ -40,7 +57,7 @@ final class HistoryAccessServer: @unchecked Sendable {
             throw StartError.pathTooLong
         }
         try Self.verifyPrivateDirectory(socketURL.deletingLastPathComponent().path)
-        try Self.removeStaleSocket(path)
+        try removeStaleSocket(path)
 
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw Self.systemError("socket") }
@@ -70,23 +87,27 @@ final class HistoryAccessServer: @unchecked Sendable {
         lock.withLock {
             listener = source
             boundFile = (info.st_dev, info.st_ino)
+            isServing = true
         }
         ownsDescriptor = false
         source.resume()
     }
 
+    /// Revokes access at once: accepted connections are shut down and pending results are discarded.
     func stop() {
         let (source, file) = lock.withLock {
             defer {
                 listener = nil
                 boundFile = nil
+                isServing = false
             }
+            // Descriptors stay registered until `finish` closes them, so none can be reused here.
+            for client in clients { shutdown(client, SHUT_RDWR) }
             return (listener, boundFile)
         }
         source?.cancel()
         // Remove only the socket this server bound, never a newer instance's.
-        var info = stat()
-        if let file, lstat(socketURL.path, &info) == 0, info.st_dev == file.device, info.st_ino == file.inode {
+        if let file, Self.identity(of: socketURL.path).map({ $0 == file }) == true {
             unlink(socketURL.path)
         }
     }
@@ -108,8 +129,8 @@ final class HistoryAccessServer: @unchecked Sendable {
                 continue
             }
             let admitted = lock.withLock {
-                guard activeConnections < Self.maximumConnections else { return false }
-                activeConnections += 1
+                guard isServing, clients.count < Self.maximumConnections else { return false }
+                clients.insert(client)
                 return true
             }
             guard admitted else {
@@ -124,8 +145,9 @@ final class HistoryAccessServer: @unchecked Sendable {
     }
 
     private func serve(_ client: Int32) {
-        switch Self.readRequest(from: client) {
+        switch Self.readRequest(from: client, deadline: Date().addingTimeInterval(requestDeadline)) {
         case .request(let data):
+            guard lock.withLock({ isServing }) else { return finish(client, response: nil) }
             let handler = handler
             Task.detached { [self] in
                 let output = await handler(data)
@@ -141,9 +163,10 @@ final class HistoryAccessServer: @unchecked Sendable {
     }
 
     private func finish(_ client: Int32, response: Data?) {
-        if let response { Self.write(response, to: client) }
+        // A stop after this check shuts the still-registered descriptor down, failing the write.
+        if let response, lock.withLock({ isServing }) { Self.write(response, to: client) }
+        lock.withLock { _ = clients.remove(client) }
         close(client)
-        lock.withLock { activeConnections -= 1 }
     }
 
     // MARK: - Socket helpers
@@ -154,10 +177,16 @@ final class HistoryAccessServer: @unchecked Sendable {
         case failed
     }
 
-    private static func readRequest(from client: Int32) -> ReadResult {
+    /// The whole request must arrive before `deadline`, so slow writers cannot hold a connection slot.
+    private static func readRequest(from client: Int32, deadline: Date) -> ReadResult {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { return .failed }
+            var timeout = timeval(tv_sec: Int(remaining), tv_usec: Int32(remaining.truncatingRemainder(dividingBy: 1) * 1_000_000))
+            if timeout.tv_sec == 0, timeout.tv_usec == 0 { timeout.tv_usec = 1 }
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
             let count = recv(client, &buffer, buffer.count, 0)
             if count < 0 {
                 if errno == EINTR { continue }
@@ -197,7 +226,6 @@ final class HistoryAccessServer: @unchecked Sendable {
         var enabled: Int32 = 1
         setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
         var timeout = timeval(tv_sec: ioTimeoutSeconds, tv_usec: 0)
-        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }
 
@@ -210,24 +238,48 @@ final class HistoryAccessServer: @unchecked Sendable {
         }
     }
 
-    private static func removeStaleSocket(_ path: String) throws {
+    private func removeStaleSocket(_ path: String) throws {
         var info = stat()
         guard lstat(path, &info) == 0 else { return }
         guard info.st_mode & S_IFMT == S_IFSOCK else { throw StartError.notASocket }
-        if acceptsConnections(path) { throw StartError.inUse }
-        unlink(path)
+        switch probe(path) {
+        case .live:
+            throw StartError.inUse
+        case .indeterminate(let code):
+            throw StartError.system(operation: "probe", code: code)
+        case .dead:
+            // Unlink only the socket that was probed, not one a concurrent instance bound since.
+            guard Self.identity(of: path).map({ $0 == (info.st_dev, info.st_ino) }) == true else {
+                throw StartError.inUse
+            }
+            unlink(path)
+        }
     }
 
-    private static func acceptsConnections(_ path: String) -> Bool {
+    /// A nonblocking connect never waits on a full backlog; only a refused connection proves the socket is dead.
+    static func probeSocket(_ path: String) -> SocketProbe {
         let probe = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard probe >= 0 else { return false }
+        guard probe >= 0 else { return .indeterminate(errno) }
         defer { close(probe) }
+        guard fcntl(probe, F_SETFL, fcntl(probe, F_GETFL) | O_NONBLOCK) == 0 else { return .indeterminate(errno) }
         var address = address(path)
-        return withUnsafePointer(to: &address) {
+        let result = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(probe, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
+                connect(probe, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
+        if result == 0 { return .live }
+        switch errno {
+        case EINPROGRESS, EAGAIN, EISCONN: return .live
+        case ECONNREFUSED: return .dead
+        case let code: return .indeterminate(code)
+        }
+    }
+
+    private static func identity(of path: String) -> (dev_t, ino_t)? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return (info.st_dev, info.st_ino)
     }
 
     private static func address(_ path: String) -> sockaddr_un {
