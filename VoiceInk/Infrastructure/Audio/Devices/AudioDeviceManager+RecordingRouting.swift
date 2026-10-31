@@ -16,6 +16,7 @@ struct RecordingDeviceSession {
 enum RecordingDeviceChangeReason: Equatable {
     case closedLid
     case deviceUnavailable
+    case userSelection
 }
 
 struct RecordingDeviceChangeRequest {
@@ -183,6 +184,14 @@ extension AudioDeviceManager {
         logger.notice("Clamshell state changed: \(isClosed ? "closed" : "open", privacy: .public)")
 
         reconcileInputAvailability(reason: isClosed ? .closedLid : .deviceUnavailable)
+    }
+
+    /// A quick-menu choice applies to an active recording too, through the coalesced switch that keeps its WAV.
+    func moveActiveRecordingToResolvedInput() {
+        guard isRecordingActive, let activeDeviceID = activeRecordingDeviceID,
+            let resolvedDeviceID = resolveCurrentRecordingDevice().deviceID, resolvedDeviceID != activeDeviceID
+        else { return }
+        requestRecordingDeviceChange(reason: .userSelection)
     }
 
     func requestRecordingDeviceChange(reason: RecordingDeviceChangeReason) {

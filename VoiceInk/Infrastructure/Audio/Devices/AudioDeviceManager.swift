@@ -381,11 +381,13 @@ class AudioDeviceManager: ObservableObject {
         )
         eligiblePreferredMicrophones = eligiblePreferredMicrophoneUIDs()
         reconcileInputAvailability()
+        moveActiveRecordingToResolvedInput()
     }
 
     func resumeAutomaticMicrophoneSelection() {
         temporaryMicrophone = nil
         reconcileInputAvailability()
+        moveActiveRecordingToResolvedInput()
     }
 
     func setAvoidsBluetoothDefaultMicrophone(_ avoids: Bool) {

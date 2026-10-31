@@ -76,6 +76,8 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
     private let recordingSideExpansion: CGFloat = 90
     private let transcriptSideExpansion: CGFloat = 110
+    /// Fits the longest translated microphone menu label.
+    private let inputWarningSideExpansion: CGFloat = 140
     private let assistantSideExpansion: CGFloat = 230
     private let activeHeightBonus: CGFloat = 6
     private let transcriptPanelHeight: CGFloat = 57
@@ -88,7 +90,7 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     private var pillWidth: CGFloat {
         switch displayState {
         case .collapsed: return notchWidth
-        case .active: return notchWidth + recordingSideExpansion * 2
+        case .active: return notchWidth + sideExpansion * 2
         case .liveText: return notchWidth + transcriptSideExpansion * 2
         case .assistant: return notchWidth + assistantSideExpansion * 2
         }
@@ -109,9 +111,15 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             return transcriptSideExpansion
         case .assistant:
             return assistantSideExpansion
+        case .active where showsInputWarning:
+            return inputWarningSideExpansion
         case .active, .collapsed:
             return recordingSideExpansion
         }
+    }
+
+    private var showsInputWarning: Bool {
+        recorder.isInputSilent && stateProvider.recordingState == .recording
     }
 
     private var sideEdgePadding: CGFloat {
@@ -143,6 +151,7 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             pill.position(x: geo.size.width / 2, y: pillHeight / 2)
         }
         .animation(pillAnimation, value: displayState)
+        .animation(pillAnimation, value: showsInputWarning)
         .onReceive(
             LifecycleObserver.shared.publisher(for: .screenConfigurationChanged)
         ) { _ in
@@ -201,6 +210,7 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 RecorderStatusDisplay(
                     currentState: stateProvider.recordingState,
                     statusText: stateProvider.recordingStatusText,
+                    isInputSilent: recorder.isInputSilent,
                     audioMeterProvider: recorder.audioMeterSnapshot,
                     menuBarHeight: notchHeight
                 )

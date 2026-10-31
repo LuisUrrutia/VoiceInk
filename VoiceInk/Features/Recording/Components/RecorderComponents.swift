@@ -348,17 +348,20 @@ struct RecorderStatusDisplay: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let currentState: RecordingState
     let statusText: String?
+    let isInputSilent: Bool
     let audioMeterProvider: () -> AudioMeter
     let menuBarHeight: CGFloat?
 
     init(
         currentState: RecordingState,
         statusText: String? = nil,
+        isInputSilent: Bool = false,
         audioMeterProvider: @escaping () -> AudioMeter,
         menuBarHeight: CGFloat? = nil
     ) {
         self.currentState = currentState
         self.statusText = statusText
+        self.isInputSilent = isInputSilent
         self.audioMeterProvider = audioMeterProvider
         self.menuBarHeight = menuBarHeight
     }
@@ -369,6 +372,18 @@ struct RecorderStatusDisplay: View {
                 ProcessingStatusDisplay(mode: .enhancing, color: .white).transition(.opacity)
             } else if currentState == .transcribing {
                 ProcessingStatusDisplay(mode: .transcribing, color: .white).transition(.opacity)
+            } else if currentState == .recording && isInputSilent {
+                VStack(spacing: 2) {
+                    HStack(spacing: 4) {
+                        ActiveCaptureIndicator()
+                        Text("No sound")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(AppTheme.Status.warningStrong)
+                    }
+                    RecorderMicrophoneMenu()
+                }
+                .accessibilityElement(children: .contain)
+                .transition(.opacity)
             } else if currentState == .recording {
                 VStack(spacing: 2) {
                     HStack(spacing: 4) {
@@ -394,6 +409,7 @@ struct RecorderStatusDisplay: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: currentState)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: isInputSilent)
     }
 }
 
