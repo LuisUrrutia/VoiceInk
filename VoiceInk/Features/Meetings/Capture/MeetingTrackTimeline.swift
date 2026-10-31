@@ -37,6 +37,16 @@ struct MeetingTrackTimeline: Codable, Equatable, Sendable {
         return max(0, anchor.time + Double(frame - anchor.frame) / Self.sampleRate)
     }
 
+    /// The frame captured `time` seconds after the meeting started, from the last anchor at or before it.
+    func frame(forTime time: TimeInterval) -> Int {
+        guard let first = anchors.first else { return Int((time * Self.sampleRate).rounded()) }
+        let index = anchors.lastIndex(where: { $0.time <= time }) ?? 0
+        let anchor = index < anchors.count ? anchors[index] : first
+        let frame = max(0, anchor.frame + Int(((time - anchor.time) * Self.sampleRate).rounded()))
+        // A time inside a capture gap has no frame of its own; it maps to the first frame after the gap.
+        return index + 1 < anchors.count ? min(frame, anchors[index + 1].frame) : frame
+    }
+
     func time(forSeconds offset: TimeInterval) -> TimeInterval {
         time(forFrame: Int((offset * Self.sampleRate).rounded()))
     }

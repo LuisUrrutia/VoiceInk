@@ -76,7 +76,8 @@ enum MeetingTranscript {
         return regions
     }
 
-    /// Drops words, and segments without words, whose midpoint falls inside a dictation interval.
+    /// Drops words whose midpoint falls inside a dictation interval. Segments without words are kept: their
+    /// dictated audio was silenced before transcription, and their midpoint says nothing about their words.
     static func removingDictation(
         from segments: [TimedTranscriptSegment], intervals: [MeetingManifest.Interval]
     ) -> [TimedTranscriptSegment] {
@@ -86,7 +87,7 @@ enum MeetingTranscript {
             return intervals.contains { $0.contains(middle) }
         }
         return segments.compactMap { segment in
-            guard !segment.words.isEmpty else { return isDictated(segment.start, segment.end) ? nil : segment }
+            guard !segment.words.isEmpty else { return segment }
             let kept = segment.words.filter { !isDictated($0.start, $0.end) }
             guard let first = kept.first, let last = kept.last else { return nil }
             guard kept.count != segment.words.count else { return segment }

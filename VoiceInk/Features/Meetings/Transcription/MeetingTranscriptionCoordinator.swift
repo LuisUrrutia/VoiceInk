@@ -39,7 +39,9 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
                 chooseModel: { MeetingTranscriptionModelChoice.choose(current: models.currentTranscriptionModel, usable: models.usableModels) },
                 makeTranscriber: { model -> any TimedSpeechTranscribing in
                     if model.provider == .whisper {
-                        return WhisperTranscriptionService(modelsDirectory: whisperModels.modelsDirectory, modelProvider: whisperModels)
+                        return MeetingWhisperTranscriber(modelURL: { name in
+                            whisperModels.availableModels.first { $0.name == name }?.url
+                        })
                     }
                     return FluidAudioTranscriptionService()
                 },
