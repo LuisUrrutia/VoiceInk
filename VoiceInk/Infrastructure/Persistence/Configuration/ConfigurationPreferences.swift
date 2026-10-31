@@ -20,6 +20,7 @@ enum ConfigurationPreferences {
                 UserDefaults.Keys.keepMicrophoneReady,
                 UserDefaults.Keys.avoidsBluetoothDefaultMicrophone,
                 MeetingSettings.showsRecordingIndicatorKey,
+                MeetingSettings.detectsCallsKey,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",
@@ -48,7 +49,7 @@ enum ConfigurationPreferences {
                 "TranscriptionRetentionMinutes", "AudioRetentionPeriod", "AutoLearnDictionaryMinimumCorrections",
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
-            (.stringMap, ["CustomLanguagePrompts"]),
+            (.stringMap, ["CustomLanguagePrompts", MeetingSettings.providerPoliciesKey]),
             (.json, [
                 "modeConfigurationsV2", "customPrompts", "customCloudModels", "customAIProviders", "prioritizedDevices",
                 "audioInputChannelsByDeviceUID",
