@@ -6,6 +6,7 @@ struct MeetingsView: View {
     @AppStorage(MeetingSettings.outputFolderKey) private var outputFolderPath = ""
     @AppStorage(MeetingSettings.showsRecordingIndicatorKey) private var showsRecordingIndicator = true
     @AppStorage(MeetingSettings.detectsCallsKey) private var detectsCalls = true
+    @AppStorage(MeetingAudioRetention.key) private var retentionDays = MeetingAudioRetention.default.rawValue
     @State private var policies: [MeetingProvider: MeetingProviderPolicy] = [:]
 
     var body: some View {
@@ -20,7 +21,7 @@ struct MeetingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Section("Transcripts") {
+            Section {
                 LabeledContent("Folder") {
                     HStack {
                         Text(MeetingSettings.outputFolder().path)
@@ -33,7 +34,16 @@ struct MeetingsView: View {
                         }
                     }
                 }
+                Picker("Keep meeting audio", selection: $retentionDays) {
+                    ForEach(MeetingAudioRetention.allCases, id: \.rawValue) { Text($0.displayName).tag($0.rawValue) }
+                }
+                .onChange(of: retentionDays) { recorder.applyRetention() }
                 Toggle("Show recording indicator", isOn: $showsRecordingIndicator)
+            } header: {
+                Text("Transcripts")
+            } footer: {
+                Text("Audio of transcribed meetings moves to the Trash after this period. Transcripts stay in their folder.")
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section {

@@ -63,6 +63,7 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
         self.recorder = recorder
         recorder.canTranscribe = { [weak self] in self?.canTranscribe ?? false }
         recorder.onRecorded = { [weak self] manifest in self?.enqueue(manifest.id) }
+        recorder.onInterrupted = { [weak self] manifests in manifests.forEach { self?.enqueue($0.id) } }
     }
 
     /// Queues a meeting; a meeting already queued or transcribing is not queued twice.

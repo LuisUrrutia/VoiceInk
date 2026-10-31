@@ -49,7 +49,9 @@ While a meeting records:
   it.
 
 If you quit VoiceInk while a meeting records, both files are closed and the
-meeting is marked **Interrupted**.
+meeting is marked **Interrupted**. If VoiceInk crashes or is forced to quit, the
+next launch repairs the audio files. While a meeting records, VoiceInk saves its
+progress every 30 seconds. Interrupted meetings are transcribed automatically.
 
 ## Call detection
 
@@ -120,7 +122,10 @@ Audio stays in VoiceInk's own data folder. Each build has a separate folder:
   microphone.wav   You: 16 kHz mono PCM16
 ```
 
-The folders are readable only by your user. To find a meeting's audio, use the
+The folders are readable only by your user. **Keep meeting audio** (7 days,
+30 days by default, or forever) moves the audio of transcribed meetings to the
+Trash after that period. Meetings that are not transcribed yet keep their audio.
+Transcripts are never removed. To find a meeting's audio, use the
 folder button next to the meeting on the Meetings page.
 
 Transcripts are written to the folder you choose. The default is

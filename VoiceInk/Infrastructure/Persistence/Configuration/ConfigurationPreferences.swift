@@ -47,6 +47,7 @@ enum ConfigurationPreferences {
             (.integer, [
                 "CloudTranscriptionTimeout", "ShortEnhancementWordThreshold", "EnhancementTimeoutSeconds",
                 "TranscriptionRetentionMinutes", "AudioRetentionPeriod", "AutoLearnDictionaryMinimumCorrections",
+                MeetingAudioRetention.key,
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
             (.stringMap, ["CustomLanguagePrompts", MeetingSettings.providerPoliciesKey]),
@@ -232,6 +233,10 @@ enum ConfigurationPreferences {
         // Prepare every serialized value before changing any preference.
         let encoded = try values.mapValues { try $0.data() }
         for (key, value) in values where !isIgnored(key, labsFeatures: labsFeatures) {
+            // Unsupported retention periods keep the current one rather than becoming the default.
+            if key == MeetingAudioRetention.key, case .number(let days) = value,
+                MeetingAudioRetention(rawValue: Int(days)) == nil || days != days.rounded()
+            { continue }
             if value == .null { defaults.removeObject(forKey: key) }
             else if kind(for: key, labsFeatures: labsFeatures) == .json { defaults.set(encoded[key], forKey: key) }
             else { defaults.set(value.propertyList, forKey: key) }

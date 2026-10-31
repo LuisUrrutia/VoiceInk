@@ -92,7 +92,7 @@ import os
     }
 
     func testWordlessModelsNeverReceiveDictatedAudioButKeepTheRestOfTheirSegment() async throws {
-        let store = MeetingStore(rootURL: root.appendingPathComponent("store"))
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"), movesToTrash: false)
         var manifest = MeetingManifest(title: "Sync")
         _ = try store.createDirectory(for: manifest.id)
         try writeTrack(store.audioURL(for: manifest.id, track: .microphone), speechAt: [0.5, 0.9, 1.3, 1.7, 2.1])
@@ -191,7 +191,7 @@ import os
     // MARK: - Transcriber
 
     func testTracksAreTranscribedInMeetingTimeWithoutDictation() async throws {
-        let store = MeetingStore(rootURL: root.appendingPathComponent("store"))
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"), movesToTrash: false)
         var manifest = MeetingManifest(title: "Sync")
         _ = try store.createDirectory(for: manifest.id)
         try writeTrack(store.audioURL(for: manifest.id, track: .system), speechAt: [1.0])
@@ -405,7 +405,7 @@ import os
     }
 
     private func makeCoordinator(hasModel: Bool = true) throws -> CoordinatorFixture {
-        let store = MeetingStore(rootURL: root.appendingPathComponent("store"))
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"), movesToTrash: false)
         let folder = root.appendingPathComponent("Transcripts", isDirectory: true)
         let transcriber = FakeTimedTranscriber()
         let power = TranscriptPowerAssertions()
