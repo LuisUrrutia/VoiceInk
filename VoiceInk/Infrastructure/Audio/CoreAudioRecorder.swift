@@ -74,11 +74,22 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private let recordingActive = ManagedAtomic(false)
     private let renderCallbacksInFlight = ManagedAtomic<UInt32>(0)
     private let firstAudioTimestamp = ManagedAtomic<UInt64>(0)
+    private let capturedThroughTimestamp = ManagedAtomic<UInt64>(0)
+    private let hostTimeBase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
     private let droppedInputBuffersBackpressure = ManagedAtomic<UInt64>(0)
     private let droppedInputBuffersCapacity = ManagedAtomic<UInt64>(0)
 
     var firstAudioTimestampNanoseconds: UInt64? {
         let timestamp = firstAudioTimestamp.load(ordering: .relaxed)
+        return timestamp == 0 ? nil : timestamp
+    }
+
+    var capturedThroughNanoseconds: UInt64? {
+        let timestamp = capturedThroughTimestamp.load(ordering: .acquiring)
         return timestamp == 0 ? nil : timestamp
     }
 
@@ -178,6 +189,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             }
             resetAudioProcessingState()
             firstAudioTimestamp.store(0, ordering: .relaxed)
+            capturedThroughTimestamp.store(0, ordering: .releasing)
 
             try startAudioUnit()
         } catch {
@@ -844,6 +856,11 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             )
         }
 
+        capturedThroughTimestamp.store(
+            capturedEndNanoseconds(timeStamp: inTimeStamp.pointee, frameCount: inNumberFrames, sampleRate: inputSampleRate),
+            ordering: .releasing
+        )
+
         // Calculate audio meters from input buffer
         calculateMeters(from: &bufferList, frameCount: inNumberFrames)
 
@@ -854,6 +871,20 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         )
 
         return noErr
+    }
+
+    /// Host time of the buffer's last captured sample, in the DispatchTime uptime clock.
+    /// Clamped to delivery time so an unexpected timestamp can only lengthen a release tail.
+    private func capturedEndNanoseconds(timeStamp: AudioTimeStamp, frameCount: UInt32, sampleRate: Double) -> UInt64 {
+        let deliveredAt = DispatchTime.now().uptimeNanoseconds
+        guard timeStamp.mFlags.contains(.hostTimeValid), timeStamp.mHostTime > 0, sampleRate > 0,
+            hostTimeBase.denom > 0
+        else { return deliveredAt }
+        let start = timeStamp.mHostTime.multipliedReportingOverflow(by: UInt64(hostTimeBase.numer))
+        guard !start.overflow else { return deliveredAt }
+        let end = start.partialValue / UInt64(hostTimeBase.denom)
+            + UInt64(Double(frameCount) * 1_000_000_000 / sampleRate)
+        return min(end, deliveredAt)
     }
 
     private func calculateMeters(from bufferList: inout AudioBufferList, frameCount: UInt32) {

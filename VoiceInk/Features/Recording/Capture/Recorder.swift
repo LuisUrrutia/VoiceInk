@@ -127,15 +127,37 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func stopRecording() async {
+        await finishRecording(releaseTail: nil)
+    }
+
+    /// Restores output and plays the release tone now, then keeps capturing through the tail.
+    @discardableResult
+    func stopRecording(
+        after releaseTail: RecordingReleaseTail,
+        playReleaseTone: @escaping @MainActor () -> Void,
+        shouldEndTailEarly: @escaping @MainActor () -> Bool
+    ) async -> RecordingReleaseTail.Outcome? {
+        await finishRecording(
+            releaseTail: (releaseTail, playReleaseTone, shouldEndTailEarly)
+        )
+    }
+
+    private func finishRecording(
+        releaseTail: (
+            tail: RecordingReleaseTail,
+            playTone: @MainActor () -> Void,
+            shouldEndEarly: @MainActor () -> Bool
+        )?
+    ) async -> RecordingReleaseTail.Outcome? {
         guard let finalizationID = recordingFinalization.begin() else {
             await recordingFinalization.waitUntilFinished()
-            return
+            return nil
         }
         defer { recordingFinalization.finish(finalizationID) }
 
         recordingDeviceNotificationTask?.cancel()
         recordingDeviceNotificationTask = nil
-        guard !hasStoppedRecording else { return }
+        guard !hasStoppedRecording else { return nil }
         hasStoppedRecording = true
         recordingStartID = nil
         let playbackSessionID = self.playbackSessionID
@@ -146,26 +168,50 @@ class Recorder: NSObject, ObservableObject {
         // Capture current recorder to stop it on the serial hardware queue.
         let currentRecorder = self.recorder
 
+        var tailOutcome: RecordingReleaseTail.Outcome?
+        if let releaseTail {
+            restoreRecordingAudio(sessionID: playbackSessionID, afterOutputUnmuted: releaseTail.playTone)
+            tailOutcome = await releaseTail.tail.waitForCapture(
+                capturedThrough: { currentRecorder?.capturedThroughNanoseconds },
+                shouldEndEarly: releaseTail.shouldEndEarly
+            )
+        }
+
         let failure = await withCheckedContinuation { continuation in
             audioSetupQueue.async {
                 currentRecorder?.stopRecording()
                 continuation.resume(returning: currentRecorder?.recordingError)
             }
         }
-        guard self.playbackSessionID == playbackSessionID else { return }
+        guard self.playbackSessionID == playbackSessionID else { return tailOutcome }
         recordingError = failure
         onAudioChunk = nil
 
         resetAudioMeter()
 
-        audioRestorationTask?.cancel()
-        audioRestorationTask = Task {
-            if let playbackSessionID {
-                await mediaController.unmuteSystemAudio(sessionID: playbackSessionID)
-                await playbackController.resumeMedia(sessionID: playbackSessionID)
-            }
+        if releaseTail == nil {
+            restoreRecordingAudio(sessionID: playbackSessionID, afterOutputUnmuted: nil)
         }
         deviceManager.recordingDidStop()
+        return tailOutcome
+    }
+
+    private func restoreRecordingAudio(
+        sessionID: UUID?, afterOutputUnmuted: (@MainActor () -> Void)?
+    ) {
+        audioRestorationTask?.cancel()
+        audioRestorationTask = Task { [mediaController, playbackController] in
+            if let sessionID {
+                await mediaController.unmuteSystemAudio(sessionID: sessionID)
+            }
+            // A muted output must be audible before the release tone plays.
+            if let afterOutputUnmuted, !Task.isCancelled {
+                afterOutputUnmuted()
+            }
+            if let sessionID {
+                await playbackController.resumeMedia(sessionID: sessionID)
+            }
+        }
     }
 
     private func muteSystemAudio(sessionID: UUID) {

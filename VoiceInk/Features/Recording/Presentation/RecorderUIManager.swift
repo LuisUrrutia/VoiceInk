@@ -221,7 +221,9 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     // MARK: - Recorder Panel Management
 
-    func toggleRecorderPanel(modeId: UUID? = nil) async {
+    /// `keepsReleaseTail` marks a shortcut gesture whose stop transcribes; other stops end immediately.
+    func toggleRecorderPanel(modeId: UUID? = nil, keepsReleaseTail: Bool = false) async {
+        let releaseTail = keepsReleaseTail ? RecordingReleaseTail.now() : nil
         guard let engine = engine else {
             ShortcutDiagnostics.error("recorder-toggle result=rejected reason=engine-unavailable")
             return
@@ -232,7 +234,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         if isRecorderPanelVisible {
             switch engine.recordingState {
             case .recording:
-                await engine.toggleRecord(modeId: modeId)
+                await engine.toggleRecord(modeId: modeId, releaseTail: releaseTail)
             case .starting, .transcribing, .enhancing:
                 await cancelRecording()
             case .idle:

@@ -65,7 +65,7 @@ final class TranscriptionDelivery {
     }
 
     private func deliverFollowUp(_ item: Request, actions: Actions) async {
-        SoundManager.shared.playStopSound()
+        playStopSound(for: item.deliverySession)
 
         guard let text = item.text?.trimmingCharacters(in: .whitespacesAndNewlines),
             !text.isEmpty
@@ -78,7 +78,7 @@ final class TranscriptionDelivery {
     }
 
     private func deliverResponse(_ item: Request, actions: Actions) async {
-        SoundManager.shared.playStopSound()
+        playStopSound(for: item.deliverySession)
 
         if let responseError = item.responseError {
             await actions.failResponse("Enhancement failed: \(responseError)")
@@ -94,7 +94,7 @@ final class TranscriptionDelivery {
     private func deliverCustomCommand(_ item: Request, actions: Actions) async {
         guard let text = item.text else {
             notifyCustomCommandFailure(CustomCommandDeliveryError.noTextToDeliver)
-            SoundManager.shared.playStopSound()
+            playStopSound(for: item.deliverySession)
             await actions.dismiss()
             return
         }
@@ -103,13 +103,13 @@ final class TranscriptionDelivery {
             let command = customCommand.trimmedCommand
         else {
             notifyCustomCommandFailure(CustomCommandDeliveryError.commandNotConfigured)
-            SoundManager.shared.playStopSound()
+            playStopSound(for: item.deliverySession)
             await actions.dismiss()
             return
         }
 
         let finishAndSendKey: FinishAndSendKey = item.sendAfterPaste ? FinishAndSendSettings.selectedKey : .none
-        SoundManager.shared.playStopSound()
+        playStopSound(for: item.deliverySession)
         await actions.dismiss()
 
         let target = PasteApplication.frontmost
@@ -187,6 +187,11 @@ final class TranscriptionDelivery {
         }
     }
 
+    private func playStopSound(for session: RecordingDeliverySession?) {
+        guard session?.playedStopToneAtRelease != true else { return }
+        SoundManager.shared.playStopSound()
+    }
+
     private static func formattedDuration(_ duration: TimeInterval) -> String {
         String(format: "%.3f", duration)
     }
@@ -196,7 +201,7 @@ final class TranscriptionDelivery {
     ) async {
         let appendSpace = UserDefaults.standard.bool(forKey: "AppendTrailingSpace")
         let pastedText = text + (appendSpace ? " " : "")
-        SoundManager.shared.playStopSound()
+        playStopSound(for: session)
         await actions.dismiss()
         guard !Task.isCancelled, session?.isCancelled != true else { return }
 
