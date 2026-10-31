@@ -31,7 +31,7 @@ final class MeetingWhisperTranscriber: TimedSpeechTranscribing {
         return try await context(for: model.name).transcribeTimed(samples: samples, request: request)
     }
 
-    /// Whisper's own voice detection runs inside a transcription and reports no regions.
+    /// No regions: meeting chunks then come from the level detector, and whisper.cpp's own voice detection stays off.
     func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? { nil }
 
     func releaseResources() async {
