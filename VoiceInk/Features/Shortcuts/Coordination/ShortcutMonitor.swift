@@ -8,7 +8,19 @@ import os
 final class ShortcutMonitor {
     nonisolated static let captureAvailabilityDidChange = Notification.Name("ShortcutCaptureAvailabilityDidChange")
     typealias EventTapFactory = @Sendable (CGEventMask, @escaping @Sendable (CGEventType, CGEvent) -> Bool) throws -> any ShortcutEventTap
+    typealias PhysicalKeyTapFactory = @Sendable (@escaping @Sendable (CGEventType, CGEvent) -> Bool) throws -> any ShortcutEventTap
     typealias ShortcutCallback = @MainActor (ShortcutAction, TimeInterval) async -> Void
+
+    /// Listen-only HID tap for key presses that other apps' global hot keys consume before the session.
+    /// Accessibility covers it; without the tap those chords simply go unseen.
+    nonisolated static let systemPhysicalKeyTap: PhysicalKeyTapFactory = {
+        try SystemShortcutEventTap(
+            eventsOfInterest: CGEventMask(1) << CGEventType.keyDown.rawValue,
+            location: .cghidEventTap,
+            options: .listenOnly,
+            handler: $0
+        )
+    }
 
     private let worker: ShortcutMonitorWorker
     private let tapThread = ShortcutEventTapThread.shared
@@ -30,6 +42,9 @@ final class ShortcutMonitor {
         allowsInput: @escaping @Sendable () -> Bool = { UserSessionInputPolicy.allowsShortcutHandling },
         allowsDispatch: @escaping @MainActor @Sendable () -> Bool = { UserSessionInputPolicy.allowsShortcutDispatch },
         isSecureEventInputEnabled: @escaping @MainActor () -> Bool = { IsSecureEventInputEnabled() },
+        makePhysicalKeyTap: PhysicalKeyTapFactory? = nil,
+        physicalModifierFlags: @escaping @Sendable () -> CGEventFlags = { CGEventSource.flagsState(.hidSystemState) },
+        postChordBreaker: @escaping @Sendable (CGEventFlags) -> Bool = { ChordBreakerPoster.shared.post(flags: $0) },
         workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) {
         UserSessionInputPolicy.startObserving()
@@ -40,7 +55,10 @@ final class ShortcutMonitor {
             isShortcutPressed: isShortcutPressed,
             heldRecordingShortcut: heldRecordingShortcut,
             allowsInput: allowsInput,
-            allowsDispatch: allowsDispatch
+            allowsDispatch: allowsDispatch,
+            makePhysicalKeyTap: makePhysicalKeyTap,
+            physicalModifierFlags: physicalModifierFlags,
+            postChordBreaker: postChordBreaker
         )
         self.workspaceNotificationCenter = workspaceNotificationCenter
         self.isSecureEventInputEnabled = isSecureEventInputEnabled
@@ -61,6 +79,7 @@ final class ShortcutMonitor {
         shortcuts: [ShortcutAction: Shortcut],
         interruptibleActions: Set<ShortcutAction> = [],
         standaloneModifierActions: Set<ShortcutAction> = [],
+        chordBreakerDelays: [ShortcutAction: TimeInterval] = [:],
         reservedShortcuts: [Shortcut] = [],
         onShortcutDown: @escaping ShortcutCallback,
         onShortcutUp: @escaping ShortcutCallback,
@@ -78,6 +97,7 @@ final class ShortcutMonitor {
                 shortcuts: shortcuts,
                 interruptibleActions: interruptibleActions,
                 standaloneModifierActions: standaloneModifierActions,
+                chordBreakerDelays: chordBreakerDelays,
                 systemHotKeyActions: systemHotKeyActions,
                 reservedShortcuts: reservedShortcuts,
                 onShortcutDown: onShortcutDown,
@@ -135,9 +155,9 @@ final class ShortcutMonitor {
         return available && !isSecureEventInputEnabled()
     }
 
-    func updateStandaloneModifierActions(_ actions: Set<ShortcutAction>) {
+    func updateStandaloneModifierActions(_ actions: Set<ShortcutAction>, chordBreakerDelays: [ShortcutAction: TimeInterval]) {
         let worker = worker
-        tapThread.performAndWait { worker.updateStandaloneModifierActions(actions) }
+        tapThread.performAndWait { worker.updateStandaloneModifierActions(actions, chordBreakerDelays: chordBreakerDelays) }
     }
 
     func resetShortcutStates(for actions: Set<ShortcutAction>) {
@@ -190,6 +210,8 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         var requiresStandaloneRelease = false
         var recoveredMissedRelease = false
         var modifierFlagsAtPress: NSEvent.ModifierFlags = []
+        // A physical key pressed after this press reached the HID tap first: the press never dispatches.
+        var isDropped = false
     }
 
     private var shortcuts: [ShortcutAction: ShortcutState] = [:]
@@ -197,6 +219,14 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     private var suppressedMouseButtons = Set<UInt16>()
     private var interruptibleActions: Set<ShortcutAction> = []
     private var standaloneModifierActions: Set<ShortcutAction> = []
+    private var chordBreakerDelays: [ShortcutAction: TimeInterval] = [:]
+    private var chordBreakerTimers: [ShortcutAction: Timer] = [:]
+    private var physicalKeyTap: (any ShortcutEventTap)?
+    private var physicalKeyTapRevision: UInt64 = 0
+    private var physicalKeyTapIssue = "none"
+    private var lastPhysicalKeyTapFailureLogAt: TimeInterval?
+    // Recent HID key presses, which another app's global hot key may have hidden from the session.
+    private var physicalKeyDowns: [(time: TimeInterval, modifierFlags: NSEvent.ModifierFlags)] = []
     // Registered hot keys own exact presses of these actions.
     private var systemHotKeyActions: Set<ShortcutAction> = []
     private var reservedShortcuts: [Shortcut] = []
@@ -218,6 +248,9 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     private let heldRecordingShortcut: @Sendable () -> Shortcut?
     private let allowsInput: @Sendable () -> Bool
     private let allowsDispatch: @MainActor @Sendable () -> Bool
+    private let makePhysicalKeyTap: ShortcutMonitor.PhysicalKeyTapFactory?
+    private let physicalModifierFlags: @Sendable () -> CGEventFlags
+    private let postChordBreaker: @Sendable (CGEventFlags) -> Bool
     private let owner: String
     private var keyDownCount = 0
     private var keyUpCount = 0
@@ -235,6 +268,8 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     private var recoveredPresses = 0
     private var ignoredRepeats = 0
     private var lastRepeatLogAt: TimeInterval?
+    private var physicalChords = 0
+    private var chordBreakersPosted = 0
 
     private struct DispatchSnapshot: Sendable {
         var generation: UInt64 = 0
@@ -243,6 +278,9 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     private let dispatchValidity = OSAllocatedUnfairLock(initialState: DispatchSnapshot())
 
     private static let shortcutInterruptionWindow: TimeInterval = 1.0
+    // Hex's MINIMUM_HOLD_DURATION: HID evidence this soon after a press can overtake its session event.
+    private static let physicalChordOvertakeWindow: TimeInterval = 0.3
+    private static let physicalKeyDownHistory = 8
     private static let recoveryCheckInterval: TimeInterval = 10.0
 
     init(
@@ -252,8 +290,14 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         isShortcutPressed: @escaping @Sendable (Shortcut) -> Bool,
         heldRecordingShortcut: @escaping @Sendable () -> Shortcut?,
         allowsInput: @escaping @Sendable () -> Bool,
-        allowsDispatch: @escaping @MainActor @Sendable () -> Bool
+        allowsDispatch: @escaping @MainActor @Sendable () -> Bool,
+        makePhysicalKeyTap: ShortcutMonitor.PhysicalKeyTapFactory?,
+        physicalModifierFlags: @escaping @Sendable () -> CGEventFlags,
+        postChordBreaker: @escaping @Sendable (CGEventFlags) -> Bool
     ) {
+        self.makePhysicalKeyTap = makePhysicalKeyTap
+        self.physicalModifierFlags = physicalModifierFlags
+        self.postChordBreaker = postChordBreaker
         self.makeEventTap = makeEventTap
         self.isKeyDown = isKeyDown
         self.isShortcutPressed = isShortcutPressed
@@ -268,6 +312,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         shortcuts: [ShortcutAction: Shortcut],
         interruptibleActions: Set<ShortcutAction> = [],
         standaloneModifierActions: Set<ShortcutAction> = [],
+        chordBreakerDelays: [ShortcutAction: TimeInterval] = [:],
         systemHotKeyActions: Set<ShortcutAction> = [],
         reservedShortcuts: [Shortcut] = [],
         onShortcutDown: @escaping ShortcutCallback,
@@ -306,6 +351,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
 
         self.interruptibleActions = interruptibleActions
         self.standaloneModifierActions = standaloneModifierActions
+        self.chordBreakerDelays = chordBreakerDelays
         self.systemHotKeyActions = systemHotKeyActions
         self.onPressCaptured = onPressCaptured
         self.onShortcutDown = onShortcutDown
@@ -329,12 +375,15 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
             recoveryTimer = timer
             RunLoop.current.add(timer, forMode: .common)
         }
+        updatePhysicalKeyTap()
         return eventTap?.isEnabled == true
     }
 
-    func updateStandaloneModifierActions(_ actions: Set<ShortcutAction>) {
+    func updateStandaloneModifierActions(_ actions: Set<ShortcutAction>, chordBreakerDelays: [ShortcutAction: TimeInterval]) {
         resetShortcutStates(for: standaloneModifierActions.symmetricDifference(actions).intersection(shortcuts.keys))
         standaloneModifierActions = actions
+        self.chordBreakerDelays = chordBreakerDelays
+        updatePhysicalKeyTap()
     }
 
     func resetShortcutStates(for actions: Set<ShortcutAction>) {
@@ -380,6 +429,11 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         recoveryTimer = nil
         eventTap?.stop()
         eventTap = nil
+        physicalKeyTap?.stop()
+        physicalKeyTap = nil
+        physicalKeyDowns = []
+        chordBreakerTimers.values.forEach { $0.invalidate() }
+        chordBreakerTimers = [:]
         notifyMonitoringReset(Set(shortcuts.keys))
 
         shortcuts = [:]
@@ -388,6 +442,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         suppressedMouseButtons = []
         interruptibleActions = []
         standaloneModifierActions = []
+        chordBreakerDelays = [:]
         systemHotKeyActions = []
         reservedShortcuts = []
         onPressCaptured = nil
@@ -437,7 +492,10 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     }
 
     func recoverEventTap(reason: String = "health-check") {
-        defer { notifyCaptureAvailabilityChanged() }
+        defer {
+            updatePhysicalKeyTap()
+            notifyCaptureAvailabilityChanged()
+        }
         guard !shortcuts.isEmpty else { return }
         observeEnvironment(reason: reason)
         let inputAllowed = observeInputPolicy()
@@ -504,6 +562,8 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
     }
 
     private func handleCGEvent(type: CGEventType, event: CGEvent) -> Bool {
+        // The chord breaker passes on to other apps' taps; the annotated-session filter drops it.
+        guard !ChordBreaker.isMarked(event) else { return false }
         lastEventAt = ProcessInfo.processInfo.systemUptime
         switch type {
         case .keyDown: keyDownCount += 1
@@ -553,8 +613,14 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
             eventTime: event.timestamp == 0
                 ? ProcessInfo.processInfo.systemUptime
                 : TimeInterval(event.timestamp) / 1_000_000_000,
-            isAutoRepeat: isAutoRepeat
+            isAutoRepeat: isAutoRepeat,
+            isChordEvidence: !Self.isPostedByThisProcess(event)
         )
+    }
+
+    // VoiceInk's own paste and typing events are not the user's chord.
+    private static func isPostedByThisProcess(_ event: CGEvent) -> Bool {
+        event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid())
     }
 
     private func clearPressedShortcutState() {
@@ -572,7 +638,8 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         inputCode: UInt16,
         modifierFlags: NSEvent.ModifierFlags,
         eventTime: TimeInterval,
-        isAutoRepeat: Bool
+        isAutoRepeat: Bool,
+        isChordEvidence: Bool
     ) -> Bool {
         var shouldSuppress: Bool
         switch kind {
@@ -585,14 +652,16 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         }
 
         updatePressedKeyCodes(kind: kind, inputCode: inputCode)
-        invalidateStandaloneModifierCandidateForKeyboardEvent(
-            kind: kind,
-            inputCode: inputCode,
-            modifierFlags: modifierFlags
-        )
+        if isChordEvidence {
+            invalidateStandaloneModifierCandidateForKeyboardEvent(
+                kind: kind,
+                inputCode: inputCode,
+                modifierFlags: modifierFlags
+            )
+        }
 
-        if kind == .keyDown {
-            handleShortcutInterruptions(keyCode: inputCode, eventTime: eventTime)
+        if kind == .keyDown, isChordEvidence {
+            handleShortcutInterruptions(keyCode: inputCode, modifierFlags: modifierFlags, eventTime: eventTime)
         }
 
         for action in Array(shortcuts.keys) {
@@ -775,7 +844,8 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         updatePressedKeyCodes(kind: eventKind, inputCode: shortcut.keyCode)
         invalidateStandaloneModifierCandidateForKeyboardEvent(kind: eventKind, inputCode: shortcut.keyCode, modifierFlags: [])
         if isDown {
-            handleShortcutInterruptions(keyCode: shortcut.keyCode, eventTime: eventTime)
+            // Carbon matched these exact modifiers.
+            handleShortcutInterruptions(keyCode: shortcut.keyCode, modifierFlags: shortcut.modifierFlags, eventTime: eventTime)
         }
         state.isDown = isDown
         state.pressedAt = isDown ? eventTime : nil
@@ -954,7 +1024,8 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
                 let shouldTrigger =
                     state.requiresStandaloneRelease
                     && !state.isInterrupted
-                let shouldDispatchUp = !state.requiresStandaloneRelease
+                let shouldDispatchUp = !state.requiresStandaloneRelease && !state.isDropped
+                let wasDropped = state.isDropped
                 let pressedAt = state.pressedAt
                 let recoveredPress = state.recoveredMissedRelease
                 state.isDown = false
@@ -962,12 +1033,15 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
                 state.isInterrupted = false
                 state.requiresStandaloneRelease = false
                 state.recoveredMissedRelease = false
+                state.isDropped = false
                 shortcuts[action] = state
                 if shouldTrigger, let pressedAt {
                     dispatchShortcutDown(for: action, eventTime: pressedAt, recoveredMissedRelease: recoveredPress)
                     dispatchShortcutUp(for: action, eventTime: eventTime)
                 } else if shouldDispatchUp {
                     dispatchShortcutUp(for: action, eventTime: eventTime)
+                } else if wasDropped {
+                    ShortcutDiagnostics.notice("input owner=\(owner) action=\(action.storageName) result=ignored reason=physical-chord-before-press")
                 } else {
                     ignoredModifierChords += 1
                     ShortcutDiagnostics.notice("input owner=\(owner) action=\(action.storageName) result=ignored reason=standalone-modifier-chord")
@@ -983,6 +1057,14 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
             state.recoveredMissedRelease = recoveredMissedRelease
             state.modifierFlagsAtPress = modifierFlags
             state.requiresStandaloneRelease = standaloneModifierActions.contains(action)
+            if isOvertakenByPhysicalKey(action: action, pressedAt: eventTime) {
+                physicalChords += 1
+                state.isInterrupted = true
+                state.isDropped = !state.requiresStandaloneRelease
+                shortcuts[action] = state
+                ShortcutDiagnostics.notice("input owner=\(owner) action=\(action.storageName) result=dropped reason=physical-key-overtook-press")
+                return
+            }
             if state.requiresStandaloneRelease {
                 onPressCaptured?(action, eventTime)
                 // Drop keys that are no longer held.
@@ -993,6 +1075,133 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
             if !state.requiresStandaloneRelease {
                 dispatchShortcutDown(for: action, eventTime: eventTime, recoveredMissedRelease: recoveredMissedRelease)
             }
+            if !state.isInterrupted {
+                scheduleChordBreaker(for: action, pressedAt: eventTime)
+            }
+        }
+    }
+
+    private func isChordEvidenceAction(_ action: ShortcutAction) -> Bool {
+        shortcuts[action]?.shortcut.isModifierOnly == true
+            && (interruptibleActions.contains(action) || standaloneModifierActions.contains(action))
+    }
+
+    private func isOvertakenByPhysicalKey(action: ShortcutAction, pressedAt: TimeInterval) -> Bool {
+        guard isChordEvidenceAction(action), let shortcut = shortcuts[action]?.shortcut else { return false }
+        return physicalKeyDowns.contains { keyDown in
+            keyDown.time > pressedAt && keyDown.time - pressedAt < Self.physicalChordOvertakeWindow
+                && Self.isHeld(shortcut, by: keyDown.modifierFlags)
+        }
+    }
+
+    private func updatePhysicalKeyTap() {
+        guard let makePhysicalKeyTap, shortcuts.keys.contains(where: isChordEvidenceAction) else {
+            physicalKeyTap?.stop()
+            physicalKeyTap = nil
+            physicalKeyDowns = []
+            return
+        }
+        if let physicalKeyTap, physicalKeyTap.isValid {
+            if !physicalKeyTap.isEnabled { physicalKeyTap.enable() }
+            return
+        }
+        physicalKeyTap?.stop()
+        physicalKeyTap = nil
+        // Without Accessibility the session tap fails, and a listen-only keyboard tap could prompt for Input Monitoring.
+        guard eventTap?.isEnabled == true else {
+            physicalKeyTapIssue = "awaiting-session-tap"
+            return
+        }
+        physicalKeyTapRevision &+= 1
+        let revision = physicalKeyTapRevision
+        do {
+            physicalKeyTap = try makePhysicalKeyTap { [weak self] type, event in
+                guard let self, self.physicalKeyTapRevision == revision else { return false }
+                self.handlePhysicalEvent(type: type, event: event)
+                return false
+            }
+            physicalKeyTapIssue = "none"
+            lastPhysicalKeyTapFailureLogAt = nil
+            ShortcutDiagnostics.notice("physical-tap owner=\(owner) result=installed")
+        } catch {
+            physicalKeyTapIssue = "unavailable"
+            let now = ProcessInfo.processInfo.systemUptime
+            if lastPhysicalKeyTapFailureLogAt.map({ now - $0 >= 60 }) ?? true {
+                lastPhysicalKeyTapFailureLogAt = now
+                ShortcutDiagnostics.warning("physical-tap owner=\(owner) result=unavailable effect=global-hot-key-chords-unseen")
+            }
+        }
+    }
+
+    private func handlePhysicalEvent(type: CGEventType, event: CGEvent) {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // Missing evidence only lets a chord count as a hold, so just resume.
+            physicalKeyTapIssue = type == .tapDisabledByTimeout ? "timeout" : "user-input"
+            physicalKeyTap?.enable()
+            return
+        }
+        guard type == .keyDown, !ChordBreaker.isMarked(event), !Self.isPostedByThisProcess(event),
+            event.getIntegerValueField(.keyboardEventAutorepeat) == 0
+        else { return }
+        let keyCode = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
+        let modifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
+        // Escape and VoiceInk's own shortcuts already act through their session events or hot keys.
+        guard keyCode != UInt16(kVK_Escape), !Shortcut.isModifierKeyCode(keyCode),
+            !shortcuts.values.contains(where: {
+                matchesInput($0.shortcut, kind: .keyDown, inputCode: keyCode, modifierFlags: modifierFlags)
+            }),
+            observeInputPolicy()
+        else { return }
+
+        let eventTime = PhysicalKeyEventTime.seconds(rawTimestamp: event.timestamp, now: ProcessInfo.processInfo.systemUptime)
+        if physicalKeyDowns.count == Self.physicalKeyDownHistory { physicalKeyDowns.removeFirst() }
+        physicalKeyDowns.append((eventTime, modifierFlags))
+        for action in Array(shortcuts.keys) where isChordEvidenceAction(action) {
+            // A key typed just after the release can overtake the session's release event.
+            guard var state = shortcuts[action], state.isDown, state.requiresStandaloneRelease, !state.isInterrupted,
+                let pressedAt = state.pressedAt, eventTime >= pressedAt, Self.isHeld(state.shortcut, by: modifierFlags)
+            else { continue }
+            physicalChords += 1
+            state.isInterrupted = true
+            shortcuts[action] = state
+        }
+        handleShortcutInterruptions(keyCode: keyCode, modifierFlags: modifierFlags, eventTime: eventTime, isPhysicalEvidence: true)
+    }
+
+    private static func isHeld(_ shortcut: Shortcut, by modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        shortcut.isModifierOnly && !shortcut.shouldReleaseModifierEvent(keyCode: shortcut.keyCode, modifierFlags: modifierFlags)
+    }
+
+    private func scheduleChordBreaker(for action: ShortcutAction, pressedAt: TimeInterval) {
+        chordBreakerTimers.removeValue(forKey: action)?.invalidate()
+        // Fn is the system's own tap; keyed shortcuts are consumed and need no breaker.
+        guard let delay = chordBreakerDelays[action], let shortcut = shortcuts[action]?.shortcut,
+            shortcut.isModifierOnly, !shortcut.modifierFlags.contains(.function)
+        else { return }
+        let elapsed = max(0, ProcessInfo.processInfo.systemUptime - pressedAt)
+        let timer = Timer(timeInterval: max(0, delay - elapsed), repeats: false) { [weak self] _ in
+            self?.postChordBreakerIfHeld(for: action, pressedAt: pressedAt)
+        }
+        chordBreakerTimers[action] = timer
+        RunLoop.current.add(timer, forMode: .common)
+    }
+
+    private func postChordBreakerIfHeld(for action: ShortcutAction, pressedAt: TimeInterval) {
+        chordBreakerTimers[action] = nil
+        guard let state = shortcuts[action], state.isDown, state.pressedAt == pressedAt,
+            !state.isInterrupted, !state.isDropped, observeInputPolicy()
+        else { return }
+        let flags = physicalModifierFlags()
+        // Any other modifier already breaks the other apps' tap.
+        guard state.shortcut.matchesModifierEvent(
+            keyCode: state.shortcut.keyCode,
+            modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue))
+        ) else { return }
+        if postChordBreaker(flags) {
+            chordBreakersPosted += 1
+            ShortcutDiagnostics.notice("chord-breaker owner=\(owner) action=\(action.storageName) result=posted")
+        } else {
+            ShortcutDiagnostics.notice("chord-breaker owner=\(owner) action=\(action.storageName) result=skipped")
         }
     }
 
@@ -1037,7 +1246,12 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
         }
     }
 
-    private func handleShortcutInterruptions(keyCode: UInt16, eventTime: TimeInterval) {
+    private func handleShortcutInterruptions(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags,
+        eventTime: TimeInterval,
+        isPhysicalEvidence: Bool = false
+    ) {
         guard !Shortcut.isModifierKeyCode(keyCode) else {
             return
         }
@@ -1062,12 +1276,17 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
                 state.isDown,
                 !state.isInterrupted,
                 let pressedAt = state.pressedAt,
-                eventTime - pressedAt <= Self.shortcutInterruptionWindow,
-                state.shortcut.isInterruptedByAdditionalKeyDown(keyCode: keyCode)
+                state.shortcut.isInterruptedByAdditionalKeyDown(keyCode: keyCode),
+                // A held modifier-only shortcut plus any key is a chord at any time (Hex `dictate.held-chord`).
+                // HID evidence counts only then: it can overtake the session's press or release event.
+                isPhysicalEvidence
+                    ? Self.isHeld(state.shortcut, by: modifierFlags) && eventTime >= pressedAt
+                    : eventTime - pressedAt <= Self.shortcutInterruptionWindow || Self.isHeld(state.shortcut, by: modifierFlags)
             else {
                 continue
             }
 
+            if isPhysicalEvidence { physicalChords += 1 }
             state.isInterrupted = true
             shortcuts[action] = state
             dispatchShortcutInterrupted(for: action, eventTime: pressedAt)
@@ -1151,7 +1370,7 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
             let sessionDown = state.shortcut.kind == .key ? isKeyDown(state.shortcut.keyCode) : state.shortcut.isCurrentlyPressed
             return "\(action.storageName):sessionDown=\(sessionDown)"
         }.sorted().joined(separator: ";")
-        return "generation=\(generation) valid=\(eventTap?.isValid == true) enabled=\(eventTap?.isEnabled == true) recoveryTimerActive=\(recoveryTimer != nil) systemHotKeys=\(systemHotKeyActions.map(\.storageName).sorted().joined(separator: ",")) lastIssue=\(lastTapIssue) installFailures=\(installFailures) recoveredPresses=\(recoveredPresses) ignoredRepeats=\(ignoredRepeats) ignoredModifierChords=\(ignoredModifierChords) events={down:\(keyDownCount),up:\(keyUpCount),modifiers:\(modifierEventCount),mouse:\(mouseEventCount)} lastEventAge=\(age(lastEventAt)) lastMatchAge=\(age(lastMatchAt)) lastModifierMismatch={\(lastModifierMismatch)} mismatchAge=\(age(lastModifierMismatchAt)) pressed=\(pressedActionSummary) pressedSnapshots={\(pressedSnapshots)} shortcuts={\(shortcutSummary)}"
+        return "generation=\(generation) valid=\(eventTap?.isValid == true) enabled=\(eventTap?.isEnabled == true) recoveryTimerActive=\(recoveryTimer != nil) systemHotKeys=\(systemHotKeyActions.map(\.storageName).sorted().joined(separator: ",")) lastIssue=\(lastTapIssue) installFailures=\(installFailures) recoveredPresses=\(recoveredPresses) ignoredRepeats=\(ignoredRepeats) ignoredModifierChords=\(ignoredModifierChords) physicalTap=\(physicalKeyTap.map { $0.isEnabled ? "enabled" : "disabled" } ?? "none") physicalTapIssue=\(physicalKeyTapIssue) physicalChords=\(physicalChords) chordBreakers=\(chordBreakersPosted) events={down:\(keyDownCount),up:\(keyUpCount),modifiers:\(modifierEventCount),mouse:\(mouseEventCount)} lastEventAge=\(age(lastEventAt)) lastMatchAge=\(age(lastMatchAt)) lastModifierMismatch={\(lastModifierMismatch)} mismatchAge=\(age(lastModifierMismatchAt)) pressed=\(pressedActionSummary) pressedSnapshots={\(pressedSnapshots)} shortcuts={\(shortcutSummary)}"
     }
 
     private static let eventMask: CGEventMask = [
@@ -1185,4 +1404,25 @@ private extension ShortcutMonitorWorker.EventKind {
             return nil
         }
     }
+}
+
+/// HID-tap timestamps arrive as Mach ticks on Apple Silicon and as nanoseconds on some events
+/// (Hex `physical_event_instant`); keep whichever reading is recent, else the arrival time.
+enum PhysicalKeyEventTime {
+    private static let recentWindow: TimeInterval = 5
+
+    static func seconds(
+        rawTimestamp: UInt64,
+        now: TimeInterval,
+        nanosecondsPerMachTick: Double = PhysicalKeyEventTime.nanosecondsPerMachTick
+    ) -> TimeInterval {
+        let readings = [Double(rawTimestamp) * nanosecondsPerMachTick / 1_000_000_000, Double(rawTimestamp) / 1_000_000_000]
+        return readings.first { now - $0 >= 0 && now - $0 <= recentWindow } ?? now
+    }
+
+    static let nanosecondsPerMachTick: Double = {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        return timebase.denom == 0 ? 1 : Double(timebase.numer) / Double(timebase.denom)
+    }()
 }

@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 class ModeShortcutManager {
-    private let shortcutMonitor = ShortcutMonitor(owner: "modes")
+    private let shortcutMonitor = ShortcutMonitor(owner: "modes", makePhysicalKeyTap: ShortcutMonitor.systemPhysicalKeyTap)
     private let monitoringLifecycle = ShortcutMonitoringLifecycle()
     private let modeProvider: @MainActor () -> RecordingShortcutManager.Mode
     private let shortcutModeHandler: RecordingShortcutModeHandler
@@ -66,7 +66,7 @@ class ModeShortcutManager {
 
     func recordingModeDidChange() {
         shortcutMonitor.resetShortcutStates(for: monitoredActions)
-        shortcutMonitor.updateStandaloneModifierActions(standaloneModifierActions)
+        shortcutMonitor.updateStandaloneModifierActions(standaloneModifierActions, chordBreakerDelays: chordBreakerDelays)
     }
 
     private func refreshModeShortcuts(reason: String) {
@@ -89,6 +89,7 @@ class ModeShortcutManager {
             shortcuts: shortcuts,
             interruptibleActions: Set(shortcuts.keys),
             standaloneModifierActions: standaloneModifierActions,
+            chordBreakerDelays: chordBreakerDelays,
             onShortcutDown: { [weak self] action, eventTime in
                 guard let self else { return }
                 guard let modeId = self.modeId(for: action) else {
@@ -131,6 +132,11 @@ class ModeShortcutManager {
 
     private var standaloneModifierActions: Set<ShortcutAction> {
         modeProvider() == .toggle || modeProvider() == .doubleTap ? monitoredActions : []
+    }
+
+    private var chordBreakerDelays: [ShortcutAction: TimeInterval] {
+        guard let delay = modeProvider().chordBreakerDelay else { return [:] }
+        return monitoredActions.reduce(into: [:]) { $0[$1] = delay }
     }
 
     private func modeId(for action: ShortcutAction) -> UUID? {
