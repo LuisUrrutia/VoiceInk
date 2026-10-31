@@ -108,6 +108,13 @@ Yes, loud and clear.
 - **Copy** copies the file as it is now, including your edits. The menu bar
   offers **Copy Last Meeting Transcript**.
 
+Turn on **Add a short summary** to put a summary of at most two sentences
+above the transcript. The summary uses the AI provider selected for
+enhancement. VoiceInk Refine runs on this Mac. Other providers, Ollama on
+another computer and Local CLI commands can send the transcript elsewhere. A
+long meeting is shortened to its opening, a few middle passages and its
+ending. If the provider fails, the transcript is written without a summary.
+
 Parakeet TDT models place turns by word. Parakeet Unified and Nemotron place
 turns by speech region, and Whisper by its segments.
 

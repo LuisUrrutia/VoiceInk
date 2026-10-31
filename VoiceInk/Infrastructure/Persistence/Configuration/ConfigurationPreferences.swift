@@ -22,6 +22,7 @@ enum ConfigurationPreferences {
                 IdleModelUnloadSettings.isEnabledKey,
                 MeetingSettings.showsRecordingIndicatorKey,
                 MeetingSettings.detectsCallsKey,
+                MeetingSettings.summarizesKey,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",

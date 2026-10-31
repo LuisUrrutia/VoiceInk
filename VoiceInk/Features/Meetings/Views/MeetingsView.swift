@@ -7,6 +7,7 @@ struct MeetingsView: View {
     @AppStorage(MeetingSettings.showsRecordingIndicatorKey) private var showsRecordingIndicator = true
     @AppStorage(MeetingSettings.detectsCallsKey) private var detectsCalls = true
     @AppStorage(MeetingAudioRetention.key) private var retentionDays = MeetingAudioRetention.default.rawValue
+    @AppStorage(MeetingSettings.summarizesKey) private var summarizes = false
     @State private var policies: [MeetingProvider: MeetingProviderPolicy] = [:]
 
     var body: some View {
@@ -38,11 +39,12 @@ struct MeetingsView: View {
                     ForEach(MeetingAudioRetention.allCases, id: \.rawValue) { Text($0.displayName).tag($0.rawValue) }
                 }
                 .onChange(of: retentionDays) { recorder.applyRetention() }
+                Toggle("Add a short summary", isOn: $summarizes)
                 Toggle("Show recording indicator", isOn: $showsRecordingIndicator)
             } header: {
                 Text("Transcripts")
             } footer: {
-                Text("Audio of transcribed meetings moves to the Trash after this period. Transcripts stay in their folder.")
+                Text("Audio of transcribed meetings moves to the Trash after this period. Transcripts stay in their folder. A summary uses the AI provider selected for enhancement: VoiceInk Refine runs on this Mac, while other providers and commands can send the transcript elsewhere.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 
