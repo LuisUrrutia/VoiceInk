@@ -104,9 +104,14 @@ public final class HistoryMCPServer {
         id is String || integer(id) != nil
     }
 
-    /// The exact decimal value, so neither fractions nor huge values are rounded into acceptance.
+    /// The parser's exact value, so neither fractions nor huge values are rounded into acceptance.
+    /// `decimalValue` rounds binary doubles (1.0000000000000002 becomes 1), so doubles are checked as doubles.
     private static func integer(_ value: Any) -> Decimal? {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        if !(number is NSDecimalNumber), CFNumberIsFloatType(number) {
+            let double = number.doubleValue
+            return double.isFinite && double.rounded() == double ? Decimal(double) : nil
+        }
         var exact = number.decimalValue
         var rounded = Decimal()
         NSDecimalRound(&rounded, &exact, 0, .plain)

@@ -210,6 +210,8 @@ final class HistoryAccessCLITests: XCTestCase {
         XCTAssertEqual(try errorCode(#"{"id":1,"method":"ping"}"#), -32600)
         XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#), -32600)
         XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":1.00000000000000001,"method":"ping"}"#), -32600)
+        XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":1.0000000000000002,"method":"ping"}"#), -32600)
+        XCTAssertNil(try json(server.handle(#"{"jsonrpc":"2.0","id":7.0,"method":"ping"}"#))["error"])
         XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":[]}"#), -32602)
         XCTAssertEqual(try errorCode(
             #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_history","arguments":"x"}}"#), -32602)
@@ -217,6 +219,8 @@ final class HistoryAccessCLITests: XCTestCase {
         XCTAssertEqual(try isToolError(#"{"limit":18446744073709551617}"#), true)
         XCTAssertEqual(try isToolError(#"{"limit":2.5}"#), true)
         XCTAssertEqual(try isToolError(#"{"limit":1.00000000000000001}"#), true)
+        XCTAssertEqual(try isToolError(#"{"limit":1.0000000000000002}"#), true)
+        XCTAssertEqual(try isToolError(#"{"limit":199.99999999999997}"#), true)
         XCTAssertEqual(try isToolError(#"{"limit":"5"}"#), true)
         XCTAssertEqual(try isToolError(#"{"query":"x"}"#), true)
         XCTAssertNil(server.handle(#"{"jsonrpc":"2.0","method":"tools/call","params":"bad"}"#))
