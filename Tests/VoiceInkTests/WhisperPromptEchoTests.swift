@@ -135,7 +135,7 @@ struct WhisperPromptEchoTests {
 /// Opt-in: `VOICEINK_WHISPER_MODEL=<ggml model path>` runs real whisper.cpp through the app's request path.
 struct WhisperPromptEchoIntegrationTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["VOICEINK_WHISPER_MODEL"] != nil))
-    func installedWhisperModelKeepsDictationOfPromptText() async throws {
+    func installedWhisperModelKeepsDictationAndDropsTheTermList() async throws {
         let modelPath = try #require(ProcessInfo.processInfo.environment["VOICEINK_WHISPER_MODEL"])
         let previousVAD = UserDefaults.standard.object(forKey: "IsVADEnabled")
         UserDefaults.standard.set(false, forKey: "IsVADEnabled")
@@ -146,10 +146,15 @@ struct WhisperPromptEchoIntegrationTests {
 
         let sentence = try await context.transcribe(samples: speech("Hello, how are you doing? Nice to meet you."), request: english)
         let word = try await context.transcribe(samples: speech("Ottobit"), request: request)
+        let termList = try await context.transcribe(
+            samples: speech("Monday, Tuesday."),
+            request: english.withVocabulary(RecordingVocabulary(savedTerms: ["Monday", "Tuesday"]))
+        )
         await context.releaseResources()
 
         #expect(sentence.contains("Nice to meet you"))
         #expect(word.contains("Ottobit"))
+        #expect(termList.isEmpty)
     }
 
     private func speech(_ text: String) throws -> [Float] {
