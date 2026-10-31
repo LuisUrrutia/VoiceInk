@@ -93,6 +93,15 @@ class TranscriptionServiceRegistry {
         }
     }
 
+    /// Nil for batch configurations. Waits for an idle unload in progress so the session loads a fresh model.
+    func makeRealtimeSession(
+        for configuration: TranscriptionRuntimeConfiguration, onPartialTranscript: ((String) -> Void)? = nil
+    ) async -> TranscriptionSession? {
+        await waitForPendingUnload()
+        guard shouldUseRealtimeTranscription(for: configuration) else { return nil }
+        return createSession(for: configuration, onPartialTranscript: onPartialTranscript)
+    }
+
     /// Whether the resolved transcription configuration should use real-time transcription.
     func shouldUseRealtimeTranscription(for configuration: TranscriptionRuntimeConfiguration) -> Bool {
         configuration.isRealtimeEnabled

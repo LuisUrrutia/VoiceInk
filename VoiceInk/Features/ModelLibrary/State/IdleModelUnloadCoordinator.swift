@@ -203,3 +203,16 @@ final class IdleModelUnloadCoordinator {
         func cancel() { task.cancel() }
     }
 }
+
+extension IdleModelUnloadCoordinator {
+    /// The app's unload targets: the recording engine's models and the prewarm service's own registry.
+    func configure(engine: VoiceInkEngine, prewarmService: ModelPrewarmService) {
+        configure(
+            isBusy: { [weak engine] in engine?.isUsingTranscriptionModels ?? false },
+            unload: { [weak engine, weak prewarmService] in
+                await engine?.unloadIdleModels()
+                await prewarmService?.unloadIdleModels()
+            }
+        )
+    }
+}

@@ -18,10 +18,17 @@ final class UnifiedModelCache<Manager: UnifiedModel> {
     private var loadedManager: Manager?
     private let access = UnifiedModelAccess()
     private let makeManager: () -> Manager
+    private let load: @MainActor (Manager) async throws -> Void
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "UnifiedModelCache")
 
-    init(makeManager: @escaping () -> Manager) {
+    init(
+        makeManager: @escaping () -> Manager,
+        load: @escaping @MainActor (Manager) async throws -> Void = {
+            try await $0.loadModels(from: FluidAudioModelManager.parakeetUnifiedCacheDirectory())
+        }
+    ) {
         self.makeManager = makeManager
+        self.load = load
     }
 
     func getOrLoad() async throws -> Manager {
@@ -31,7 +38,7 @@ final class UnifiedModelCache<Manager: UnifiedModel> {
             let loaded = makeManager()
             let start = Date()
             do {
-                try await loaded.loadModels(from: FluidAudioModelManager.parakeetUnifiedCacheDirectory())
+                try await load(loaded)
             } catch {
                 modelTask = nil
                 await loaded.cleanup()

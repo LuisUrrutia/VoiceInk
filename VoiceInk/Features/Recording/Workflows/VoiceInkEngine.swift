@@ -166,7 +166,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         isNoSpeechGateEnabled: @escaping () -> Bool = { NoSpeechGateSettings.isEnabled },
         startSoundPlayback: @escaping @MainActor () -> SoundPlayback? = { SoundManager.shared.lastStartSoundPlayback },
         idleSleepPrevention: IdleSleepPrevention = .shared,
-        idleModelUnload: IdleModelUnloadCoordinator? = nil
+        idleModelUnload: IdleModelUnloadCoordinator? = nil,
+        fluidAudioService: FluidAudioTranscriptionService? = nil
     ) {
         self.modelContext = modelContext
         self.idleSleepPrevention = idleSleepPrevention
@@ -194,6 +195,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             modelProvider: whisperModelManager,
             modelsDirectory: whisperModelManager.modelsDirectory,
             modelContext: modelContext,
+            fluidAudioService: fluidAudioService,
             idleUnload: idleModelUnload
         )
         self.pipeline = TranscriptionPipeline(
@@ -452,12 +454,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         )
                     },
                     prepareSession: { [weak self] configuration in
-                        await registry.waitForPendingUnload()
-                        guard registry.shouldUseRealtimeTranscription(for: configuration) else {
-                            _ = realtimeAudioGate.reset()
-                            return nil
-                        }
-                        let session = registry.createSession(
+                        guard let session = await registry.makeRealtimeSession(
                             for: configuration,
                             onPartialTranscript: { [weak self] partial in
                                 Task { @MainActor in
@@ -467,7 +464,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
                                     self.partialTranscript = partial
                                 }
                             }
-                        )
+                        ) else {
+                            _ = realtimeAudioGate.reset()
+                            return nil
+                        }
                         do {
                             let callback = try await session.prepare(
                                 configuration: configuration,

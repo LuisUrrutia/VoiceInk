@@ -3,15 +3,46 @@ import Foundation
 import os.log
 
 class FluidAudioTranscriptionService: TranscriptionService {
-    @MainActor private(set) lazy var unifiedStreamingModels = UnifiedModelCache {
-        StreamingUnifiedAsrManager(
-            config: FluidAudioModelManager.parakeetUnifiedStreamingConfig,
-            encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision
+    /// Model file access; tests replace it to observe model lifetime without installed models.
+    struct ModelRuntime {
+        var loadAsrModels: @Sendable (AsrModelVersion) async throws -> AsrModels
+        var loadUnifiedModel: @MainActor (any UnifiedModel) async throws -> Void
+        var transcribeUnified: @Sendable (UnifiedAsrManager, [Float]) async throws -> String
+
+        static let installed = ModelRuntime(
+            loadAsrModels: { version in
+                let cacheDirectory = AsrModels.defaultCacheDirectory(for: version)
+                guard AsrModels.modelsExist(at: cacheDirectory, version: version) else {
+                    throw AsrModelsError.loadingFailed(
+                        "Parakeet model files are incomplete. Download the model from AI Models."
+                    )
+                }
+                return try await AsrModels.load(
+                    from: cacheDirectory,
+                    configuration: nil,
+                    version: version,
+                    encoderPrecision: .int8
+                )
+            },
+            loadUnifiedModel: { try await $0.loadModels(from: FluidAudioModelManager.parakeetUnifiedCacheDirectory()) },
+            transcribeUnified: { try await $0.transcribe($1) }
         )
     }
-    @MainActor private lazy var unifiedBatchModels = UnifiedModelCache {
-        UnifiedAsrManager(encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision)
-    }
+
+    @MainActor private(set) lazy var unifiedStreamingModels = UnifiedModelCache(
+        makeManager: {
+            StreamingUnifiedAsrManager(
+                config: FluidAudioModelManager.parakeetUnifiedStreamingConfig,
+                encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision
+            )
+        },
+        load: runtime.loadUnifiedModel
+    )
+    @MainActor private(set) lazy var unifiedBatchModels = UnifiedModelCache(
+        makeManager: { UnifiedAsrManager(encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision) },
+        load: runtime.loadUnifiedModel
+    )
+    private let runtime: ModelRuntime
     private var asrManager: AsrManager?
     private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
     private let vadCache: FluidAudioVADCache
@@ -22,8 +53,9 @@ class FluidAudioTranscriptionService: TranscriptionService {
     private let audioConverter = AudioConverter()
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "FluidAudioTranscriptionService")
 
-    init(vadCache: FluidAudioVADCache = FluidAudioVADCache()) {
+    init(vadCache: FluidAudioVADCache = FluidAudioVADCache(), runtime: ModelRuntime = .installed) {
         self.vadCache = vadCache
+        self.runtime = runtime
     }
 
     func prepareVAD(recordingID: UUID, model: any TranscriptionModel) async throws -> Bool {
@@ -116,20 +148,8 @@ class FluidAudioTranscriptionService: TranscriptionService {
             return try await existingTask.value
         }
 
-        let task = Task {
-            let cacheDirectory = AsrModels.defaultCacheDirectory(for: version)
-            guard AsrModels.modelsExist(at: cacheDirectory, version: version) else {
-                throw AsrModelsError.loadingFailed(
-                    "Parakeet model files are incomplete. Download the model from AI Models."
-                )
-            }
-            return try await AsrModels.load(
-                from: cacheDirectory,
-                configuration: nil,
-                version: version,
-                encoderPrecision: .int8
-            )
-        }
+        let loadAsrModels = runtime.loadAsrModels
+        let task = Task { try await loadAsrModels(version) }
         loadingTask = (version, task)
 
         do {
@@ -170,7 +190,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
             return try await unifiedBatchModels.withModel { manager in
                 let samples = try await preparedSpeechAudio(from: audioURL)
                 try Task.checkCancellation()
-                return samples.isEmpty ? "" : try await manager.transcribe(samples)
+                return samples.isEmpty ? "" : try await runtime.transcribeUnified(manager, samples)
             }
         }
 
