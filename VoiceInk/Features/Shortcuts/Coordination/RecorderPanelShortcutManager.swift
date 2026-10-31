@@ -141,7 +141,7 @@ final class RecorderPanelShortcutManager: ObservableObject {
 
         // Exact assignments take priority over cancellation with recording modifiers.
         let reservedActions = [ShortcutAction.primaryRecording, .secondaryRecording]
-            + ShortcutAction.globalUtilityActions
+            + ShortcutAction.activeGlobalUtilityActions()
             + ModeManager.shared.enabledConfigurations.map { ShortcutAction.mode($0.id) }
         let reservedShortcuts = Array(ShortcutStore.shortcuts(for: reservedActions).values)
             + shortcuts.filter { $0.key != .cancelRecorder && $0.key != .recorderPanelEscape }.map(\.value)

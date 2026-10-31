@@ -7,6 +7,7 @@ import os
 class RecordingShortcutManager: ObservableObject {
     @Published private(set) var hotkeyAvailability: RecordingHotkeyAvailability = .unconfigured
     private var activationSubscription: AnyCancellable?
+    private var meetingsSwitchSubscription: AnyCancellable?
     private var accessibilityGranted = AXIsProcessTrusted()
     @Published var primaryRecordingShortcut: ShortcutSelection {
         didSet {
@@ -197,6 +198,9 @@ class RecordingShortcutManager: ObservableObject {
         ShortcutDiagnostics.observeEnvironment(reason: "startup", force: true)
 
         refreshShortcutMonitoring(reason: "startup")
+        meetingsSwitchSubscription = Labs.enabledPublisher(.meetings).dropFirst().sink { [weak self] _ in
+            Task { @MainActor in self?.refreshShortcutMonitoring(reason: "labs.meetings") }
+        }
         activationSubscription = LifecycleObserver.shared.publisher(for: .applicationDidBecomeActive).sink { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -219,7 +223,7 @@ class RecordingShortcutManager: ObservableObject {
         let primaryShortcut = primaryRecordingShortcut == .custom ? ShortcutStore.shortcut(for: .primaryRecording) : nil
         let secondaryShortcut =
             secondaryRecordingShortcut == .custom ? ShortcutStore.shortcut(for: .secondaryRecording) : nil
-        var shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.globalUtilityActions)
+        var shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.activeGlobalUtilityActions())
         var interruptibleRecordingActions = Set<ShortcutAction>()
 
         if let primaryShortcut {

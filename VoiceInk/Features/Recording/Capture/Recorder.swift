@@ -47,6 +47,7 @@ class Recorder: NSObject, ObservableObject {
     private let inputSignalMonitoring: InputSignalMonitoring
     private var inputSignalTask: Task<Void, Never>?
     private let meetingCoordinator: (any DictationMeetingCoordinating)?
+    private let outputEffects: RecordingOutputEffects
     private var isDictationCapture = false
 
     /// Audio chunk callback for streaming. Can be updated while recording;
@@ -69,10 +70,12 @@ class Recorder: NSObject, ObservableObject {
         },
         isPreRollObserverAvailable: @escaping @MainActor () -> Bool = { false },
         inputSignalMonitoring: InputSignalMonitoring = InputSignalMonitoring(),
-        meetingCoordinator: (any DictationMeetingCoordinating)? = MeetingRecorder.shared
+        meetingCoordinator: (any DictationMeetingCoordinating)? = MeetingRecorder.shared,
+        outputEffects: RecordingOutputEffects = .system
     ) {
         self.deviceManager = deviceManager
         self.meetingCoordinator = meetingCoordinator
+        self.outputEffects = outputEffects
         self.inputSignalMonitoring = inputSignalMonitoring
         self.defaults = defaults
         self.isMicrophoneAuthorized = isMicrophoneAuthorized
@@ -308,9 +311,7 @@ class Recorder: NSObject, ObservableObject {
             guard let self else { return }
             try? await Task.sleep(nanoseconds: self.recordingAudioActionDelayNanoseconds)
             guard !Task.isCancelled else { return }
-            // Mute and Lower are exclusive; each call acts only when its behavior is selected.
-            _ = self.mediaController.muteSystemAudio(sessionID: sessionID)
-            self.mediaController.lowerSystemAudio(sessionID: sessionID)
+            self.outputEffects.quietOutput(sessionID)
         }
     }
 
@@ -318,7 +319,7 @@ class Recorder: NSObject, ObservableObject {
         mediaPauseTask?.cancel()
         mediaPauseTask = Task { [weak self] in
             guard let self else { return }
-            await self.playbackController.pauseMedia(sessionID: sessionID)
+            await self.outputEffects.pauseMedia(sessionID)
         }
     }
 
@@ -524,6 +525,21 @@ class Recorder: NSObject, ObservableObject {
         }
         recorder?.teardown()
     }
+}
+
+/// What a dictation does to other audio while it records, behind one seam so a meeting's suppression is testable.
+struct RecordingOutputEffects {
+    var pauseMedia: @MainActor (UUID) async -> Void
+    var quietOutput: @MainActor (UUID) -> Void
+
+    static let system = RecordingOutputEffects(
+        pauseMedia: { await PlaybackController.shared.pauseMedia(sessionID: $0) },
+        quietOutput: { sessionID in
+            // Mute and Lower are exclusive; each call acts only when its behavior is selected.
+            _ = MediaController.shared.muteSystemAudio(sessionID: sessionID)
+            MediaController.shared.lowerSystemAudio(sessionID: sessionID)
+        }
+    )
 }
 
 struct InputSignalMonitoring {

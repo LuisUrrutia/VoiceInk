@@ -95,7 +95,7 @@ import os
         XCTAssertEqual(manifest.provider, "zoom")
         XCTAssertEqual(manifest.duration, 3, accuracy: 0.001)
         XCTAssertEqual(manifest.track(.system)?.timeline.anchors.first?.time, 0.25)
-        XCTAssertEqual(manifest.track(.microphone)?.timeline.anchors.first?.time ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(manifest.track(.microphone)?.timeline.time(forFrame: 0) ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(manifest.track(.microphone)?.heardSignal, true)
         XCTAssertEqual(fixture.systemAudio.url, fixture.store.audioURL(for: id, track: .system))
         XCTAssertEqual(fixture.microphone.startedURL, fixture.store.audioURL(for: id, track: .microphone))
@@ -108,7 +108,7 @@ import os
         XCTAssertEqual(fixture.microphone.stopCount, 1)
     }
 
-    func testDictationDuringAMeetingIsRecordedAsAnIntervalAndKeepsOutputUntouched() async throws {
+    func testDictationDuringAMeetingIsRecordedAsAnInterval() async throws {
         let fixture = makeRecorder()
         XCTAssertFalse(fixture.recorder.suppressesDictationOutputEffects)
         try await fixture.recorder.start()
@@ -228,6 +228,126 @@ import os
         XCTAssertEqual(MeetingSettings.outputFolder(in: restored).path, "/tmp/Meetings")
     }
 
+    func testTurningMeetingsOffWhileConsentIsPendingCancelsTheStart() async throws {
+        let fixture = makeRecorder(permission: .notDetermined, answer: .granted)
+        fixture.permission.holdsAnswer = true
+        let start = Task { try await fixture.recorder.start() }
+        try await waitUntil { fixture.permission.requestCount == 1 }
+
+        Labs.setEnabled(false, for: .meetings, in: defaults)
+        try await Task.sleep(for: .milliseconds(20))
+        fixture.permission.answerRequest()
+
+        await XCTAssertThrowsErrorAsync(try await start.value, MeetingRecorderError.featureDisabled)
+        XCTAssertEqual(fixture.systemAudio.startCount, 0)
+        XCTAssertFalse(fixture.recorder.isRecording)
+    }
+
+    func testTurningMeetingsOffWhileTheMicrophoneStartsClosesBothTracks() async throws {
+        let fixture = makeRecorder()
+        fixture.microphone.holdStart = true
+        let start = Task { try await fixture.recorder.start() }
+        try await waitUntil { fixture.systemAudio.startCount == 1 }
+
+        Labs.setEnabled(false, for: .meetings, in: defaults)
+        try await Task.sleep(for: .milliseconds(20))
+        fixture.microphone.releaseStart()
+
+        await XCTAssertThrowsErrorAsync(try await start.value, MeetingRecorderError.featureDisabled)
+        XCTAssertFalse(fixture.recorder.isRecording)
+        XCTAssertEqual(fixture.systemAudio.stopCount, 1)
+        XCTAssertEqual(fixture.microphone.stopCount, 1)
+        XCTAssertTrue(fixture.recorder.meetings.isEmpty)
+        XCTAssertTrue(fixture.store.loadAll().isEmpty)
+    }
+
+    func testMicrophoneFramesTakeTheirOwnBlocksCaptureTime() async throws {
+        let fixture = makeRecorder()
+        try await fixture.recorder.start()
+        fixture.clock.advance(seconds: 2)
+        // One 4,096-frame block captured during the first 0.256 s, converted in four chunks and delivered late.
+        fixture.microphone.emit(frames: 4_096, capturedThrough: fixture.clock.now - 1_744_000_000, chunks: 4)
+        fixture.microphone.emit(frames: 4_096, capturedThrough: fixture.clock.now - 1_488_000_000, chunks: 4)
+        let stopped = await fixture.recorder.stop()
+
+        let timeline = try XCTUnwrap(stopped?.track(.microphone)?.timeline)
+        XCTAssertEqual(timeline.time(forFrame: 0), 0, accuracy: 0.001)
+        XCTAssertEqual(timeline.time(forFrame: 8_192), 0.512, accuracy: 0.001)
+        XCTAssertEqual(timeline.anchors.count, 1)
+    }
+
+    func testDictationAlreadyCapturingWhenTheMeetingStartsIsExcludedFromItsStart() async throws {
+        let fixture = makeRecorder()
+        fixture.recorder.dictationCaptureBegan()
+        fixture.clock.advance(seconds: 2)
+        try await fixture.recorder.start()
+        fixture.clock.advance(seconds: 3)
+        fixture.recorder.dictationCaptureEnded()
+        fixture.clock.advance(seconds: 1)
+
+        let stopped = await fixture.recorder.stop()
+
+        XCTAssertEqual(stopped?.dictationIntervals, [.init(start: 0, end: 3)])
+    }
+
+    func testDictationThatEndsWhileTheMeetingStartsIsKept() async throws {
+        let fixture = makeRecorder()
+        fixture.microphone.holdStart = true
+        let start = Task { try await fixture.recorder.start() }
+        try await waitUntil { fixture.systemAudio.startCount == 1 }
+        fixture.clock.advance(seconds: 1)
+        fixture.recorder.dictationCaptureBegan()
+        fixture.clock.advance(seconds: 2)
+        fixture.recorder.dictationCaptureEnded()
+        fixture.microphone.releaseStart()
+        try await start.value
+
+        let stopped = await fixture.recorder.stop()
+
+        XCTAssertEqual(stopped?.dictationIntervals, [.init(start: 1, end: 3)])
+    }
+
+    func testMeetingShortcutIsMonitoredOnlyWhileMeetingsIsOn() {
+        XCTAssertTrue(ShortcutAction.activeGlobalUtilityActions(defaults: defaults).contains(.toggleMeeting))
+
+        Labs.setEnabled(false, for: .meetings, in: defaults)
+
+        XCTAssertFalse(ShortcutAction.activeGlobalUtilityActions(defaults: defaults).contains(.toggleMeeting))
+        XCTAssertEqual(
+            ShortcutAction.activeGlobalUtilityActions(defaults: defaults),
+            ShortcutAction.globalUtilityActions.filter { $0 != .toggleMeeting }
+        )
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+        XCTAssertEqual(ShortcutAction.activeGlobalUtilityActions(defaults: defaults), ShortcutAction.globalUtilityActions)
+    }
+
+    func testDictationLeavesOutputAndMediaAloneOnlyWhileAMeetingRecords() async throws {
+        let directory = root.appendingPathComponent("effects", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let duringMeeting = try await recordDictation(meetingRecords: true, to: directory.appendingPathComponent("a.wav"))
+        let withoutMeeting = try await recordDictation(meetingRecords: false, to: directory.appendingPathComponent("b.wav"))
+
+        XCTAssertEqual(duringMeeting, OutputEffectCalls(pauses: 0, quiets: 0))
+        XCTAssertEqual(withoutMeeting, OutputEffectCalls(pauses: 1, quiets: 1))
+    }
+
+    private func recordDictation(meetingRecords: Bool, to url: URL) async throws -> OutputEffectCalls {
+        let coordinator = RecordingCoordinatorSpy()
+        coordinator.suppresses = meetingRecords
+        var calls = OutputEffectCalls()
+        let recorder = Recorder(
+            hardware: FakeMeetingMicrophoneHardware(), deviceManager: MeetingAudioDevices(userDefaults: defaults),
+            defaults: defaults, isMicrophoneAuthorized: { true }, meetingCoordinator: coordinator,
+            outputEffects: RecordingOutputEffects(pauseMedia: { _ in calls.pauses += 1 }, quietOutput: { _ in calls.quiets += 1 })
+        )
+        try await recorder.startRecording(toOutputFile: url)
+        // Output is quieted 220 ms after the start.
+        try await Task.sleep(for: .milliseconds(400))
+        await recorder.stopRecording()
+        return calls
+    }
+
     // MARK: - Fixture
 
     private struct Fixture {
@@ -341,6 +461,14 @@ private final class FakeSystemAudioCapture: SystemAudioCapturing, @unchecked Sen
 private final class FakeSystemAudioPermission: SystemAudioAuthorizing, @unchecked Sendable {
     private let state: OSAllocatedUnfairLock<(status: SystemAudioAuthorization, requests: Int)>
     private let answer: SystemAudioAuthorization
+    /// When set, `request()` waits for `answerRequest()`.
+    var holdsAnswer = false
+    private var pendingAnswer: CheckedContinuation<Void, Never>?
+
+    @MainActor func answerRequest() {
+        pendingAnswer?.resume()
+        pendingAnswer = nil
+    }
 
     init(status: SystemAudioAuthorization, answer: SystemAudioAuthorization) {
         state = OSAllocatedUnfairLock(initialState: (status, 0))
@@ -352,10 +480,13 @@ private final class FakeSystemAudioPermission: SystemAudioAuthorizing, @unchecke
     func status() -> SystemAudioAuthorization { state.withLock { $0.status } }
 
     func request() async -> SystemAudioAuthorization {
-        state.withLock {
-            $0.requests += 1
-            $0.status = answer
+        state.withLock { $0.requests += 1 }
+        if holdsAnswer {
+            await withCheckedContinuation { continuation in
+                Task { @MainActor in self.pendingAnswer = continuation }
+            }
         }
+        state.withLock { $0.status = answer }
         return answer
     }
 }
@@ -389,6 +520,22 @@ final class FakeMeetingMicrophoneHardware: RecordingHardware, @unchecked Sendabl
         var stopCount = 0
         var capturedThrough: UInt64?
         var failStart = false
+        var progress: ((Int, UInt64) -> Void)?
+        var writtenFrames = 0
+    }
+
+    /// When set, `startRecording` blocks the microphone queue until `releaseStart()`.
+    let startGate = DispatchSemaphore(value: 0)
+    private let holdsStart = OSAllocatedUnfairLock(initialState: false)
+    var holdStart: Bool {
+        get { holdsStart.withLock { $0 } }
+        set { holdsStart.withLock { $0 = newValue } }
+    }
+    func releaseStart() { startGate.signal() }
+
+    var onCaptureProgress: ((Int, UInt64) -> Void)? {
+        get { state.withLock { $0.progress } }
+        set { state.withLock { $0.progress = newValue } }
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -410,19 +557,25 @@ final class FakeMeetingMicrophoneHardware: RecordingHardware, @unchecked Sendabl
         set { state.withLock { $0.failStart = newValue } }
     }
 
-    func emit(frames: Int, capturedThrough: UInt64) {
-        let callback = state.withLock { state -> ((Data) -> Void)? in
+    /// Delivers one input block: its converted PCM in `chunks` callbacks, then its capture progress.
+    func emit(frames: Int, capturedThrough: UInt64, chunks: Int = 1) {
+        let (callback, progress, written) = state.withLock { state -> (((Data) -> Void)?, ((Int, UInt64) -> Void)?, Int) in
             state.capturedThrough = capturedThrough
-            return state.callback
+            state.writtenFrames += frames
+            return (state.callback, state.progress, state.writtenFrames)
         }
-        var samples = [Int16](repeating: 0, count: frames)
-        samples[frames / 2] = 1_000
-        callback?(samples.withUnsafeBufferPointer { Data(buffer: $0) })
+        for _ in 0..<chunks {
+            var samples = [Int16](repeating: 0, count: frames / chunks)
+            samples[samples.count / 2] = 1_000
+            callback?(samples.withUnsafeBufferPointer { Data(buffer: $0) })
+        }
+        progress?(written, capturedThrough)
     }
 
     func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
 
     func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
+        if holdStart { startGate.wait() }
         try state.withLock { state in
             if state.failStart { throw CoreAudioRecorderError.deviceNotAvailable }
             state.startedURL = url
@@ -456,10 +609,16 @@ final class MeetingAudioDevices: AudioDeviceManager {
     override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { false }
 }
 
+private struct OutputEffectCalls: Equatable {
+    var pauses = 0
+    var quiets = 0
+}
+
 @MainActor
 private final class RecordingCoordinatorSpy: DictationMeetingCoordinating {
     var events: [String] = []
-    var suppressesDictationOutputEffects: Bool { true }
+    var suppresses = true
+    var suppressesDictationOutputEffects: Bool { suppresses }
     func dictationCaptureBegan() { events.append("began") }
     func dictationCaptureEnded() { events.append("ended") }
 }

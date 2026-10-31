@@ -232,7 +232,6 @@ final class ProcessTapSystemAudioCapture: SystemAudioCapturing, @unchecked Senda
         }
 
         let startNanoseconds = hostNanoseconds(time) ?? DispatchTime.now().uptimeNanoseconds
-        let frameBefore = Int((writer.writtenDuration * MeetingTrackTimeline.sampleRate).rounded())
         let peak = mono.prefix(frameCount).reduce(Float(0)) { max($0, abs($1)) }
         do {
             try mono.withUnsafeBufferPointer { samples in
@@ -245,9 +244,12 @@ final class ProcessTapSystemAudioCapture: SystemAudioCapturing, @unchecked Senda
             record(failure: error)
             return
         }
-        let meetingTime = Double(Int64(bitPattern: startNanoseconds &- meetingStartNanoseconds)) / 1_000_000_000
+        // Written frames end where this buffer's capture ended, as for the microphone track.
+        let bufferStart = Double(Int64(bitPattern: startNanoseconds &- meetingStartNanoseconds)) / 1_000_000_000
+        let bufferEnd = bufferStart + Double(frameCount) / tap.format.mSampleRate
+        let writtenFrames = writer.writtenFrames
         state.withLock {
-            $0.result.timeline.record(frame: frameBefore, at: meetingTime)
+            $0.result.timeline.record(frame: writtenFrames, at: bufferEnd)
             if peak >= Self.heardPeakThreshold { $0.result.heardSignal = true }
             $0.lastDeliveryNanoseconds = DispatchTime.now().uptimeNanoseconds
         }

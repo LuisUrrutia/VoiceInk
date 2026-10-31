@@ -10,6 +10,9 @@ protocol RecordingHardware: AnyObject, Sendable {
     var preRollStartNanoseconds: UInt64? { get }
     /// Monotonic uptime through which hardware audio has been delivered for this recording.
     var capturedThroughNanoseconds: UInt64? { get }
+    /// Called on the processing queue after each input block is written: the total PCM frames written so far and
+    /// the capture time of that block's end, so a consumer can map written frames to capture time.
+    var onCaptureProgress: ((_ writtenFrames: Int, _ capturedEndNanoseconds: UInt64) -> Void)? { get set }
 
     func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
     func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
@@ -31,6 +34,10 @@ extension RecordingHardware {
     var firstAudioTimestampNanoseconds: UInt64? { nil }
     var preRollStartNanoseconds: UInt64? { nil }
     var capturedThroughNanoseconds: UInt64? { nil }
+    var onCaptureProgress: ((_ writtenFrames: Int, _ capturedEndNanoseconds: UInt64) -> Void)? {
+        get { nil }
+        set {}
+    }
 
     func startRecording(
         toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?,
