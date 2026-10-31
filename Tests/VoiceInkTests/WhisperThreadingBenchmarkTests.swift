@@ -69,7 +69,8 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
             "host=\(InferenceBenchmark.hostDescription()) runs=\(runs) loadProcesses=\(loadProcessCount) vad=\(vadEnabled)",
             "defaultThreads=\(WhisperContext.defaultThreadCount()) productionPathQoS=\(await Self.productionPathQoS())",
         ]
-        var rows = ["model,load,clip_s,threads,qos,run,wall_ms,transcript_matches"]
+        // unix_s matches rows to samples of other system load.
+        var rows = ["model,load,clip_s,threads,qos,run,wall_ms,transcript_matches,unix_s"]
 
         for modelPath in modelPaths.split(separator: ",").map(String.init) {
             let modelURL = URL(fileURLWithPath: modelPath)
@@ -116,7 +117,8 @@ final class WhisperThreadingBenchmarkTests: XCTestCase {
                         rows.append(
                             "\(name),\(load),\(clip.seconds),\(configuration.threads.map(String.init) ?? "default"),"
                                 + "\(InferenceBenchmark.label(configuration.qos.rawValue)),\(round),"
-                                + String(format: "%.1f,", run.milliseconds) + "\(matches)"
+                                + String(format: "%.1f,", run.milliseconds) + "\(matches),"
+                                + String(format: "%.0f", Date().timeIntervalSince1970)
                         )
                         if !matches {
                             report.append("mismatch model=\(name) load=\(load) clip=\(clip.seconds)s \(configuration.label): \(run.text)")
