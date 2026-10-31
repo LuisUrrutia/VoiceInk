@@ -105,8 +105,9 @@ generated file to keep the complete structure and stable UUIDs.
 
 - **Speech models:** `CurrentTranscriptionModel`, `SelectedLanguages`,
   `SelectedLanguage`, `IsVADEnabled`, `CustomLanguagePrompts`,
-  `CloudTranscriptionTimeout`, `PrewarmModelOnWake` and text formatting.
-  Keep the generated provider-qualified model selection key.
+  `CloudTranscriptionTimeout`, `PrewarmModelOnWake`, `UnloadModelWhenIdle`,
+  `UnloadModelIdleMinutes` (5, 15, 30 or 60; other values are rejected) and text
+  formatting. Keep the generated provider-qualified model selection key.
 - **Enhancement:** provider-specific `SelectedModel` and `CustomModelID` values,
   `selectedAIProvider`, `customPrompts`, `customCloudModels`, `customAIProviders`,
   Ollama endpoint/model, Local CLI command/template/timeout, short-enhancement

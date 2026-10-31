@@ -38,6 +38,10 @@ final class TranscribeCppTranscriptionService: TranscriptionService, @unchecked 
         offlineService.cleanup()
     }
 
+    func unloadIdleModel() {
+        offlineService.unloadIdleModel()
+    }
+
     private func unsupportedModelError(_ modelName: String) -> NSError {
         NSError(
             domain: "TranscribeCppTranscriptionService",

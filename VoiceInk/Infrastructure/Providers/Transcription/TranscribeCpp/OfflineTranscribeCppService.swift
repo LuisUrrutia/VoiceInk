@@ -152,6 +152,18 @@ final class OfflineTranscribeCppService: TranscriptionService, @unchecked Sendab
         unloadModel { _ in true }
     }
 
+    /// Unlike memory pressure, an idle unload never cancels a load in flight.
+    func unloadIdleModel() {
+        let didUnload = stateLock.withLock {
+            guard loadingState == nil, loadedState != nil, activeTranscriptionCount == 0 else { return false }
+            loadedState = nil
+            return true
+        }
+        if didUnload {
+            logger.notice("transcribe.cpp runtime unloaded after idle period")
+        }
+    }
+
     private func getOrLoadModel(
         for model: TranscribeCppModel,
         artifact: TranscribeCppModelArtifact

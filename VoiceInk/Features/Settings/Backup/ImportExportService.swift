@@ -207,7 +207,9 @@ class ImportExportService {
             isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
             autoLearnMinimumCorrections: AutoLearnSettings.minimumCorrections,
             keepMicrophoneReady: UserDefaults.standard.keepMicrophoneReady,
-            labsFeatures: Labs.backup()
+            labsFeatures: Labs.backup(),
+            unloadsModelWhenIdle: IdleModelUnloadSettings.isEnabled(),
+            modelIdleUnloadMinutes: IdleModelUnloadSettings.minutes()
         )
 
         let exportedSettings = BackupFile(

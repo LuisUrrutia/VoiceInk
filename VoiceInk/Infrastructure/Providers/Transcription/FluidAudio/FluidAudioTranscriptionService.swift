@@ -288,6 +288,17 @@ class FluidAudioTranscriptionService: TranscriptionService {
         }
     }
 
+    /// Frees resident ASR models, including the cached models `cleanup()` keeps; the next use reloads them.
+    /// The VAD cache is left alone: its recording lease owns it and pipeline cleanup already releases it.
+    @MainActor
+    func unloadIdleModels() async {
+        await unifiedBatchModels.unloadIfIdle()
+        await unifiedStreamingModels.unloadIfIdle()
+        guard loadingTask == nil else { return }
+        cachedModels = nil
+        await cleanupLoadedManagers()
+    }
+
     // Releases ASR/VAD resources but preserves cached models for reuse
     func cleanup() async {
         await vadCache.cleanup()

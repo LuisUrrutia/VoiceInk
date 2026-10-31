@@ -91,6 +91,8 @@ enum AppDefaults {
 
             // Model
             "PrewarmModelOnWake": true,
+            IdleModelUnloadSettings.isEnabledKey: false,
+            IdleModelUnloadSettings.minutesKey: IdleModelUnloadSettings.defaultMinutes,
 
         ].merging(TranscriptionTextDefaults.preferences) { _, shared in shared }
             .merging(Labs.registeredDefaults(for: labsFeatures)) { current, _ in current }

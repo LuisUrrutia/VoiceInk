@@ -258,6 +258,9 @@ private struct AdvancedModelSettingsSection: View {
     @AppStorage("IsVADEnabled") private var isVADEnabled = true
     @AppStorage("AppendTrailingSpace") private var appendTrailingSpace = true
     @AppStorage("PrewarmModelOnWake") private var prewarmModelOnWake = true
+    @AppStorage(IdleModelUnloadSettings.isEnabledKey) private var unloadModelWhenIdle = false
+    @AppStorage(IdleModelUnloadSettings.minutesKey) private var idleUnloadMinutes =
+        IdleModelUnloadSettings.defaultMinutes
     @AppStorage(CloudTranscriptionSettings.timeoutKey) private var cloudTimeout =
         CloudTranscriptionSettings.defaultTimeout
 
@@ -288,6 +291,25 @@ private struct AdvancedModelSettingsSection: View {
                 }
             }
             .toggleStyle(.switch)
+
+            Toggle(isOn: $unloadModelWhenIdle) {
+                HStack(spacing: 4) {
+                    Text("Unload model when idle")
+                    InfoTip(
+                        "Free the local speech model's memory after it goes unused for a while. The first dictation after that waits for the model to load again; its audio is still recorded."
+                    )
+                }
+            }
+            .toggleStyle(.switch)
+
+            if unloadModelWhenIdle {
+                Picker("Unload after", selection: $idleUnloadMinutes) {
+                    ForEach(IdleModelUnloadSettings.minuteChoices, id: \.self) { minutes in
+                        Text(String(format: String(localized: "%d minutes"), minutes)).tag(minutes)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
 
             Picker(selection: $cloudTimeout) {
                 Text("10 seconds").tag(10)

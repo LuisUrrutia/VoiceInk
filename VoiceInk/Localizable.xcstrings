@@ -155,6 +155,28 @@
         }
       }
     },
+    "%d minutes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d Minuten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d minutes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d 分钟"
+          }
+        }
+      }
+    },
     "%lld current sections" : {
       "localizations" : {
         "de" : {
@@ -2516,6 +2538,28 @@
         }
       }
     },
+    "Free the local speech model's memory after it goes unused for a while. The first dictation after that waits for the model to load again; its audio is still recorded." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gibt den Speicher des lokalen Sprachmodells frei, wenn es eine Weile nicht verwendet wurde. Das erste Diktat danach wartet, bis das Modell erneut geladen ist; seine Aufnahme geht dabei nicht verloren."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libère la mémoire du modèle vocal local après une période sans utilisation. La dictée suivante attend que le modèle soit rechargé ; son audio est tout de même enregistré."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地语音模型闲置一段时间后释放其内存。之后的第一次听写需要等待模型重新加载，但其音频仍会被录制。"
+          }
+        }
+      }
+    },
     "Hide Both" : {
       "localizations" : {
         "de" : {
@@ -3052,6 +3096,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cela supprimera %1$@, %2$@ et %3$@. Cette action est irréversible."
+          }
+        }
+      }
+    },
+    "Unload after" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entladen nach"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Décharger après"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "卸载时间"
+          }
+        }
+      }
+    },
+    "Unload model when idle" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell bei Inaktivität entladen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Décharger le modèle en cas d'inactivité"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空闲时卸载模型"
           }
         }
       }
