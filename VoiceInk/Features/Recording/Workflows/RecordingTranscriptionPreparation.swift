@@ -16,6 +16,7 @@ final class RecordingTranscriptionPreparation {
     var startSoundPlayback: SoundPlayback?
     private var lookupModeID: UUID?
     private var resolveModeSnapshot: (@MainActor (UUID?) -> DictationModeSnapshot)?
+    private var freezeModeSnapshots: (@MainActor () -> @MainActor (UUID?) -> DictationModeSnapshot)?
     private var userModeSelection: @MainActor () -> UUID? = { nil }
     private var isModeSelectionFrozen = false
     private var frozenModeSelection: UUID?
@@ -51,16 +52,21 @@ final class RecordingTranscriptionPreparation {
     }
 
     /// Called at Stop: picks up selections and edits made during capture, then keeps later changes out.
+    /// A lookup still pending at Stop later chooses among the modes' Stop-time settings.
     func freezeModeSelection() {
         guard !isModeSelectionFrozen else { return }
         frozenModeSelection = userModeSelection()
         isModeSelectionFrozen = true
-        guard modeSnapshot != nil, let resolveModeSnapshot else { return }
-        modeSnapshot = resolveModeSnapshot(frozenModeSelection ?? lookupModeID)
+        guard modeSnapshot != nil else {
+            if let freezeModeSnapshots { resolveModeSnapshot = freezeModeSnapshots() }
+            return
+        }
+        modeSnapshot = resolveModeSnapshot?(frozenModeSelection ?? lookupModeID)
     }
 
     func start(
         resolveModeSnapshot: (@MainActor (UUID?) -> DictationModeSnapshot)? = nil,
+        freezeModeSnapshots: (@MainActor () -> @MainActor (UUID?) -> DictationModeSnapshot)? = nil,
         userModeSelection: @escaping @MainActor () -> UUID? = { nil },
         resolveConfiguration: @escaping @MainActor (DictationModeSnapshot?) -> TranscriptionRuntimeConfiguration?,
         retireAutoLearn: @escaping @MainActor () async -> Void,
@@ -72,12 +78,13 @@ final class RecordingTranscriptionPreparation {
         let modeTask = modeTask
         let timing = timing
         self.resolveModeSnapshot = resolveModeSnapshot
+        self.freezeModeSnapshots = freezeModeSnapshots
         self.userModeSelection = userModeSelection
         let configurationTask = Task { @MainActor [weak self] in
             let lookupModeID = await modeTask?.value ?? nil
             guard !Task.isCancelled else { return nil as TranscriptionRuntimeConfiguration? }
             self?.lookupModeID = lookupModeID
-            let snapshot = resolveModeSnapshot?(self?.selectedModeID ?? lookupModeID)
+            let snapshot = self?.resolveModeSnapshot?(self?.selectedModeID ?? lookupModeID)
             self?.modeSnapshot = snapshot
             let configuration = resolveConfiguration(snapshot)
             timing.mark(.modeResolved, outcome: configuration == nil ? .failed : .completed)

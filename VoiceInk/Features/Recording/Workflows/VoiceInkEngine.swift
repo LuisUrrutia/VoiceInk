@@ -447,6 +447,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
                             modeID: modeID ?? initialModeID, enhancementService: enhancementService
                         )
                     },
+                    freezeModeSnapshots: {
+                        DictationModeSnapshot.frozenResolver(
+                            fallbackModeID: initialModeID, enhancementService: enhancementService
+                        )
+                    },
                     userModeSelection: { modeManager.selectedConfigurationID(since: initialSelectionGeneration) },
                     resolveConfiguration: { snapshot in
                         let configuration = ModeRuntimeResolver.transcriptionConfiguration(

@@ -74,6 +74,18 @@ struct DictationModeSnapshot {
         resolve(mode: modeManager.resolvedEnabledConfiguration(preferredId: modeID), enhancementService: enhancementService)
     }
 
+    /// Resolves every enabled mode now, so a later choice among them sees only these settings.
+    @MainActor
+    static func frozenResolver(
+        fallbackModeID: UUID?, enhancementService: AIEnhancementService?, modeManager: ModeManager = .shared
+    ) -> @MainActor (UUID?) -> DictationModeSnapshot {
+        let snapshots = Dictionary(uniqueKeysWithValues: modeManager.enabledConfigurations.map {
+            ($0.id, resolve(mode: $0, enhancementService: enhancementService))
+        })
+        let fallback = resolve(modeID: fallbackModeID, enhancementService: enhancementService, modeManager: modeManager)
+        return { modeID in modeID.flatMap { snapshots[$0] } ?? fallback }
+    }
+
     /// A trigger word changes only the dictation that spoke it, plus the global mode for later dictations.
     @MainActor
     static func triggerWordSelection(

@@ -25,40 +25,27 @@ final class DictationModeSnapshotTests: XCTestCase {
     }
 
     func testModeChangesDuringTranscriptionAndEnhancementDoNotReachTheDictation() async throws {
-        let dictationMode = ModeConfig(name: "Dictation", isAIEnhancementEnabled: true, autoSendKey: .none)
-        let laterMode = ModeConfig(
-            name: "Later", isAIEnhancementEnabled: false, isTextFormattingEnabled: true, autoSendKey: .enter
+        let dictationMode = ModeConfig(
+            name: "Dictation", isAIEnhancementEnabled: true, isTextFormattingEnabled: true, autoSendKey: .none
         )
+        let laterMode = ModeConfig(name: "Later", isAIEnhancementEnabled: false, autoSendKey: .enter)
         let manager = ModeManager.shared
         manager.configurations = [dictationMode, laterMode]
         manager.activeConfiguration = dictationMode
+        let resolved = DictationModeSnapshot.resolve(modeID: dictationMode.id, enhancementService: nil)
+        // A production enhancement configuration needs a live AIEnhancementService, which repairs persisted modes.
         let snapshot = DictationModeSnapshot(
-            mode: dictationMode,
-            formatting: ModeRuntimeResolver.transcriptionFormattingConfiguration(mode: dictationMode),
+            mode: resolved.mode, formatting: resolved.formatting,
             enhancement: EnhancementRuntimeConfiguration(
                 mode: dictationMode, isEnabled: true, prompt: nil, provider: .ollama, modelName: "fixture",
                 useClipboardContext: false, useSelectedTextContext: false, useScreenCaptureContext: false
             ),
-            output: ModeRuntimeResolver.outputConfiguration(mode: dictationMode)
+            output: resolved.output
         )
-        let fixture = try PipelineFixture()
-        let transcription = Transcription(text: "", duration: 0, transcriptionStatus: .pending)
-        fixture.context.insert(transcription)
+        let fixture = try PipelineFixture(transcript: Self.multiSentenceTranscript)
+        XCTAssertNotEqual(ParagraphFormatter.format(Self.multiSentenceTranscript), Self.multiSentenceTranscript)
 
-        let run = Task {
-            await fixture.pipeline.run(
-                transcription: transcription,
-                audioURL: fixture.directory.appendingPathComponent("missing.wav"),
-                transcriptionConfiguration: TranscriptionRuntimeConfiguration(
-                    mode: dictationMode, model: ImportedWhisperModel(fileBaseName: "ggml-small"),
-                    languages: ["en"], isRealtimeEnabled: true
-                ),
-                modeSnapshot: snapshot,
-                session: fixture.session,
-                vocabularyPreparation: RecordingVocabularyPreparation(savedVocabulary: RecordingVocabulary()),
-                onStateChange: { _ in }, shouldCancel: { false }, onCancel: {}, onDismiss: {}
-            )
-        }
+        let run = Task { await fixture.run(mode: dictationMode, snapshot: snapshot) }
         await fulfillment(of: [fixture.session.entered], timeout: 3)
         manager.activeConfiguration = laterMode
         fixture.session.release()
@@ -67,14 +54,85 @@ final class DictationModeSnapshotTests: XCTestCase {
         editedDictationMode.autoSendKey = .commandEnter
         manager.configurations = [editedDictationMode, laterMode]
         fixture.enhancer.release()
-        await run.value
+        let transcription = await run.value
 
         XCTAssertEqual(fixture.enhancer.configurations.map { $0.mode?.id }, [dictationMode.id])
+        XCTAssertEqual(fixture.enhancer.inputs, [ParagraphFormatter.format(Self.multiSentenceTranscript)])
         XCTAssertEqual(fixture.pastes.map(\.text), ["Enhanced dictation text"])
         XCTAssertEqual(fixture.pastes.map(\.sendKey), [.none])
         XCTAssertEqual(transcription.modeName, "Dictation")
         XCTAssertEqual(transcription.transcriptionStatus, TranscriptionStatus.completed.rawValue)
     }
+
+    func testTriggerWordInThePipelineChangesOnlyItsDictation() async throws {
+        let speakingMode = ModeConfig(name: "Speaking", isAIEnhancementEnabled: false, isDefault: true)
+        let triggeredMode = ModeConfig(
+            name: "Triggered", triggerWords: ["beta"], isAIEnhancementEnabled: false, autoSendKey: .enter
+        )
+        let manager = ModeManager.shared
+        manager.configurations = [speakingMode, triggeredMode]
+        manager.activeConfiguration = speakingMode
+        let capture = try await startCapture(lookupModeID: speakingMode.id)
+        let fixture = try PipelineFixture(transcript: "Beta send the report")
+        fixture.session.release()
+
+        let transcription = await fixture.run(
+            mode: speakingMode,
+            snapshot: DictationModeSnapshot.resolve(mode: speakingMode, enhancementService: nil),
+            triggerWordModeSelection: { DictationModeSnapshot.triggerWordSelection(in: $0, enhancementService: nil) }
+        )
+        capture.freezeModeSelection()
+
+        XCTAssertEqual(fixture.pastes.map(\.text), ["Send the report"])
+        XCTAssertEqual(fixture.pastes.map(\.sendKey), [.enter])
+        XCTAssertEqual(transcription.modeName, "Triggered")
+        XCTAssertEqual(manager.currentEffectiveConfiguration?.id, triggeredMode.id)
+        XCTAssertEqual(capture.modeSnapshot?.mode?.id, speakingMode.id)
+        XCTAssertEqual(capture.modeSnapshot?.output.autoSendKey, FinishAndSendKey.none)
+    }
+
+    func testPendingLookupResolvesWithStopTimeSettings() async throws {
+        let fallback = ModeConfig(name: "Fallback", isAIEnhancementEnabled: false, isDefault: true)
+        var website = ModeConfig(name: "Website", isAIEnhancementEnabled: false)
+        let manager = ModeManager.shared
+        manager.configurations = [fallback, website]
+        manager.activeConfiguration = fallback
+        let lookup = ReleaseGate()
+        var resolvedConfigurationModes: [ModeConfig?] = []
+        let capture = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
+        let websiteID = website.id
+        capture.ownModeResolution(Task { await lookup.wait(); return websiteID })
+        capture.start(
+            resolveModeSnapshot: { DictationModeSnapshot.resolve(modeID: $0 ?? fallback.id, enhancementService: nil) },
+            freezeModeSnapshots: {
+                DictationModeSnapshot.frozenResolver(fallbackModeID: fallback.id, enhancementService: nil)
+            },
+            resolveConfiguration: { resolvedConfigurationModes.append($0?.mode); return nil },
+            retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
+        )
+
+        website.autoSendKey = .enter
+        manager.configurations = [fallback, website]
+        capture.freezeModeSelection()
+        website.autoSendKey = .commandEnter
+        website.isTextFormattingEnabled = true
+        manager.configurations = [fallback, website]
+        lookup.release()
+        _ = try await capture.setup()
+
+        XCTAssertEqual(capture.modeSnapshot?.mode?.id, website.id)
+        XCTAssertEqual(capture.modeSnapshot?.output.autoSendKey, .enter)
+        XCTAssertEqual(capture.modeSnapshot?.formatting.isTextFormattingEnabled, false)
+        XCTAssertEqual(resolvedConfigurationModes.map { $0?.autoSendKey }, [.enter])
+    }
+
+    private static let multiSentenceTranscript = """
+        The first quarter closed with steady growth across every region we track. Our team shipped \
+        three releases and fixed most of the reported crashes. Support volume dropped after the onboarding \
+        changes went live. Hiring stayed slower than planned because two offers were declined. The budget for \
+        the next quarter still needs approval from finance. We will review the roadmap together on Friday \
+        morning.
+        """
 
     func testEarlierBrowserLookupSurvivesALaterLookupRequest() async {
         let fixture = LookupFixture()
@@ -154,12 +212,13 @@ private final class PipelineFixture {
     let directory: URL
     let container: ModelContainer
     let context: ModelContext
-    let session = HeldTranscriptionSession(text: "dictation text with enough words to keep its enhancement step")
+    let session: HeldTranscriptionSession
     let enhancer = HeldEnhancer(text: "Enhanced dictation text")
     private(set) var pastes: [(text: String, sendKey: FinishAndSendKey)] = []
     private(set) var pipeline: TranscriptionPipeline!
 
-    init() throws {
+    init(transcript: String) throws {
+        session = HeldTranscriptionSession(text: transcript)
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         directory = root.appendingPathComponent(".tmp/dictation-mode-snapshot-tests/\(UUID().uuidString)")
@@ -188,6 +247,28 @@ private final class PipelineFixture {
                 return Task { CursorPaster.PasteOutcome(result: .commandPosted, autoLearnGeneration: nil, target: nil) }
             })
         )
+    }
+
+    func run(
+        mode: ModeConfig, snapshot: DictationModeSnapshot,
+        triggerWordModeSelection: (String) -> (text: String, modeSnapshot: DictationModeSnapshot)? = { _ in nil }
+    ) async -> Transcription {
+        let transcription = Transcription(text: "", duration: 0, transcriptionStatus: .pending)
+        context.insert(transcription)
+        await pipeline.run(
+            transcription: transcription,
+            audioURL: directory.appendingPathComponent("missing.wav"),
+            transcriptionConfiguration: TranscriptionRuntimeConfiguration(
+                mode: mode, model: ImportedWhisperModel(fileBaseName: "ggml-small"),
+                languages: ["en"], isRealtimeEnabled: true
+            ),
+            modeSnapshot: snapshot,
+            session: session,
+            triggerWordModeSelection: triggerWordModeSelection,
+            vocabularyPreparation: RecordingVocabularyPreparation(savedVocabulary: RecordingVocabulary()),
+            onStateChange: { _ in }, shouldCancel: { false }, onCancel: {}, onDismiss: {}
+        )
+        return transcription
     }
 
     deinit {
@@ -238,6 +319,7 @@ private final class HeldTranscriptionSession: TranscriptionSession {
 private final class HeldEnhancer: DictationEnhancing {
     let entered = XCTestExpectation(description: "enhancement entered")
     private(set) var configurations: [EnhancementRuntimeConfiguration] = []
+    private(set) var inputs: [String] = []
     private let text: String
     private let gate = ReleaseGate()
 
@@ -250,6 +332,7 @@ private final class HeldEnhancer: DictationEnhancing {
         contextSnapshot: RecordingContextSnapshot?, vocabulary: RecordingVocabulary?
     ) async throws -> AIEnhancementResult {
         configurations.append(configuration)
+        inputs.append(text)
         entered.fulfill()
         await gate.wait()
         return AIEnhancementResult(
