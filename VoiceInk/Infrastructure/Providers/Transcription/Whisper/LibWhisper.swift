@@ -15,9 +15,11 @@ actor WhisperContext {
     private var prompt: String?
     private var promptCString: [CChar]?
     private var vadModelPath: String?
+    /// Benchmark seam; nil keeps `defaultThreadCount`.
+    private var threadCountOverride: Int32?
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "WhisperContext")
 
-    private init() {}
+    init() {}
 
     init(context: OpaquePointer) {
         self.context = context
@@ -50,8 +52,7 @@ actor WhisperContext {
     func fullTranscribe(samples: [Float]) -> Bool {
         guard let context = context else { return false }
 
-        let maxThreads = max(1, min(8, cpuCount() - 2))
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        var params = decodingParameters()
 
         let selectedLanguage = language ?? "auto"
         if selectedLanguage != "auto" {
@@ -73,17 +74,6 @@ actor WhisperContext {
             promptCString = nil
             params.initial_prompt = nil
         }
-
-        params.print_realtime = true
-        params.print_progress = false
-        params.print_timestamps = true
-        params.print_special = false
-        params.translate = false
-        params.n_threads = Int32(maxThreads)
-        params.offset_ms = 0
-        params.no_context = true
-        params.single_segment = false
-        params.temperature = 0.2
 
         whisper_reset_timings(context)
 
@@ -117,6 +107,22 @@ actor WhisperContext {
         promptCString = nil
 
         return success
+    }
+
+    /// Request-independent whisper_full settings; language, prompt and VAD are added per request.
+    func decodingParameters() -> whisper_full_params {
+        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        params.print_realtime = true
+        params.print_progress = false
+        params.print_timestamps = true
+        params.print_special = false
+        params.translate = false
+        params.n_threads = threadCountOverride ?? Self.defaultThreadCount()
+        params.offset_ms = 0
+        params.no_context = true
+        params.single_segment = false
+        params.temperature = 0.2
+        return params
     }
 
     func segmentTexts() -> [String] {
@@ -176,8 +182,12 @@ actor WhisperContext {
     func setLanguage(_ language: String?) {
         self.language = language
     }
-}
 
-fileprivate func cpuCount() -> Int {
-    ProcessInfo.processInfo.processorCount
+    func setThreadCount(_ count: Int32?) {
+        threadCountOverride = count
+    }
+
+    static func defaultThreadCount(processorCount: Int = ProcessInfo.processInfo.processorCount) -> Int32 {
+        Int32(max(1, min(8, processorCount - 2)))
+    }
 }
