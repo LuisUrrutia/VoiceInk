@@ -24,18 +24,20 @@ class TranscriptionPipeline {
 
     private let modelContext: ModelContext
     private let serviceRegistry: TranscriptionServiceRegistry
-    private let enhancementService: AIEnhancementService?
-    private let delivery = TranscriptionDelivery()
+    private let enhancementService: DictationEnhancing?
+    private let delivery: TranscriptionDelivery
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionPipeline")
 
     init(
         modelContext: ModelContext,
         serviceRegistry: TranscriptionServiceRegistry,
-        enhancementService: AIEnhancementService?
+        enhancementService: DictationEnhancing?,
+        delivery: TranscriptionDelivery? = nil
     ) {
         self.modelContext = modelContext
         self.serviceRegistry = serviceRegistry
         self.enhancementService = enhancementService
+        self.delivery = delivery ?? TranscriptionDelivery()
     }
 
     /// Run the full pipeline for a given transcription record.
@@ -43,6 +45,7 @@ class TranscriptionPipeline {
     ///   - transcription: The pending Transcription SwiftData object to populate and save.
     ///   - audioURL: The recorded audio file.
     ///   - transcriptionConfiguration: Mode-resolved transcription engine settings for this phase.
+    ///   - modeSnapshot: This dictation's formatting, enhancement and output settings; only its trigger word replaces it.
     ///   - session: An active streaming session if one was prepared, otherwise nil.
     ///   - vocabularyPreparation: Saved vocabulary plus any screen names ready by transcription completion.
     ///   - onStateChange: Called when the pipeline moves to a new recording state (e.g. `.enhancing`).
@@ -53,14 +56,12 @@ class TranscriptionPipeline {
         transcription: Transcription,
         audioURL: URL,
         transcriptionConfiguration: TranscriptionRuntimeConfiguration,
-        formattingConfiguration resolveFormattingConfiguration: @escaping () -> TranscriptionFormattingConfiguration,
+        modeSnapshot initialModeSnapshot: DictationModeSnapshot,
         session: TranscriptionSession?,
-        triggerWordModeSelection: @escaping (String) -> String? = { _ in nil },
-        enhancementConfiguration: @escaping () -> EnhancementRuntimeConfiguration?,
+        triggerWordModeSelection: (String) -> (text: String, modeSnapshot: DictationModeSnapshot)? = { _ in nil },
         vocabularyPreparation: RecordingVocabularyPreparation,
         recordingContextSnapshot: () -> RecordingContextSnapshot? = { nil },
         cancelContextCapture: () -> Void = {},
-        outputConfiguration: @escaping () -> OutputRuntimeConfiguration,
         sendAfterPaste: Bool = false,
         deliverySession: RecordingDeliverySession? = nil,
         preparation: RecordingTranscriptionPreparation? = nil,
@@ -75,6 +76,7 @@ class TranscriptionPipeline {
             vocabularyPreparation.finish()
         }
         let model = transcriptionConfiguration.model
+        var modeSnapshot = initialModeSnapshot
         var finalText: String?
         var responseError: String?
         var outputForDelivery: OutputRuntimeConfiguration?
@@ -141,9 +143,10 @@ class TranscriptionPipeline {
             text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
             if !assistant.isFollowUp,
-                let processedText = triggerWordModeSelection(text)
+                let selection = triggerWordModeSelection(text)
             {
-                text = processedText
+                text = selection.text
+                modeSnapshot = selection.modeSnapshot
             }
 
             text = try await vocabulary.correctTranscription(text)
@@ -152,13 +155,10 @@ class TranscriptionPipeline {
                 return
             }
 
-            let formattingConfiguration = resolveFormattingConfiguration()
-            let resolvedEnhancementConfiguration = enhancementConfiguration()
-            let resolvedOutputConfiguration = outputConfiguration()
-            let modeMetadata = metadata(
-                for: formattingConfiguration.mode ?? resolvedEnhancementConfiguration?.mode
-                    ?? resolvedOutputConfiguration.mode ?? transcriptionConfiguration.mode
-            )
+            let formattingConfiguration = modeSnapshot.formatting
+            let resolvedEnhancementConfiguration = modeSnapshot.enhancement
+            let resolvedOutputConfiguration = modeSnapshot.output
+            let modeMetadata = metadata(for: modeSnapshot.mode ?? transcriptionConfiguration.mode)
 
             if formattingConfiguration.isTextFormattingEnabled {
                 text = ParagraphFormatter.format(text)
@@ -330,7 +330,7 @@ class TranscriptionPipeline {
             TranscriptionDelivery.Request(
                 transcription: transcription,
                 text: finalText,
-                output: outputForDelivery ?? outputConfiguration(),
+                output: outputForDelivery ?? modeSnapshot.output,
                 responseConfig: responseConfig,
                 responseError: responseError,
                 isAssistantFollowUp: assistant.isFollowUp,

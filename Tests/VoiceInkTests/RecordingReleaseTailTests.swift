@@ -308,7 +308,7 @@ final class RecordingReleaseTailTests: XCTestCase {
         let timing = RecordingTimingTrace()
         let preparation = RecordingTranscriptionPreparation(timing: timing)
         preparation.start(
-            resolveConfiguration: { nil }, retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
+            resolveConfiguration: { _ in nil }, retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
         )
         engine.activeRecordingPreparation = preparation
         engine.recordedFile = url

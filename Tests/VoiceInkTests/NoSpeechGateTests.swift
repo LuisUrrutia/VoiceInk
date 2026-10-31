@@ -478,6 +478,34 @@ final class NoSpeechGateTests: XCTestCase {
         XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .discarded)
     }
 
+    func testGateAlignsTheStartSoundOfItsOwnRecordingAfterANewerToneStarts() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let detector = SpeechDetectorFixture(verdict: true)
+        let preparationGate = PreparationGate()
+        let fixture = try makeRecording(
+            samples: tone(amplitude: 0.2, count: 4_800) + silence(16_000),
+            url: directory.appendingPathComponent("own-start-sound.wav"), directory: directory,
+            detector: detector, startSoundDuration: 0.3, preparationGate: preparationGate
+        )
+        let created = expectation(forNotification: .transcriptionCreated, object: nil) { _ in true }
+
+        let stop = Task { await fixture.engine.toggleRecord() }
+        await fulfillment(of: [created], timeout: 3)
+        fixture.startSound.playback = SoundPlayback(
+            startNanoseconds: DispatchTime.now().uptimeNanoseconds, duration: 0.3,
+            reference: fixture.startSound.playback?.reference
+        )
+        preparationGate.release()
+        await fulfillment(of: [fixture.released], timeout: 3)
+
+        XCTAssertEqual(detector.receivedSampleCounts, [])
+        XCTAssertEqual(fixture.session.transcribeCount, 0)
+        XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .discarded)
+        await fixture.engine.cancelRecording()
+        await stop.value
+    }
+
     func testDetectedSpeechContinuesToTranscription() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -612,12 +640,13 @@ final class NoSpeechGateTests: XCTestCase {
         let session: GateSessionFixture
         let timing: RecordingTimingTrace
         let released: XCTestExpectation
+        let startSound: StartSoundSource
     }
 
     private func makeRecording(
         samples: [Float], url: URL, directory: URL, detector: SpeechDetectorFixture, isGateEnabled: Bool = true,
         startSoundDuration: TimeInterval? = nil, hasCaptureTimestamp: Bool = true,
-        preRollNanoseconds: UInt64? = nil
+        preRollNanoseconds: UInt64? = nil, preparationGate: PreparationGate? = nil
     ) throws -> RecordingFixture {
         let durationNanoseconds = UInt64(Double(samples.count) / 16_000 * 1_000_000_000)
         let timing = RecordingTimingTrace(originNanoseconds: DispatchTime.now().uptimeNanoseconds - durationNanoseconds)
@@ -627,6 +656,7 @@ final class NoSpeechGateTests: XCTestCase {
                 reference: FeedbackSoundReference(samples: tone(amplitude: 0.2, count: Int($0 * 16_000)))
             )
         }
+        let startSoundSource = StartSoundSource(playback: startSound)
         if hasCaptureTimestamp { timing.mark(.firstAudio, at: timing.originNanoseconds) }
         let container = try ModelContainer(
             for: Transcription.self, VocabularyWord.self, VocabularySection.self,
@@ -642,7 +672,8 @@ final class NoSpeechGateTests: XCTestCase {
                 url: url, samples: samples,
                 preRollStartNanoseconds: preRollNanoseconds.map { timing.originNanoseconds - $0 }
             )),
-            speechDetector: detector, isNoSpeechGateEnabled: { isGateEnabled }, startSoundPlayback: { startSound }
+            speechDetector: detector, isNoSpeechGateEnabled: { isGateEnabled },
+            startSoundPlayback: { startSoundSource.playback }
         )
         let session = GateSessionFixture()
         let released = expectation(description: "recording preparation released")
@@ -652,13 +683,16 @@ final class NoSpeechGateTests: XCTestCase {
             model: ImportedWhisperModel(fileBaseName: "ggml-small"), languages: ["en"], isRealtimeEnabled: true
         )
         preparation.start(
-            resolveConfiguration: { configuration }, retireAutoLearn: {}, prepareModel: { _ in },
+            resolveConfiguration: { _ in configuration }, retireAutoLearn: {},
+            prepareModel: { _ in await preparationGate?.wait() },
             prepareSession: { _ in session }, releaseResources: { _ in released.fulfill() }
         )
         engine.activeRecordingPreparation = preparation
         engine.recordedFile = url
         engine.recordingState = .recording
-        return RecordingFixture(engine: engine, session: session, timing: timing, released: released)
+        return RecordingFixture(
+            engine: engine, session: session, timing: timing, released: released, startSound: startSoundSource
+        )
     }
 
     private func outcome(
@@ -735,6 +769,31 @@ private func writeRecording(_ samples: [Float], to url: URL) throws {
     let channel = try XCTUnwrap(buffer.floatChannelData?[0])
     samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
     try file.write(from: buffer)
+}
+
+/// The SoundManager start tone as the engine reads it; a newer recording replaces it.
+@MainActor
+private final class StartSoundSource {
+    var playback: SoundPlayback?
+
+    init(playback: SoundPlayback?) { self.playback = playback }
+}
+
+@MainActor
+private final class PreparationGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 @MainActor

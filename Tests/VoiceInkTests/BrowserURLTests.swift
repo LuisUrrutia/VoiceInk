@@ -131,7 +131,7 @@ final class BrowserModeResolutionTests: XCTestCase {
         for configurations in [[fixture.fallback], [fixture.fallback, disabled]] {
             fixture.configurations = configurations
 
-            await fixture.service.beginApplyingConfiguration().value
+            _ = await fixture.service.beginApplyingConfiguration().value
 
             XCTAssertEqual(fixture.lookups, 0)
             XCTAssertEqual(fixture.applied.last?.id, fixture.fallback.id)
@@ -142,9 +142,9 @@ final class BrowserModeResolutionTests: XCTestCase {
         let fixture = Fixture()
         fixture.configurations.append(fixture.website)
 
-        await fixture.service.beginApplyingConfiguration(modeId: fixture.website.id).value
+        _ = await fixture.service.beginApplyingConfiguration(modeId: fixture.website.id).value
         fixture.application = .init(bundleIdentifier: "fixture.editor")
-        await fixture.service.beginApplyingConfiguration().value
+        _ = await fixture.service.beginApplyingConfiguration().value
 
         XCTAssertEqual(fixture.lookups, 0)
         XCTAssertEqual(fixture.applied.map(\.id), [fixture.website.id, fixture.fallback.id])
@@ -156,7 +156,7 @@ final class BrowserModeResolutionTests: XCTestCase {
             fixture.application = .init(bundleIdentifier: browser.bundleIdentifier)
             fixture.configurations.append(fixture.website)
 
-            await fixture.service.beginApplyingConfiguration().value
+            _ = await fixture.service.beginApplyingConfiguration().value
 
             XCTAssertEqual(fixture.lookups, 1)
             XCTAssertEqual(fixture.browser?.scriptName, browser.scriptName)
@@ -171,7 +171,7 @@ final class BrowserModeResolutionTests: XCTestCase {
         grouped.triggerGroups = [.init(name: "Group", urlConfigs: [.init(url: " HTTPS://WWW.FIXTURE.INVALID ")])]
         fixture.configurations.append(grouped)
 
-        await fixture.service.beginApplyingConfiguration().value
+        _ = await fixture.service.beginApplyingConfiguration().value
 
         XCTAssertEqual(fixture.lookups, 1)
         XCTAssertEqual(fixture.applied.last?.id, grouped.id)
@@ -188,7 +188,7 @@ final class BrowserModeResolutionTests: XCTestCase {
         manager.configurations = fixture.configurations
 
         XCTAssertNil(manager.getConfigurationForURL(fixture.result))
-        await fixture.service.beginApplyingConfiguration().value
+        _ = await fixture.service.beginApplyingConfiguration().value
 
         XCTAssertEqual(fixture.lookups, 0)
         XCTAssertEqual(fixture.applied.last?.id, fixture.fallback.id)
@@ -202,9 +202,9 @@ final class BrowserModeResolutionTests: XCTestCase {
         fixture.configurations = [appMode, fixture.fallback, fixture.website]
         fixture.result = "https://different.invalid"
 
-        await fixture.service.beginApplyingConfiguration().value
+        _ = await fixture.service.beginApplyingConfiguration().value
         fixture.error = BrowserURLError.noActiveTab
-        await fixture.service.beginApplyingConfiguration().value
+        _ = await fixture.service.beginApplyingConfiguration().value
 
         XCTAssertEqual(fixture.applied.map(\.id), [appMode.id, appMode.id])
     }
@@ -216,7 +216,7 @@ final class BrowserModeResolutionTests: XCTestCase {
 
         fixture.configurations[1].urlConfigs?[0].url = "different.invalid"
         fixture.complete()
-        await task.value
+        _ = await task.value
 
         XCTAssertEqual(fixture.applied.map(\.id), [fixture.fallback.id])
     }
@@ -228,7 +228,7 @@ final class BrowserModeResolutionTests: XCTestCase {
 
         fixture.configurations[1].isEnabled = false
         fixture.complete()
-        await task.value
+        _ = await task.value
 
         XCTAssertEqual(fixture.applied.map(\.id), [fixture.fallback.id])
     }
@@ -239,9 +239,9 @@ final class BrowserModeResolutionTests: XCTestCase {
         let task = await fixture.startPending()
 
         fixture.application = .init(bundleIdentifier: "fixture.editor")
-        await fixture.service.beginApplyingConfiguration().value
+        _ = await fixture.service.beginApplyingConfiguration().value
         fixture.complete()
-        await task.value
+        _ = await task.value
 
         XCTAssertEqual(fixture.applied.map(\.id), [fixture.fallback.id, fixture.fallback.id])
     }
@@ -254,7 +254,7 @@ final class BrowserModeResolutionTests: XCTestCase {
         fixture.application = .init(bundleIdentifier: "fixture.recorder")
         fixture.configurations[1].selectedTranscriptionModelName = "final-model"
         fixture.complete()
-        await task.value
+        _ = await task.value
 
         XCTAssertEqual(fixture.applied.last?.id, fixture.website.id)
         XCTAssertEqual(fixture.applied.last?.selectedTranscriptionModelName, "final-model")
@@ -268,7 +268,7 @@ final class BrowserModeResolutionTests: XCTestCase {
 
             if cancelTask { task.cancel() } else { fixture.ownsRecording = false }
             fixture.complete()
-            await task.value
+            _ = await task.value
 
             XCTAssertEqual(fixture.applied.map(\.id), [fixture.fallback.id])
         }
@@ -282,7 +282,7 @@ final class BrowserModeResolutionTests: XCTestCase {
         fixture.pipelineOwnsRecording = true
         fixture.ownsRecording = false
         fixture.complete()
-        await task.value
+        _ = await task.value
 
         XCTAssertEqual(fixture.applied.last?.id, fixture.website.id)
     }
@@ -324,7 +324,7 @@ final class BrowserModeResolutionTests: XCTestCase {
 
         init() { configurations = [fallback] }
 
-        func startPending() async -> Task<Void, Never> {
+        func startPending() async -> Task<UUID?, Never> {
             deferLookup = true
             let task = service.beginApplyingConfiguration { self.ownsRecording || self.pipelineOwnsRecording }
             _ = await XCTWaiter.fulfillment(of: [started], timeout: 2)

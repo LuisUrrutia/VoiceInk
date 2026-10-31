@@ -54,6 +54,54 @@ struct OutputRuntimeConfiguration {
     let customCommand: ModeCustomCommand?
 }
 
+/// One dictation's mode and the settings resolved from it, so later global mode changes cannot reach it.
+struct DictationModeSnapshot {
+    let mode: ModeConfig?
+    let formatting: TranscriptionFormattingConfiguration
+    let enhancement: EnhancementRuntimeConfiguration?
+    let output: OutputRuntimeConfiguration
+
+    var metadata: (name: String?, emoji: String?) {
+        guard let mode, mode.isEnabled else { return (nil, nil) }
+        return (mode.name, mode.icon.value)
+    }
+
+    /// Resolves the latest settings of `modeID`, or of the current mode when it is absent or no longer enabled.
+    @MainActor
+    static func resolve(
+        modeID: UUID?, enhancementService: AIEnhancementService?, modeManager: ModeManager = .shared
+    ) -> DictationModeSnapshot {
+        resolve(mode: modeManager.resolvedEnabledConfiguration(preferredId: modeID), enhancementService: enhancementService)
+    }
+
+    /// A trigger word changes only the dictation that spoke it, plus the global mode for later dictations.
+    @MainActor
+    static func triggerWordSelection(
+        in text: String, enhancementService: AIEnhancementService?, modeManager: ModeManager = .shared
+    ) -> (text: String, modeSnapshot: DictationModeSnapshot)? {
+        guard let (mode, processedText) = modeManager.getConfigurationForTriggerWord(text) else { return nil }
+        modeManager.setActiveConfiguration(mode, isTriggerWord: true)
+        return (processedText, resolve(mode: mode, enhancementService: enhancementService))
+    }
+
+    @MainActor
+    static func resolve(mode: ModeConfig?, enhancementService: AIEnhancementService?) -> DictationModeSnapshot {
+        let enhancement = enhancementService.flatMap { enhancementService in
+            enhancementService.getAIService().map {
+                ModeRuntimeResolver.currentEnhancementConfiguration(
+                    mode: mode, enhancementService: enhancementService, aiService: $0
+                )
+            }
+        }
+        return DictationModeSnapshot(
+            mode: mode,
+            formatting: ModeRuntimeResolver.transcriptionFormattingConfiguration(mode: mode),
+            enhancement: enhancement,
+            output: ModeRuntimeResolver.outputConfiguration(mode: mode)
+        )
+    }
+}
+
 enum ModeTranscriptionModelResolution {
     case noMode
     case noSelection(mode: ModeConfig)

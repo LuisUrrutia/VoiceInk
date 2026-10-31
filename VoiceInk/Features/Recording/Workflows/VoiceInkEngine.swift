@@ -252,6 +252,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             activeRecordingPreparation = nil
             activePipelinePreparation = preparation
             preparation?.timing.mark(.stopReceived)
+            preparation?.freezeModeSelection()
             let delivery = activeRecordingDelivery
             activeRecordingDelivery = nil
             activePipelineDelivery = delivery
@@ -289,6 +290,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 await recorder.stopRecording(playStopTone: playStopTone)
             }
             recordClosedAudioTiming(preparation?.timing)
+            preparation?.startSoundPlayback = startSoundPlayback()
 
             if let recordedFile = fileBeingStopped {
                 if !shouldCancelRecording {
@@ -296,7 +298,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         for: recordedFile,
                         text: "",
                         duration: 0,
-                        transcriptionStatus: .pending
+                        transcriptionStatus: .pending,
+                        modeSnapshot: modeSnapshot(for: preparation)
                     )
                     modelContext.insert(transcription)
                     try? modelContext.save()
@@ -379,12 +382,16 @@ class VoiceInkEngine: NSObject, ObservableObject {
             self.activeRecordingDelivery = capturedDelivery
             capturedDelivery.preventIdleSleep(idleSleepPrevention.begin())
             capturedDelivery.holdModelUse(serviceRegistry.beginModelUse())
+            let modeManager = ModeManager.shared
             let activeModeTask = ActiveWindowService.shared.beginApplyingConfiguration(modeId: modeId) {
                 [weak self] in
                 guard let self else { return false }
                 return !preparation.isCancelled
                     && (self.activeRecordingPreparation === preparation || self.activePipelinePreparation === preparation)
             }
+            // The lookup's own immediate apply is this recording's fallback, not a user selection.
+            let initialModeID = modeManager.currentEffectiveConfiguration?.id
+            let initialSelectionGeneration = modeManager.selectionGeneration
             preparation.ownModeResolution(activeModeTask)
             preparation.timing.mark(.modeResolutionStarted)
 
@@ -433,10 +440,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 let registry = self.serviceRegistry
                 let models = self.transcriptionModelManager
                 let whisper = self.whisperModelManager
+                let enhancementService = self.enhancementService
                 preparation.start(
-                    resolveConfiguration: {
+                    resolveModeSnapshot: { modeID in
+                        DictationModeSnapshot.resolve(
+                            modeID: modeID ?? initialModeID, enhancementService: enhancementService
+                        )
+                    },
+                    userModeSelection: { modeManager.selectedConfigurationID(since: initialSelectionGeneration) },
+                    resolveConfiguration: { snapshot in
                         let configuration = ModeRuntimeResolver.transcriptionConfiguration(
-                            transcriptionModelManager: models
+                            mode: snapshot?.mode, transcriptionModelManager: models
                         )
                         contextStore.resolveRecognitionLanguage(
                             configuration.map { TranscriptionLanguageSupport.recognitionLanguage(for: $0.languages) }
@@ -500,7 +514,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 else { return }
 
                 guard let setup else {
-                    let resolution = ModeRuntimeResolver.transcriptionModelResolution(transcriptionModelManager: models)
+                    let resolution = ModeRuntimeResolver.transcriptionModelResolution(
+                        mode: preparation.modeSnapshot?.mode, transcriptionModelManager: models
+                    )
                     let failure = self.recordingModelFailure(for: resolution)
                     self.recordingError = failure.title
                     capturedDelivery.dictationFailed()
@@ -737,6 +753,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return
         }
 
+        let modeSnapshot = self.modeSnapshot(for: preparation)
         let vocabularyPreparation = context?.store.vocabularyPreparation ?? RecordingVocabularyPreparation(
             savedVocabulary: CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
         )
@@ -745,24 +762,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
             transcription: transcription,
             audioURL: audioURL,
             transcriptionConfiguration: transcriptionConfiguration,
-            formattingConfiguration: {
-                ModeRuntimeResolver.transcriptionFormattingConfiguration()
-            },
+            modeSnapshot: modeSnapshot,
             session: session,
-            triggerWordModeSelection: { [weak self] text in
-                self?.selectTriggerWordModeIfNeeded(for: text)
-            },
-            enhancementConfiguration: { [weak self] in
-                guard let self,
-                    let enhancementService = self.enhancementService,
-                    let aiService = enhancementService.getAIService()
-                else {
-                    return nil
-                }
-                return ModeRuntimeResolver.currentEnhancementConfiguration(
-                    enhancementService: enhancementService,
-                    aiService: aiService
-                )
+            triggerWordModeSelection: { [enhancementService] text in
+                DictationModeSnapshot.triggerWordSelection(in: text, enhancementService: enhancementService)
             },
             vocabularyPreparation: vocabularyPreparation,
             recordingContextSnapshot: {
@@ -770,9 +773,6 @@ class VoiceInkEngine: NSObject, ObservableObject {
             },
             cancelContextCapture: {
                 context?.cancelCapture()
-            },
-            outputConfiguration: {
-                ModeRuntimeResolver.outputConfiguration()
             },
             sendAfterPaste: sendAfterPaste,
             deliverySession: deliverySession,
@@ -893,7 +893,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             firstAudioNanoseconds: firstAudioNanoseconds,
             releaseNanoseconds: trace.originNanoseconds + release.elapsedNanoseconds
         )
-        let startSound = startSoundPlayback()
+        let startSound = preparation?.startSoundPlayback
         let startSoundOffset = NoSpeechGate.startSoundOffsetFrames(
             playback: startSound, requestNanoseconds: trace.originNanoseconds,
             firstAudioNanoseconds: firstAudioNanoseconds
@@ -971,13 +971,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
         recordingNotice = nil
     }
 
-    private func selectTriggerWordModeIfNeeded(for text: String) -> String? {
-        guard let (triggeredMode, processedText) = ModeManager.shared.getConfigurationForTriggerWord(text) else {
-            return nil
-        }
-
-        ModeManager.shared.setActiveConfiguration(triggeredMode)
-        return processedText
+    /// Before a recording starts resolving its mode, the current mode applies.
+    private func modeSnapshot(for preparation: RecordingTranscriptionPreparation?) -> DictationModeSnapshot {
+        preparation?.currentModeSnapshot
+            ?? DictationModeSnapshot.resolve(modeID: nil, enhancementService: enhancementService)
     }
 
     // MARK: - Cancellation
@@ -1082,17 +1079,18 @@ class VoiceInkEngine: NSObject, ObservableObject {
         activeRecordingDelivery = nil
         activeRecordingStartID = nil
         clearActiveRecordingContext()
-        let timing = (activeRecordingPreparation ?? activePipelinePreparation)?.timing
+        let preparation = activeRecordingPreparation ?? activePipelinePreparation
+        preparation?.freezeModeSelection()
         await recorder.stopRecording()
-        recordClosedAudioTiming(timing)
-        await saveCanceledRecording(at: fileBeingCancelled)
+        recordClosedAudioTiming(preparation?.timing)
+        await saveCanceledRecording(at: fileBeingCancelled, modeSnapshot: modeSnapshot(for: preparation))
         recordedFile = nil
         partialTranscript = ""
         recordingState = .idle
         await cleanupResources()
     }
 
-    private func saveCanceledRecording(at recordedFile: URL?) async {
+    private func saveCanceledRecording(at recordedFile: URL?, modeSnapshot: DictationModeSnapshot) async {
         guard let recordedFile,
             FileManager.default.fileExists(atPath: recordedFile.path)
         else { return }
@@ -1102,7 +1100,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             for: recordedFile,
             text: Transcription.canceledTranscriptionText,
             duration: duration,
-            transcriptionStatus: .canceled
+            transcriptionStatus: .canceled,
+            modeSnapshot: modeSnapshot
         )
 
         modelContext.insert(transcription)
@@ -1119,31 +1118,22 @@ class VoiceInkEngine: NSObject, ObservableObject {
         for audioURL: URL,
         text: String,
         duration: TimeInterval,
-        transcriptionStatus: TranscriptionStatus
+        transcriptionStatus: TranscriptionStatus,
+        modeSnapshot: DictationModeSnapshot
     ) -> Transcription {
-        let modeMetadata = currentModeMetadata()
+        let modeMetadata = modeSnapshot.metadata
 
         return Transcription(
             text: text,
             duration: duration,
             audioFileURL: audioURL.absoluteString,
             transcriptionModelName: ModeRuntimeResolver.transcriptionConfiguration(
-                transcriptionModelManager: transcriptionModelManager
+                mode: modeSnapshot.mode, transcriptionModelManager: transcriptionModelManager
             )?.model.displayName,
             modeName: modeMetadata.name,
             modeEmoji: modeMetadata.emoji,
             transcriptionStatus: transcriptionStatus
         )
-    }
-
-    private func currentModeMetadata() -> (name: String?, emoji: String?) {
-        guard let mode = ModeManager.shared.currentEffectiveConfiguration,
-            mode.isEnabled
-        else {
-            return (nil, nil)
-        }
-
-        return (mode.name, mode.icon.value)
     }
 
     private func scheduleVoiceInkRefinePreparation(for recordingStartID: UUID) {

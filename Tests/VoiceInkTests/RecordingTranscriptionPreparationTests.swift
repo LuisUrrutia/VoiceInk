@@ -12,9 +12,9 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         var configuration = makeConfiguration(languages: ["en"])
         var prepared: [TranscriptionRuntimeConfiguration] = []
         let preparedExpectation = expectation(description: "final model prepared")
-        owner.ownModeResolution(Task { await modeGate.wait() })
+        owner.ownModeResolution(Task { await modeGate.wait(); return nil })
         owner.start(
-            resolveConfiguration: { configuration }, retireAutoLearn: {},
+            resolveConfiguration: { _ in configuration }, retireAutoLearn: {},
             prepareModel: { prepared.append($0); preparedExpectation.fulfill() }, prepareSession: { _ in nil }
         )
         await modeGate.waitUntilEntered()
@@ -46,7 +46,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         var retired = false
         var setupReturned = false
         owner.start(
-            resolveConfiguration: { self.makeConfiguration(realtime: true) },
+            resolveConfiguration: { _ in self.makeConfiguration(realtime: true) },
             retireAutoLearn: { await autoLearnGate.wait(); retired = true },
             prepareModel: { _ in modelEntered.fulfill() },
             prepareSession: { configuration in
@@ -75,9 +75,9 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         let owner = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
         var resolved = false
         var prepared = false
-        owner.ownModeResolution(Task { await modeGate.wait() })
+        owner.ownModeResolution(Task { await modeGate.wait(); return nil })
         owner.start(
-            resolveConfiguration: { resolved = true; return self.makeConfiguration() },
+            resolveConfiguration: { _ in resolved = true; return self.makeConfiguration() },
             retireAutoLearn: {}, prepareModel: { _ in prepared = true }, prepareSession: { _ in nil }
         )
         await modeGate.waitUntilEntered()
@@ -99,7 +99,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         var mutationFinished = false
         var finished = false
         owner.start(
-            resolveConfiguration: { self.makeConfiguration() }, retireAutoLearn: {},
+            resolveConfiguration: { _ in self.makeConfiguration() }, retireAutoLearn: {},
             prepareModel: { _ in await modelGate.wait(); mutationFinished = true }, prepareSession: { _ in nil }
         )
         await modelGate.waitUntilEntered()
@@ -113,7 +113,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         await finishing.value
         let next = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
         next.start(
-            resolveConfiguration: { self.makeConfiguration(modelName: "ggml-medium") }, retireAutoLearn: {},
+            resolveConfiguration: { _ in self.makeConfiguration(modelName: "ggml-medium") }, retireAutoLearn: {},
             prepareModel: { _ in XCTAssertTrue(mutationFinished) }, prepareSession: { _ in nil }
         )
         let setup = try await next.setup()
@@ -132,7 +132,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         let owner = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
         let session = PreparationSession()
         owner.start(
-            resolveConfiguration: { self.makeConfiguration(realtime: true) }, retireAutoLearn: {},
+            resolveConfiguration: { _ in self.makeConfiguration(realtime: true) }, retireAutoLearn: {},
             prepareModel: { _ in }, prepareSession: { _ in await sessionGate.wait(); return session }
         )
         await sessionGate.waitUntilEntered()
@@ -156,7 +156,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         }
         for _ in 0..<3 {
             owner.start(
-                resolveConfiguration: { self.makeConfiguration() }, retireAutoLearn: {},
+                resolveConfiguration: { _ in self.makeConfiguration() }, retireAutoLearn: {},
                 prepareModel: prepare, prepareSession: { _ in nil }
             )
         }
@@ -196,7 +196,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         let owner = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
         var finished = false
         owner.start(
-            resolveConfiguration: { self.makeConfiguration(realtime: true) }, retireAutoLearn: {},
+            resolveConfiguration: { _ in self.makeConfiguration(realtime: true) }, retireAutoLearn: {},
             prepareModel: { _ in },
             prepareSession: { configuration in
                 _ = try await session.prepare(configuration: configuration, vocabulary: RecordingVocabulary())
@@ -367,7 +367,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
         let owner = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
         let configuration = makeFluidConfiguration(realtime: true)
         owner.start(
-            resolveConfiguration: { configuration }, retireAutoLearn: {},
+            resolveConfiguration: { _ in configuration }, retireAutoLearn: {},
             prepareModel: {
                 XCTAssertTrue(provider.connectionFinished)
                 try await registry.prepareForRecording($0, recordingID: owner.recordingID, whisperModelManager: whisper)
@@ -398,7 +398,7 @@ final class RecordingTranscriptionPreparationTests: XCTestCase {
     ) {
         let recordingID = owner.recordingID
         owner.start(
-            resolveConfiguration: { configuration }, retireAutoLearn: {},
+            resolveConfiguration: { _ in configuration }, retireAutoLearn: {},
             prepareModel: { try await registry.prepareForRecording($0, recordingID: recordingID, whisperModelManager: whisper) },
             prepareSession: { _ in nil },
             releaseResources: { await registry.releaseRecordingPreparation(recordingID: recordingID, configuration: $0) }

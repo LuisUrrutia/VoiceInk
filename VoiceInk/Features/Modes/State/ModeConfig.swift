@@ -643,7 +643,21 @@ class ModeManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func setActiveConfiguration(_ config: ModeConfig?) {
+    /// Advances on every active-mode change except trigger words, so a recording can tell selections during its
+    /// capture apart from another dictation's trigger word.
+    private(set) var selectionGeneration = 0
+    private(set) var selectedConfigurationID: UUID?
+
+    /// The mode selected since `generation`, or nil when nothing but trigger words changed it.
+    func selectedConfigurationID(since generation: Int) -> UUID? {
+        selectionGeneration == generation ? nil : selectedConfigurationID
+    }
+
+    func setActiveConfiguration(_ config: ModeConfig?, isTriggerWord: Bool = false) {
+        if !isTriggerWord {
+            selectionGeneration &+= 1
+            selectedConfigurationID = config?.id
+        }
         if let config,
             let latestConfig = configurations.first(where: { $0.id == config.id })
         {

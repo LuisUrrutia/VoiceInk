@@ -12,8 +12,18 @@ struct AIEnhancementResult: Sendable {
     let userMessage: String?
 }
 
+/// The enhancement calls a dictation's pipeline makes.
 @MainActor
-class AIEnhancementService: ObservableObject {
+protocol DictationEnhancing: AnyObject {
+    func isConfigured(for configuration: EnhancementRuntimeConfiguration) -> Bool
+    func enhance(
+        _ text: String, configuration: EnhancementRuntimeConfiguration,
+        contextSnapshot: RecordingContextSnapshot?, vocabulary: RecordingVocabulary?
+    ) async throws -> AIEnhancementResult
+}
+
+@MainActor
+class AIEnhancementService: ObservableObject, DictationEnhancing {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AIEnhancementService")
 
     @Published var customPrompts: [CustomPrompt] {
