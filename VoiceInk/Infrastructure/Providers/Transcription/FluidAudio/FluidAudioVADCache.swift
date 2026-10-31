@@ -4,6 +4,7 @@ import Foundation
 
 protocol FluidAudioVADManaging: Sendable {
     func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment]
+    func segmentSpeech(_ samples: [Float], config: VadSegmentationConfig) async throws -> [VadSegment]
     func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]]
 }
 
@@ -26,6 +27,10 @@ struct LocalFluidAudioVAD: FluidAudioVADManaging {
 
     func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment] {
         try await manager.segmentSpeech(samples)
+    }
+
+    func segmentSpeech(_ samples: [Float], config: VadSegmentationConfig) async throws -> [VadSegment] {
+        try await manager.segmentSpeech(samples, config: config)
     }
 
     func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]] {

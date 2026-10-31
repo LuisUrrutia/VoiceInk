@@ -10,6 +10,7 @@ struct AudioSetupView: View {
     @State private var microphoneSourceBeforePriorityOrder: MicrophoneSourceSelection = .systemDefault
     @State private var refreshIconRotation = 0.0
     @State private var requirementsMicrophone: PrioritizedDevice?
+    @AppStorage(NoSpeechGateSettings.isEnabledKey) private var discardsRecordingsWithoutSpeech = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,6 +49,17 @@ struct AudioSetupView: View {
                             .disabled(!canEditResumeDelay)
                     }
                     .foregroundStyle(canEditResumeDelay ? .primary : .secondary)
+
+                    Toggle(isOn: $discardsRecordingsWithoutSpeech) {
+                        HStack(spacing: 4) {
+                            Text("Discard Recordings Without Speech")
+                            InfoTip(
+                                LocalizedStringKey(
+                                    "Skip transcription, pasting and History when a recording contains only silence or noise. Turn this off if quiet speech is discarded."
+                                )
+                            )
+                        }
+                    }
                 } header: {
                     Text("Recording Behavior")
                 }

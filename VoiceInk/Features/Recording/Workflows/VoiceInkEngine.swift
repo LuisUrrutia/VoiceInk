@@ -102,6 +102,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published var shouldCancelRecording = false
     @Published var partialTranscript: String = ""
     @Published private(set) var recordingError: String?
+    @Published private(set) var recordingNotice: String?
+    private var recordingNoticeTask: Task<Void, Never>?
     let captureReadiness: CaptureReadinessController
     private var readinessSubscription: AnyCancellable?
     lazy var microphoneDiagnostic = MicrophoneDiagnostic(
@@ -146,6 +148,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
     let assistantSession = AssistantSession()
     let assistantChat: AssistantChatService?
     private let pipeline: TranscriptionPipeline
+    private let speechDetector: SpeechDetecting?
+    private let isNoSpeechGateEnabled: () -> Bool
+    private let startSoundPlayback: @MainActor () -> SoundPlayback?
 
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "VoiceInkEngine")
 
@@ -155,7 +160,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
         transcriptionModelManager: TranscriptionModelManager,
         enhancementService: AIEnhancementService? = nil,
         recorder: Recorder? = nil,
-        captureReadiness: CaptureReadinessController? = nil
+        captureReadiness: CaptureReadinessController? = nil,
+        speechDetector: SpeechDetecting? = nil,
+        isNoSpeechGateEnabled: @escaping () -> Bool = { NoSpeechGateSettings.isEnabled },
+        startSoundPlayback: @escaping @MainActor () -> SoundPlayback? = { SoundManager.shared.lastStartSoundPlayback }
     ) {
         self.modelContext = modelContext
         self.whisperModelManager = whisperModelManager
@@ -188,6 +196,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
             serviceRegistry: serviceRegistry,
             enhancementService: enhancementService
         )
+        self.speechDetector = speechDetector ?? serviceRegistry.fluidAudioTranscriptionService
+        self.isNoSpeechGateEnabled = isNoSpeechGateEnabled
+        self.startSoundPlayback = startSoundPlayback
 
         super.init()
 
@@ -333,6 +344,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             clearPipelineRecordingContext()
             shouldCancelRecording = false
             recordingError = nil
+            clearRecordingNotice()
             partialTranscript = ""
             activeRecordingUseCase = recordingUseCase
             clearActiveRecordingContext()
@@ -683,6 +695,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return
         }
 
+        if await discardsRecordingWithoutSpeech(
+            transcription, audioURL: audioURL, session: session, preparation: preparation
+        ) {
+            return
+        }
+
         let vocabularyPreparation = context?.store.vocabularyPreparation ?? RecordingVocabularyPreparation(
             savedVocabulary: CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
         )
@@ -728,9 +746,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 self.recordingState = state
             },
             shouldCancel: { [weak self] in
-                guard let self else { return false }
-                return self.canceledPipelineTranscriptionIDs.contains(transcriptionID)
-                    || (self.activePipelineTranscriptionID == transcriptionID && self.shouldCancelRecording)
+                self?.isPipelineCancellationRequested(transcriptionID) ?? false
             },
             onCancel: { [weak self, session] in
                 guard let self else { return }
@@ -774,14 +790,24 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private func finishPipeline(
         _ transcription: Transcription, preparation: RecordingTranscriptionPreparation?
     ) async {
-        let transcriptionID = transcription.id
+        let outcome: RecordingTimingTrace.Outcome =
+            transcription.transcriptionStatus == TranscriptionStatus.canceled.rawValue ? .canceled
+            : transcription.transcriptionStatus == TranscriptionStatus.failed.rawValue ? .failed : .completed
+        await finishPipeline(transcriptionID: transcription.id, outcome: outcome, preparation: preparation)
+    }
+
+    @discardableResult
+    private func finishPipeline(
+        transcriptionID: UUID, outcome: RecordingTimingTrace.Outcome,
+        preparation: RecordingTranscriptionPreparation?
+    ) async -> Bool {
         await recordingFinalization.waitUntilFinished()
         let didFinishActivePipeline = activePipelineTranscriptionID == transcriptionID
         if didFinishActivePipeline {
-            if transcription.transcriptionStatus == TranscriptionStatus.failed.rawValue {
+            if outcome == .failed {
                 recordingError = String(localized: "Transcription failed. Check the model or provider in Models.")
             }
-            guard let finalizationID = recordingFinalization.begin() else { return }
+            guard let finalizationID = recordingFinalization.begin() else { return false }
             defer { recordingFinalization.finish(finalizationID) }
             await cleanupResources()
             activePipelineTranscriptionID = nil
@@ -799,11 +825,101 @@ class VoiceInkEngine: NSObject, ObservableObject {
             recordingState = .idle
         }
         if didFinishActivePipeline {
-            let outcome: RecordingTimingTrace.Outcome =
-                transcription.transcriptionStatus == TranscriptionStatus.canceled.rawValue ? .canceled
-                : transcription.transcriptionStatus == TranscriptionStatus.failed.rawValue ? .failed : .completed
             preparation?.timing.mark(.idle, outcome: outcome)
         }
+        return didFinishActivePipeline
+    }
+
+    // MARK: - No-Speech Gate
+
+    /// Discards a live recording without speech before transcription; returns false to continue the pipeline.
+    private func discardsRecordingWithoutSpeech(
+        _ transcription: Transcription, audioURL: URL, session: TranscriptionSession?,
+        preparation: RecordingTranscriptionPreparation?
+    ) async -> Bool {
+        let timing = preparation?.timing
+        guard isNoSpeechGateEnabled() else {
+            timing?.mark(.speechGate, outcome: .skipped)
+            return false
+        }
+        let transcriptionID = transcription.id
+        let startSoundFrames = timing.map { timing in
+            let firstAudio = timing.snapshot.first { $0.phase == .firstAudio }
+            return NoSpeechGate.startSoundFrameCount(
+                playback: startSoundPlayback(), requestNanoseconds: timing.originNanoseconds,
+                firstAudioNanoseconds: firstAudio.map { timing.originNanoseconds + $0.elapsedNanoseconds }
+            )
+        } ?? 0
+        let evaluation = await NoSpeechGate.evaluate(
+            audioURL: audioURL, ignoringLeadingFrames: startSoundFrames, detector: speechDetector
+        )
+        guard let evaluation, evaluation.decision.discardsRecording else {
+            timing?.mark(.speechGate)
+            return false
+        }
+        // An explicit Cancel keeps its canceled History entry.
+        guard !isPipelineCancellationRequested(transcriptionID) else {
+            timing?.mark(.speechGate, outcome: .canceled)
+            return false
+        }
+        timing?.mark(.speechGate, outcome: .discarded)
+
+        // A streaming session must not finalize or deliver its transcript.
+        session?.cancel()
+        let isAssistantFollowUp = activePipelineUseCase.isAssistantFollowUp
+        modelContext.delete(transcription)
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to remove discarded recording from History: \(error, privacy: .public)")
+        }
+        NotificationCenter.default.post(name: .transcriptionDeleted, object: nil)
+        do {
+            try FileManager.default.removeItem(at: audioURL)
+        } catch {
+            logger.error("Failed to remove discarded recording audio: \(error, privacy: .public)")
+        }
+
+        let didFinish = await finishPipeline(
+            transcriptionID: transcriptionID, outcome: .discarded, preparation: preparation
+        )
+        if didFinish, recordingState == .idle, activeRecordingStartID == nil {
+            showNoSpeechNotice(dismissesRecorder: !isAssistantFollowUp)
+        }
+        return true
+    }
+
+    private func isPipelineCancellationRequested(_ transcriptionID: UUID) -> Bool {
+        canceledPipelineTranscriptionIDs.contains(transcriptionID)
+            || (activePipelineTranscriptionID == transcriptionID && shouldCancelRecording)
+    }
+
+    private func showNoSpeechNotice(dismissesRecorder: Bool) {
+        let notice = String(localized: "No speech detected")
+        recordingNotice = notice
+        if let application = NSApp {
+            NSAccessibility.post(
+                element: application, notification: .announcementRequested,
+                userInfo: [.announcement: notice, .priority: NSAccessibilityPriorityLevel.medium.rawValue]
+            )
+        }
+        recordingNoticeTask?.cancel()
+        recordingNoticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled, let self, self.recordingNotice == notice else { return }
+            self.recordingNotice = nil
+            self.recordingNoticeTask = nil
+            guard dismissesRecorder, self.recordingState == .idle,
+                self.recorderUIManager?.isRecorderPanelVisible == true
+            else { return }
+            await self.recorderUIManager?.dismissRecorderPanel()
+        }
+    }
+
+    private func clearRecordingNotice() {
+        recordingNoticeTask?.cancel()
+        recordingNoticeTask = nil
+        recordingNotice = nil
     }
 
     private func selectTriggerWordModeIfNeeded(for text: String) -> String? {

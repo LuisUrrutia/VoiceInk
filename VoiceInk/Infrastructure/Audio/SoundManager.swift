@@ -38,6 +38,11 @@ class SoundManager: ObservableObject {
         playbackEngine.playStartSound()
     }
 
+    /// The start sound can reach the microphone, so the no-speech gate skips it.
+    var lastStartSoundPlayback: SoundPlayback? {
+        playbackEngine.lastStartSoundPlayback
+    }
+
     func playStopSound() {
         guard CustomSoundManager.shared.isSoundEnabled(for: .stop) else { return }
         playbackEngine.playStopSound()

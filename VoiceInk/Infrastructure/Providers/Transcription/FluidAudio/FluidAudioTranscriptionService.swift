@@ -295,3 +295,18 @@ class FluidAudioTranscriptionService: TranscriptionService {
     }
 
 }
+
+extension FluidAudioTranscriptionService: SpeechDetecting {
+    // FluidAudio derives the entry threshold from the negative threshold plus its offset.
+    static let noSpeechGateSegmentation = VadSegmentationConfig(
+        minSpeechDuration: NoSpeechGate.minimumSpeechDuration,
+        negativeThreshold: NoSpeechGate.speechProbabilityThreshold - 0.15,
+        negativeThresholdOffset: 0.15
+    )
+
+    /// Uses the installed Silero model only; nil when VAD is disabled or unavailable.
+    func containsSpeech(in samples: [Float]) async throws -> Bool? {
+        guard let manager = try await vadCache.manager() else { return nil }
+        return try await !manager.segmentSpeech(samples, config: Self.noSpeechGateSegmentation).isEmpty
+    }
+}

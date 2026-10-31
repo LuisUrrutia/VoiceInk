@@ -287,6 +287,7 @@ private final class LifetimeVAD: FluidAudioVADManaging {
     }
     deinit { lifetime.changed(by: -1) }
     func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment] { [] }
+    func segmentSpeech(_ samples: [Float], config: VadSegmentationConfig) async throws -> [VadSegment] { [] }
     func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]] { [] }
 }
 
@@ -296,6 +297,10 @@ private struct VADManagerFixture: FluidAudioVADManaging {
     func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment] {
         if fails { throw VADFixtureError.unavailable }
         return [VadSegment(startTime: 0.25, endTime: 0.5), VadSegment(startTime: 1.5, endTime: 2)]
+    }
+
+    func segmentSpeech(_ samples: [Float], config: VadSegmentationConfig) async throws -> [VadSegment] {
+        try await segmentSpeech(samples)
     }
 
     func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]] {

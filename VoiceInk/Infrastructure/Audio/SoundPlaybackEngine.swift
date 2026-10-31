@@ -2,6 +2,12 @@
 import Foundation
 import os
 
+/// When a sound began playing on the monotonic uptime clock, and how long it lasts.
+struct SoundPlayback: Equatable, Sendable {
+    let startNanoseconds: UInt64
+    let duration: TimeInterval
+}
+
 final class SoundPlaybackEngine: @unchecked Sendable {
     private enum Sound {
         case start
@@ -17,6 +23,11 @@ final class SoundPlaybackEngine: @unchecked Sendable {
     private var escSound: AVAudioPlayer?
     private var customStartSound: AVAudioPlayer?
     private var customStopSound: AVAudioPlayer?
+    private let startPlayback = OSAllocatedUnfairLock<SoundPlayback?>(initialState: nil)
+
+    var lastStartSoundPlayback: SoundPlayback? {
+        startPlayback.withLock { $0 }
+    }
 
     func setup(
         defaultStartURL: URL?,
@@ -79,7 +90,11 @@ final class SoundPlaybackEngine: @unchecked Sendable {
                 player = self.escSound
             }
 
-            player?.play()
+            guard let player, player.play(), sound == .start else { return }
+            let playback = SoundPlayback(
+                startNanoseconds: DispatchTime.now().uptimeNanoseconds, duration: player.duration
+            )
+            self.startPlayback.withLock { $0 = playback }
         }
     }
 
