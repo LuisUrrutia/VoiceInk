@@ -77,6 +77,7 @@ extension ViewType {
         case .models: "books.vertical.fill"
         case .history: "clock.arrow.circlepath"
         case .transcribeAudio: "waveform.badge.plus"
+        case .labs: "flask.fill"
         }
     }
 

@@ -6,10 +6,22 @@ import XCTest
     func testSidebarKeepsEveryFeatureReachableExactlyOnce() {
         let destinations = ViewType.sidebarGroups.flatMap { $0 }
 
-        XCTAssertEqual(Set(destinations), Set(ViewType.allCases))
-        XCTAssertEqual(destinations.count, ViewType.allCases.count)
+        let available = ViewType.allCases.filter { $0.isAvailable() }
+        XCTAssertEqual(Set(destinations), Set(available))
+        XCTAssertEqual(destinations.count, available.count)
         XCTAssertEqual(ViewType.sidebarGroups.first, [.dashboard, .modes, .dictionary])
-        XCTAssertEqual(ViewType.allCases.count, 8)
+        XCTAssertEqual(ViewType.allCases.count, 9)
+    }
+
+    func testLabsIsTheLastSidebarItemOnlyWhileItListsAFeature() {
+        let feature = LabsFeature(id: "navigationFixture", title: "Fixture", summary: "Fixture.")
+        let featureDestinations = ViewType.allCases.filter { $0 != .labs }
+
+        XCTAssertEqual(Set(ViewType.sidebarGroups(labsFeatures: []).flatMap { $0 }), Set(featureDestinations))
+        XCTAssertFalse(ViewType.labs.isAvailable(labsFeatures: []))
+        XCTAssertEqual(ViewType.sidebarGroups(labsFeatures: [feature]).last, [.labs])
+        XCTAssertEqual(Array(ViewType.sidebarGroups(labsFeatures: [feature]).dropLast()), ViewType.sidebarGroups(labsFeatures: []))
+        XCTAssertTrue(ViewType.labs.isAvailable(labsFeatures: [feature]))
     }
 
     func testExistingNotificationRoutesStillResolve() {
@@ -17,12 +29,16 @@ import XCTest
         let original = navigation.selectedView
         defer { navigation.navigate(to: original) }
 
-        for destination in ViewType.allCases {
+        for destination in ViewType.allCases where destination.isAvailable() {
             navigation.navigate(to: destination.rawValue)
             XCTAssertEqual(navigation.selectedView, destination)
         }
         navigation.navigate(to: .models)
         navigation.navigate(to: "unknown")
         XCTAssertEqual(navigation.selectedView, .models)
+        if !ViewType.labs.isAvailable() {
+            navigation.navigate(to: ViewType.labs.rawValue)
+            XCTAssertEqual(navigation.selectedView, .models)
+        }
     }
 }

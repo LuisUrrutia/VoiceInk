@@ -206,7 +206,8 @@ class ImportExportService {
             feedbackSounds: CustomSoundManager.shared.backup(),
             isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
             autoLearnMinimumCorrections: AutoLearnSettings.minimumCorrections,
-            keepMicrophoneReady: UserDefaults.standard.keepMicrophoneReady
+            keepMicrophoneReady: UserDefaults.standard.keepMicrophoneReady,
+            labsFeatures: Labs.backup()
         )
 
         let exportedSettings = BackupFile(

@@ -67,8 +67,14 @@ enum ConfigurationPreferences {
         "AutoLearnDictionaryProvider", "AutoLearnDictionaryModel", "AutoLearnDictionaryReviewSchedule",
     ]
 
-    private static func kind(for key: String) -> Kind? {
+    /// Retired keys and `labs.` keys of features no longer in Labs load without being applied or captured.
+    private static func isIgnored(_ key: String, labsFeatures: [LabsFeature]) -> Bool {
+        retiredKeys.contains(key) || Labs.isRetiredKey(key, features: labsFeatures)
+    }
+
+    private static func kind(for key: String, labsFeatures: [LabsFeature]) -> Kind? {
         if let kind = kinds[key] { return kind }
+        if Labs.feature(forKey: key, in: labsFeatures) != nil { return .boolean }
         let name = key.hasSuffix("_cleared") ? String(key.dropLast(8)) : key
         guard shortcutAction(for: name) != nil else { return nil }
         return key.hasSuffix("_cleared") ? .boolean : .json
@@ -83,13 +89,16 @@ enum ConfigurationPreferences {
         return nil
     }
 
-    static func capture(from defaults: UserDefaults) throws -> [String: ConfigurationValue] {
-        let keys = Set(kinds.keys).union(defaults.dictionaryRepresentation().keys.filter { kind(for: $0) != nil })
+    static func capture(
+        from defaults: UserDefaults, labsFeatures: [LabsFeature] = LabsFeature.all
+    ) throws -> [String: ConfigurationValue] {
+        let keys = Set(kinds.keys).union(labsFeatures.map(\.defaultsKey))
+            .union(defaults.dictionaryRepresentation().keys.filter { kind(for: $0, labsFeatures: labsFeatures) != nil })
         var result: [String: ConfigurationValue] = [:]
         for key in keys.sorted() {
             guard let stored = defaults.object(forKey: key) else { continue }
             let value: ConfigurationValue
-            if kind(for: key) == .json {
+            if kind(for: key, labsFeatures: labsFeatures) == .json {
                 guard let data = stored as? Data else { throw ConfigurationError.invalid("Invalid stored value for \(key).") }
                 var decoded = try JSONDecoder().decode(ConfigurationValue.self, from: data)
                 // Old model archives can predate the Keychain migration. Never export that field.
@@ -107,12 +116,17 @@ enum ConfigurationPreferences {
             }
             result[key] = value
         }
-        try validate(result, defaults: defaults)
+        try validate(result, defaults: defaults, labsFeatures: labsFeatures)
         return result
     }
 
-    static func validate(_ values: [String: ConfigurationValue], defaults: UserDefaults? = nil) throws {
-        for (key, value) in values where !retiredKeys.contains(key) { try validate(value, key: key) }
+    static func validate(
+        _ values: [String: ConfigurationValue], defaults: UserDefaults? = nil,
+        labsFeatures: [LabsFeature] = LabsFeature.all
+    ) throws {
+        for (key, value) in values where !isIgnored(key, labsFeatures: labsFeatures) {
+            try validate(value, key: key, labsFeatures: labsFeatures)
+        }
         let modes: [ModeConfig]
         if let value = values["modeConfigurationsV2"], value != .null {
             modes = try value.decoded(as: [ModeConfig].self)
@@ -151,8 +165,8 @@ enum ConfigurationPreferences {
         }
     }
 
-    private static func validate(_ value: ConfigurationValue, key: String) throws {
-        guard let kind = kind(for: key) else { throw ConfigurationError.invalid("Unknown preference \(key).") }
+    private static func validate(_ value: ConfigurationValue, key: String, labsFeatures: [LabsFeature]) throws {
+        guard let kind = kind(for: key, labsFeatures: labsFeatures) else { throw ConfigurationError.invalid("Unknown preference \(key).") }
         if value == .null { return }
         let valid: Bool
         switch (kind, value) {
@@ -209,12 +223,14 @@ enum ConfigurationPreferences {
         guard Set(values).count == values.count else { throw ConfigurationError.invalid("Duplicate identity in \(key).") }
     }
 
-    static func apply(_ values: [String: ConfigurationValue], to defaults: UserDefaults) throws {
+    static func apply(
+        _ values: [String: ConfigurationValue], to defaults: UserDefaults, labsFeatures: [LabsFeature] = LabsFeature.all
+    ) throws {
         // Prepare every serialized value before changing any preference.
         let encoded = try values.mapValues { try $0.data() }
-        for (key, value) in values where !retiredKeys.contains(key) {
+        for (key, value) in values where !isIgnored(key, labsFeatures: labsFeatures) {
             if value == .null { defaults.removeObject(forKey: key) }
-            else if kind(for: key) == .json { defaults.set(encoded[key], forKey: key) }
+            else if kind(for: key, labsFeatures: labsFeatures) == .json { defaults.set(encoded[key], forKey: key) }
             else { defaults.set(value.propertyList, forKey: key) }
         }
         if let languages = values["SelectedLanguages"], languages != .null {
