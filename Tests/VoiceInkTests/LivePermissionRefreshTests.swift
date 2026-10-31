@@ -340,6 +340,47 @@ final class LivePermissionRefreshTests: XCTestCase {
         XCTAssertEqual(publishes, 0)
     }
 
+    func testShortcutIssueRowOffersTheFixForEachStateAndPollsOnlyForAMissingGrant() {
+        let expected: [(RecordingHotkeyAvailability, RecordingHotkeyAvailability.IssueAction?, Bool)] = [
+            (.needsAccessibility, .openAccessibilitySettings, true),
+            (.needsRestart, .restart, false),
+            (.unavailable, .refresh, false),
+            (.unconfigured, nil, false),
+            (.available, nil, false),
+        ]
+        for (availability, action, polls) in expected {
+            XCTAssertEqual(availability.issueAction, action, "\(availability)")
+            XCTAssertEqual(availability.needsLivePermissionRefresh, polls, "\(availability)")
+        }
+    }
+
+    func testIssueRowStopsPollingWhenAGrantTurnsIntoARestartOrRecovery() throws {
+        let monitor = makeMonitor()
+        let model = IssueRowModel()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [], backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: IssueRowView(model: model, monitor: monitor))
+        defer { window.contentView = nil }
+        func settle() {
+            window.contentView?.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        settle()
+        XCTAssertTrue(monitor.isLiveRefreshing)
+
+        model.availability = .needsRestart
+        settle()
+        XCTAssertFalse(monitor.isLiveRefreshing, "A pending restart keeps the row without polling")
+
+        model.availability = .needsAccessibility
+        settle()
+        XCTAssertTrue(monitor.isLiveRefreshing)
+
+        model.availability = .available
+        settle()
+        XCTAssertFalse(monitor.isLiveRefreshing, "Recovery removes the row and its owner")
+    }
+
     // MARK: Relaunch
 
     func testRelaunchIsBlockedWhileARecordingOrTestIsBusy() {
@@ -450,6 +491,23 @@ private struct BranchView: View {
             Text("Allow Accessibility").livePermissionRefresh(monitor: monitor)
         } else {
             Text("Insights")
+        }
+    }
+}
+
+private final class IssueRowModel: ObservableObject {
+    @Published var availability = RecordingHotkeyAvailability.needsAccessibility
+}
+
+/// Mirrors Settings' shortcut issue row: shown for an issue action, polling while a grant is missing.
+private struct IssueRowView: View {
+    @ObservedObject var model: IssueRowModel
+    let monitor: PermissionMonitor
+
+    var body: some View {
+        if model.availability.issueAction != nil {
+            Text(model.availability.message)
+                .livePermissionRefresh(isActive: model.availability.needsLivePermissionRefresh, monitor: monitor)
         }
     }
 }

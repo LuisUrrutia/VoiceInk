@@ -47,7 +47,7 @@ struct CaptureReadinessView: View {
             HStack {
                 Text(shortcuts.hotkeyAvailability.message).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                if shortcuts.hotkeyAvailability == .needsRestart {
+                if shortcuts.hotkeyAvailability.issueAction == .restart {
                     RestartVoiceInkButton(engine: engine).buttonStyle(.borderless)
                 }
                 Button("Shortcuts") { MainWindowNavigation.shared.navigate(to: .settings) }
@@ -60,7 +60,7 @@ struct CaptureReadinessView: View {
     private var needsPermissionRefresh: Bool {
         let snapshot = readiness.snapshot
         return snapshot.microphonePermission != .granted || (snapshot.usesPaste && !snapshot.accessibilityGranted)
-            || shortcuts.hotkeyAvailability == .needsAccessibility
+            || shortcuts.hotkeyAvailability.needsLivePermissionRefresh
     }
 
     private var status: some View {

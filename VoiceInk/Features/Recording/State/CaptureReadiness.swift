@@ -18,6 +18,21 @@ enum RecordingHotkeyAvailability: Equatable {
         }
     }
 
+    enum IssueAction: Equatable { case openAccessibilitySettings, restart, refresh }
+
+    /// The fix offered beside a recording-shortcut problem; nil when there is no problem to show.
+    var issueAction: IssueAction? {
+        switch self {
+        case .needsAccessibility: .openAccessibilitySettings
+        case .needsRestart: .restart
+        case .unavailable: .refresh
+        case .unconfigured, .available: nil
+        }
+    }
+
+    /// Only a missing grant can change while the row is visible; a pending restart cannot.
+    var needsLivePermissionRefresh: Bool { self == .needsAccessibility }
+
     static func resolve(
         isMonitoring: Bool, hasShortcut: Bool, accessibilityTrusted: Bool, accessibilityGrantedSinceLaunch: Bool
     ) -> Self {
