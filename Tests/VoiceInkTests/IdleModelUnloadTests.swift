@@ -400,9 +400,9 @@ final class IdleModelUnloadTests: XCTestCase {
         XCTAssertNotNil(probe.batchManager)
         XCTAssertNotNil(probe.streamingManager)
         await service.unloadIdleModels()
-        XCTAssertNil(probe.asrModel)
-        XCTAssertNil(probe.batchManager)
-        XCTAssertNil(probe.streamingManager)
+        await assertReleased(probe.asrModel)
+        await assertReleased(probe.batchManager)
+        await assertReleased(probe.streamingManager)
         _ = try await service.getOrLoadModels(for: .v3)
         try await service.prewarmUnifiedModel(isRealtime: false)
 
@@ -421,7 +421,7 @@ final class IdleModelUnloadTests: XCTestCase {
         XCTAssertNotNil(probe.asrModel)
 
         await service.unloadIdleModels()
-        XCTAssertNil(probe.asrModel, "the loaded AsrManager must not keep the models alive")
+        await assertReleased(probe.asrModel, "the loaded AsrManager must not keep the models alive")
         try await service.loadModel(for: v3)
 
         XCTAssertNotNil(probe.asrModel)
@@ -452,8 +452,8 @@ final class IdleModelUnloadTests: XCTestCase {
         engine.recordingState = .idle
         await advance(coordinator, by: IdleModelUnloadCoordinator.busyRecheckInterval)
 
-        XCTAssertNil(engineProbe.asrModel)
-        XCTAssertNil(prewarmProbe.asrModel)
+        await assertReleased(engineProbe.asrModel)
+        await assertReleased(prewarmProbe.asrModel)
         withExtendedLifetime((panel, prewarm)) {}
     }
 
@@ -470,10 +470,10 @@ final class IdleModelUnloadTests: XCTestCase {
         await prewarm.prewarm()
         XCTAssertNotNil(probe.batchManager)
         await advance(coordinator, by: .seconds(15 * 60))
-        XCTAssertNil(probe.batchManager)
+        await assertReleased(probe.batchManager)
         await prewarm.prewarm()
         XCTAssertEqual(probe.log.events, ["load batch"], "wake prewarm must not reload an idle-unloaded model")
-        XCTAssertNil(probe.batchManager)
+        await assertReleased(probe.batchManager)
         coordinator.begin(.use).release()
         await prewarm.prewarm()
 
@@ -559,7 +559,7 @@ final class IdleModelUnloadTests: XCTestCase {
         await session.finishPreparation()
         recording.release()
 
-        XCTAssertNil(firstManager.value, "the unload released the streaming model the session would have reused")
+        await assertReleased(firstManager.value, "the unload released the streaming model the session would have reused")
         XCTAssertEqual(
             probe.log.events,
             ["load streaming", "unload started", "unload finished", "session created", "load streaming", "load batch", "transcribe 16000"]
@@ -656,6 +656,15 @@ final class IdleModelUnloadTests: XCTestCase {
     private func waitUntil(timeout: Duration = .seconds(5), _ condition: @MainActor () -> Bool) async {
         let deadline = ContinuousClock.now + timeout
         while !condition(), ContinuousClock.now < deadline { await Task.yield() }
+    }
+
+    /// A completed load `Task` still holds its result until the runtime releases it, after its awaiter resumes.
+    private func assertReleased(
+        _ reference: @autoclosure @MainActor () -> AnyObject?, _ message: String = "",
+        file: StaticString = #filePath, line: UInt = #line
+    ) async {
+        await waitUntil { reference() == nil }
+        XCTAssertNil(reference(), message, file: file, line: line)
     }
 
     private var missingWhisperModel: ImportedWhisperModel { ImportedWhisperModel(fileBaseName: "missing-idle-unload") }
