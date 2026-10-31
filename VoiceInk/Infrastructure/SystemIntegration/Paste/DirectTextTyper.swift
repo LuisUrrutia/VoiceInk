@@ -59,7 +59,7 @@ enum DirectTextTyper {
         return .posted
     }
 
-    private static func unicodeChunks(for text: String) -> [[UniChar]]? {
+    static func unicodeChunks(for text: String) -> [[UniChar]]? {
         var chunks: [[UniChar]] = []
         var buffer: [UniChar] = []
         buffer.reserveCapacity(chunkSize)

@@ -26,6 +26,7 @@ class CursorPaster {
     // Smart punctuation reads the focused field, which needs settled focus.
     private static let smartPunctuationFocusDelay: TimeInterval = 0.20
     private static let textContextReader = PasteTextContextReader()
+    @MainActor private static let chromiumPasteRace = ChromiumPasteRace()
 
     @MainActor private static let session = PasteSession(
         pasteboard: .general,
@@ -62,6 +63,7 @@ class CursorPaster {
             adjustText: { text, target, method in
                 await adjustedText(text, target: target, method: method)
             },
+            losesSyntheticPaste: { chromiumPasteRace.losesSyntheticPaste($0) },
             autoLearn: { text, processID, posted in
                 guard AutoLearnSettings.isEnabled else { return nil }
                 return await AutoLearnService.shared.pasteDidFinish(

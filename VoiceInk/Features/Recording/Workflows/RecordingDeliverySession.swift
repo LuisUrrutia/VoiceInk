@@ -1,6 +1,6 @@
 import AppKit
 
-struct PasteApplication: Equatable {
+struct PasteApplication: Hashable {
     let processID: pid_t
     let bundleIdentifier: String?
     var launchDate: Date? = nil

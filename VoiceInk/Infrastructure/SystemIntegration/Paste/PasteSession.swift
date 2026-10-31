@@ -5,20 +5,23 @@ struct PastePolicy: Equatable {
     let settleDelay: TimeInterval
     let usesRemoteClipboard: Bool
 
-    static func resolve(for application: PasteApplication, preferredMethod: PasteMethod, pushedClipboard: Bool = false)
-        -> PastePolicy
-    {
+    static func resolve(
+        for application: PasteApplication, preferredMethod: PasteMethod, pushedClipboard: Bool = false,
+        losesSyntheticPaste: Bool = false
+    ) -> PastePolicy {
         // Remote typing is meant for remote viewers, so it bypasses clipboard synchronization.
         if application.bundleIdentifier == "com.apple.ScreenSharing", preferredMethod != .remoteTyping {
             return PastePolicy(method: .appleScript, settleDelay: pushedClipboard ? 0.2 : 0.8, usesRemoteClipboard: true)
         }
+        // No settle delay closes Chromium 155/156's paste race, so these destinations get typed text.
+        let method = losesSyntheticPaste && preferredMethod.usesClipboard ? .directTyping : preferredMethod
         let settleDelay: TimeInterval
-        switch preferredMethod {
+        switch method {
         case .standard, .directTyping: settleDelay = 0.02
         case .appleScript: settleDelay = 0.05
         case .remoteTyping: settleDelay = 0.2
         }
-        return PastePolicy(method: preferredMethod, settleDelay: settleDelay, usesRemoteClipboard: false)
+        return PastePolicy(method: method, settleDelay: settleDelay, usesRemoteClipboard: false)
     }
 }
 
@@ -35,6 +38,7 @@ final class PasteSession {
         var typeText: (PasteMethod, String, FinishAndSendKey, @escaping () -> Bool) async
             -> (result: CursorPaster.PasteResult, failure: String?) = { _, _, _, _ in (.commandNotPosted, nil) }
         var adjustText: (String, PasteApplication, PasteMethod) async -> String = { text, _, _ in text }
+        var losesSyntheticPaste: (PasteApplication) -> Bool = { _ in false }
         var autoLearn: (String, pid_t, Bool) async -> UInt64?
         var cancelAutoLearn: (UInt64) async -> Void
         var send: (FinishAndSendKey, PastePolicy) -> Void
@@ -98,7 +102,13 @@ final class PasteSession {
             return true
         }
         let copyFailure = String(localized: "Could not copy the transcription to the clipboard.")
-        if preferredMethod.usesClipboard {
+        let expectedTarget: PasteApplication?
+        switch destination {
+        case .currentApplication: expectedTarget = environment.frontmost()
+        case .originalApplication(let original): expectedTarget = original
+        }
+        // Typing must leave the clipboard untouched, so decide before writing it.
+        if preferredMethod.usesClipboard, !(expectedTarget.map(environment.losesSyntheticPaste) ?? false) {
             guard takeClipboard(text) else {
                 environment.reportFailure(copyFailure)
                 return finish(.commandNotPosted)
@@ -159,9 +169,13 @@ final class PasteSession {
             }
             timing?.mark(.destinationReady)
 
-            var policy = PastePolicy.resolve(for: target, preferredMethod: preferredMethod)
+            let losesSyntheticPaste = environment.losesSyntheticPaste(target)
+            var policy = PastePolicy.resolve(
+                for: target, preferredMethod: preferredMethod, losesSyntheticPaste: losesSyntheticPaste
+            )
             if policy.method.usesClipboard, owner == nil {
-                // Screen Sharing replaces a typing preference with clipboard delivery.
+                // Screen Sharing replaces a typing preference with clipboard delivery, and
+                // the focused application may have changed since the Chromium check.
                 guard takeClipboard(text) else { return fail(.commandNotPosted, cause: copyFailure) }
             }
             let deliveredText = await environment.adjustText(text, target, policy.method)
@@ -183,7 +197,10 @@ final class PasteSession {
                         push.cancel()
                     }
                     if mayContinue() { pendingRemotePush = nil }
-                    policy = PastePolicy.resolve(for: target, preferredMethod: preferredMethod, pushedClipboard: true)
+                    policy = PastePolicy.resolve(
+                        for: target, preferredMethod: preferredMethod, pushedClipboard: true,
+                        losesSyntheticPaste: losesSyntheticPaste
+                    )
                 } catch is CancellationError {
                     return fail(.cancelled)
                 } catch {

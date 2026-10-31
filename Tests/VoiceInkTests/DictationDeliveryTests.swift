@@ -397,6 +397,133 @@ final class DictationDeliveryTests: XCTestCase {
         XCTAssertTrue(fixture.sentKeys.isEmpty)
     }
 
+    func testChromiumPasteRaceTypesForClipboardPreferencesWithoutTouchingClipboard() async {
+        for method in [PasteMethod.standard, .appleScript] {
+            let fixture = Fixture()
+            fixture.frontmost = Fixture.remote
+            fixture.board.setString("original", forType: .string)
+            let timing = RecordingTimingTrace()
+
+            let result = await fixture.paste(
+                destination: .originalApplication(Fixture.chromium), restore: true, method: method,
+                sendKey: .enter, timing: timing
+            )
+
+            XCTAssertEqual(result.result, .commandPosted)
+            XCTAssertEqual(result.target, Fixture.chromium)
+            XCTAssertEqual(fixture.activations, [Fixture.chromium])
+            XCTAssertEqual(fixture.methods, [.directTyping])
+            XCTAssertEqual(fixture.typedTexts, ["transcript"])
+            XCTAssertTrue(fixture.postedTexts.isEmpty)
+            XCTAssertTrue(fixture.delays.contains(0.02))
+            XCTAssertEqual(fixture.board.string(forType: .string), "original")
+            XCTAssertEqual(fixture.learnedTexts, ["transcript"])
+            XCTAssertEqual(fixture.learnedProcesses, [Fixture.chromium.processID])
+            XCTAssertEqual(fixture.cancelledGenerations, [42])
+            XCTAssertEqual(fixture.sentKeys, [.enter])
+            XCTAssertEqual(timing.snapshot.map(\.phase), [.requestReceived, .destinationReady, .clipboardSettled, .pasteCommandPosted])
+            XCTAssertTrue(timing.snapshot.allSatisfy { $0.outcome == .completed })
+        }
+    }
+
+    func testChromiumPasteRaceKeepsTypingPreferencesAndOtherDestinationsPaste() {
+        let directTyping = PastePolicy.resolve(for: Fixture.chromium, preferredMethod: .directTyping, losesSyntheticPaste: true)
+        let remoteTyping = PastePolicy.resolve(for: Fixture.chromium, preferredMethod: .remoteTyping, losesSyntheticPaste: true)
+        let screenSharing = PastePolicy.resolve(for: Fixture.remote, preferredMethod: .standard, losesSyntheticPaste: true)
+        let unaffected = PastePolicy.resolve(for: Fixture.chromium, preferredMethod: .standard)
+
+        XCTAssertEqual(directTyping, PastePolicy(method: .directTyping, settleDelay: 0.02, usesRemoteClipboard: false))
+        XCTAssertEqual(remoteTyping, PastePolicy(method: .remoteTyping, settleDelay: 0.2, usesRemoteClipboard: false))
+        XCTAssertEqual(screenSharing.method, .appleScript)
+        XCTAssertEqual(unaffected, PastePolicy(method: .standard, settleDelay: 0.02, usesRemoteClipboard: false))
+    }
+
+    func testManualPasteIntoCurrentChromiumApplicationTypes() async {
+        let fixture = Fixture()
+        fixture.frontmost = Fixture.chromium
+        fixture.board.setString("original", forType: .string)
+
+        let result = await fixture.paste(text: "line one\nline two")
+
+        XCTAssertEqual(result.result, .commandPosted)
+        XCTAssertTrue(fixture.activations.isEmpty)
+        XCTAssertEqual(fixture.methods, [.directTyping])
+        XCTAssertEqual(fixture.typedTexts, ["line one\nline two"])
+        XCTAssertEqual(fixture.board.string(forType: .string), "original")
+    }
+
+    func testChromiumTypingFailureLeavesTextOnClipboardWithoutAutoLearnOrSend() async {
+        for typed in [CursorPaster.PasteResult.commandNotPosted, .commandPartiallyPosted] {
+            let fixture = Fixture()
+            fixture.frontmost = Fixture.chromium
+            fixture.board.setString("original", forType: .string)
+            fixture.typeResult = typed
+            let timing = RecordingTimingTrace()
+
+            let result = await fixture.paste(sendKey: .enter, timing: timing)
+
+            XCTAssertEqual(result.result, typed)
+            XCTAssertEqual(fixture.board.string(forType: .string), "transcript")
+            XCTAssertEqual(fixture.failures.count, 1)
+            XCTAssertTrue(fixture.learnedProcesses.isEmpty)
+            XCTAssertTrue(fixture.sentKeys.isEmpty)
+            XCTAssertEqual(timing.snapshot.first { $0.phase == .pasteCommandPosted }?.outcome, .failed)
+        }
+    }
+
+    func testChromiumTypingStopsForCancellationFocusChangeOrNewerSession() async {
+        for interruption in ["cancel", "focus", "newer"] {
+            let fixture = Fixture()
+            fixture.board.setString("original", forType: .string)
+            let recording = RecordingDeliverySession(destination: .originalApplication(Fixture.chromium))
+            fixture.frontmost = Fixture.chromium
+            var interrupted = false
+            fixture.onType = {
+                guard !interrupted else { return }
+                interrupted = true
+                switch interruption {
+                case "cancel": recording.cancel()
+                case "focus": fixture.frontmost = Fixture.local
+                default: _ = await fixture.paste(text: "newer", destination: .originalApplication(Fixture.local))
+                }
+            }
+
+            let result = await fixture.paste(
+                destination: recording.destination, sendKey: .enter, timing: recording.timing
+            ) { recording.isCancelled }
+
+            XCTAssertFalse(result.result.didPostPasteCommand, interruption)
+            XCTAssertFalse(fixture.typedTexts.contains("transcript"), interruption)
+            XCTAssertFalse(fixture.sentKeys.contains(.enter), interruption)
+            XCTAssertFalse(fixture.learnedProcesses.contains(Fixture.chromium.processID), interruption)
+            let clipboard = fixture.board.string(forType: .string)
+            switch interruption {
+            case "cancel": XCTAssertEqual(clipboard, "original")
+            case "focus": XCTAssertEqual(clipboard, "transcript")
+            default: XCTAssertEqual(clipboard, "newer")
+            }
+        }
+    }
+
+    func testChromiumCheckFollowsFocusChangesBeforeDelivery() async {
+        let fixture = Fixture()
+        fixture.board.setString("original", forType: .string)
+        // The current destination is chosen at delivery time, after the clipboard decision.
+        var checks = 0
+        fixture.frontmostOverride = {
+            checks += 1
+            return checks == 1 ? Fixture.chromium : Fixture.local
+        }
+
+        let result = await fixture.paste()
+
+        XCTAssertEqual(result.result, .commandPosted)
+        XCTAssertEqual(result.target, Fixture.local)
+        XCTAssertEqual(fixture.methods, [.standard])
+        XCTAssertEqual(fixture.postedTexts, ["transcript"])
+        XCTAssertTrue(fixture.typedTexts.isEmpty)
+    }
+
     private func makeDefaults() -> UserDefaults {
         let name = "DictationDeliveryTests.\(UUID())"
         let defaults = UserDefaults(suiteName: name)!
@@ -407,6 +534,7 @@ final class DictationDeliveryTests: XCTestCase {
     @MainActor private final class Fixture {
         static let local = PasteApplication(processID: 100, bundleIdentifier: "test.editor")
         static let remote = PasteApplication(processID: 200, bundleIdentifier: "com.apple.ScreenSharing")
+        static let chromium = PasteApplication(processID: 300, bundleIdentifier: "com.google.Chrome")
         let board = NSPasteboard(name: NSPasteboard.Name("DictationDeliveryTests.\(UUID())"))
         var frontmost: PasteApplication? = local
         var running = true
@@ -414,12 +542,17 @@ final class DictationDeliveryTests: XCTestCase {
         var activationChangesFocus = true
         var pushFails = false
         var postSucceeds = true
+        var typeResult = CursorPaster.PasteResult.commandPosted
+        var typedTexts: [String] = []
+        var onType: (() async -> Void)?
+        var frontmostOverride: (() -> PasteApplication?)?
         var activations: [PasteApplication] = []
         var methods: [PasteMethod] = []
         var pushedTexts: [String] = []
         var postedTexts: [String] = []
         var delays: [TimeInterval] = []
         var learnedProcesses: [pid_t] = []
+        var learnedTexts: [String] = []
         var cancelledGenerations: [UInt64] = []
         var sentKeys: [FinishAndSendKey] = []
         var failures: [String] = []
@@ -428,7 +561,7 @@ final class DictationDeliveryTests: XCTestCase {
         var onAsyncWait: ((TimeInterval) async -> Void)?
         var onPost: (() -> Void)?
         lazy var session = PasteSession(pasteboard: board, environment: .init(
-            frontmost: { self.frontmost },
+            frontmost: { self.frontmostOverride?() ?? self.frontmost },
             isRunning: { _ in self.running },
             activate: {
                 self.activations.append($0)
@@ -454,7 +587,19 @@ final class DictationDeliveryTests: XCTestCase {
                 self.postedTexts.append(self.board.string(forType: .string) ?? "")
                 return self.postSucceeds
             },
-            autoLearn: { _, process, _ in self.learnedProcesses.append(process); return 42 },
+            typeText: { method, text, _, canPost in
+                await self.onType?()
+                guard canPost() else { return (.commandNotPosted, nil) }
+                self.methods.append(method)
+                self.typedTexts.append(text)
+                return (self.typeResult, nil)
+            },
+            losesSyntheticPaste: { $0 == Self.chromium },
+            autoLearn: { text, process, _ in
+                self.learnedTexts.append(text)
+                self.learnedProcesses.append(process)
+                return 42
+            },
             cancelAutoLearn: { self.cancelledGenerations.append($0) },
             send: { key, _ in self.sentKeys.append(key) },
             reportFailure: { self.failures.append($0) }
