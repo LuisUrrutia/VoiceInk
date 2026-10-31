@@ -302,6 +302,44 @@ final class VocabularySoundsLikeTests: XCTestCase {
         XCTAssertEqual(words.first { $0.word == "Plain" }?.soundsLike, [])
     }
 
+    func testArchiveExportMergesDuplicateSpellingsWithoutMutatingTheStore() async throws {
+        let source = try makeContext()
+        let section = VocabularySection(name: "Work")
+        source.insert(section)
+        let words = [
+            VocabularyWord(word: "VoiceInk", dateAdded: Date(timeIntervalSince1970: 1), soundsLike: ["voice ink"]),
+            VocabularyWord(word: "voiceink", dateAdded: Date(timeIntervalSince1970: 2), soundsLike: ["VOICE INK", "voicing"]),
+            VocabularyWord(word: "VoiceInk", dateAdded: Date(timeIntervalSince1970: 3), sectionID: section.id, soundsLike: ["work ink"]),
+            VocabularyWord(word: "VOICEINK", dateAdded: Date(timeIntervalSince1970: 4), sectionID: section.id, soundsLike: ["work voice"]),
+            VocabularyWord(word: "VoiceInk", dateAdded: Date(timeIntervalSince1970: 5), sectionID: UUID(), soundsLike: ["v ink"]),
+        ]
+        for word in words { source.insert(word) }
+        try source.save()
+        let originalIDs = Set(words.map(\.persistentModelID))
+        let originalSpellings = words.map(\.soundsLike)
+
+        let data = try DictionaryImportExportService.encodeArchive(
+            DictionaryImportExportService.makeArchive(modelContext: source)
+        )
+        let archive = try DictionaryImportExportService.decodeArchiveData(data).archive
+        let destination = try makeContext()
+        _ = try await DictionaryImportExportService.apply(archive: archive, mode: .replace, modelContext: destination)
+
+        let restored = try destination.fetch(FetchDescriptor<VocabularyWord>())
+        XCTAssertEqual(restored.count, 2)
+        let unsectioned = try XCTUnwrap(restored.first { $0.sectionID == nil })
+        XCTAssertEqual(unsectioned.word, "VoiceInk")
+        XCTAssertEqual(unsectioned.dateAdded, Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(unsectioned.soundsLike, ["voice ink", "voicing", "v ink"])
+        let sectioned = try XCTUnwrap(restored.first { $0.sectionID == section.id })
+        XCTAssertEqual(sectioned.word, "VoiceInk")
+        XCTAssertEqual(sectioned.dateAdded, Date(timeIntervalSince1970: 3))
+        XCTAssertEqual(sectioned.soundsLike, ["work ink", "work voice"])
+        XCTAssertEqual(Set(try source.fetch(FetchDescriptor<VocabularyWord>()).map(\.persistentModelID)), originalIDs)
+        XCTAssertEqual(words.map(\.soundsLike), originalSpellings)
+        XCTAssertFalse(source.hasChanges)
+    }
+
     func testLegacyArchivesImportWithoutSpellings() async throws {
         let sectionID = UUID().uuidString
         let archives = [
