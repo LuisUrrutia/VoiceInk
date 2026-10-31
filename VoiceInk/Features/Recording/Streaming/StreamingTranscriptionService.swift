@@ -106,6 +106,32 @@ enum StreamingStopResult {
     case requiresBatchFallback
 }
 
+/// Durations of the stop phases of the most recent finish, for logs and measurement.
+struct StreamingFinishPhases: Equatable {
+    var drain: Duration?
+    var commit: Duration?
+    var wait: Duration?
+}
+
+private enum StreamingFinishOutcome {
+    case finalized(String)
+    /// The provider's terminal acknowledgement ended without a transcript.
+    case unconfirmed
+    case failed(Error)
+    case deadlineExceeded(Task<Void, Never>)
+    case cancelled(Task<Void, Never>)
+
+    var label: String {
+        switch self {
+        case .finalized: "finalized"
+        case .unconfirmed: "unconfirmed"
+        case .failed: "failed"
+        case .deadlineExceeded: "deadline"
+        case .cancelled: "cancelled"
+        }
+    }
+}
+
 private enum StreamingFinalizationWait {
     case provider(AsyncStream<String>)
     case committedEvent(AsyncStream<Void>)
@@ -125,20 +151,25 @@ class StreamingTranscriptionService {
     private var committedSegments: [String] = []
     private let fluidAudioService: FluidAudioTranscriptionService?
     private let providerFactory: ((any TranscriptionModel) -> StreamingTranscriptionProvider)?
+    private let finishDeadlineSleep: @Sendable (Duration) async throws -> Void
+    private var activeFinish: (outcomes: AsyncStream<StreamingFinishOutcome>.Continuation, task: Task<Void, Never>)?
     private var onPartialTranscript: ((String) -> Void)?
     private let metrics = StreamingMetrics()
     private var stopStartedAt: Date?
     private var firstPartialLogged = false
     private var firstCommitLogged = false
+    private(set) var lastFinishPhases = StreamingFinishPhases()
 
     init(
         fluidAudioService: FluidAudioTranscriptionService? = nil,
         onPartialTranscript: ((String) -> Void)? = nil,
-        providerFactory: ((any TranscriptionModel) -> StreamingTranscriptionProvider)? = nil
+        providerFactory: ((any TranscriptionModel) -> StreamingTranscriptionProvider)? = nil,
+        finishDeadlineSleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.fluidAudioService = fluidAudioService
         self.onPartialTranscript = onPartialTranscript
         self.providerFactory = providerFactory
+        self.finishDeadlineSleep = finishDeadlineSleep
     }
 
     deinit {
@@ -149,7 +180,7 @@ class StreamingTranscriptionService {
         commitSignal?.finish()
     }
 
-    /// Signal used to notify `waitForFinalCommit` when a new committed segment arrives.
+    /// Signal used to notify `finishStream` when a new committed segment arrives.
     private var commitSignal: AsyncStream<Void>.Continuation?
 
     /// Whether the streaming connection is fully established and actively sending.
@@ -199,8 +230,10 @@ class StreamingTranscriptionService {
         }
     }
 
-    /// Stops streaming and follows the provider's requested finalization path.
-    func stopAndFinalize() async throws -> StreamingStopResult {
+    /// Stops streaming and follows the provider's requested finalization path. Draining, committing and the
+    /// final transcript share the provider's `finishDeadline`, measured from this call; past it, the recording
+    /// uses batch transcription when `batchFallbackAvailable`, and never the partial committed text.
+    func stopAndFinalize(batchFallbackAvailable: Bool = true) async throws -> StreamingStopResult {
         guard let provider = provider, state == .streaming else {
             throw StreamingTranscriptionError.notConnected
         }
@@ -226,62 +259,67 @@ class StreamingTranscriptionService {
             "Streaming stop requested receivedChunks=\(beforeDrain.receivedChunks, privacy: .public) sentChunks=\(beforeDrain.sentChunks, privacy: .public) droppedChunks=\(beforeDrain.droppedChunks, privacy: .public) receivedBytes=\(beforeDrain.receivedBytes, privacy: .public) sentBytes=\(beforeDrain.sentBytes, privacy: .public) droppedBytes=\(beforeDrain.droppedBytes, privacy: .public)"
         )
 
-        // Finish the chunk source so the send loop drains remaining chunks and exits naturally.
-        await drainRemainingChunks()
-
-        // Providers with a documented terminal acknowledgement expose an authoritative
-        // full-transcript stream. All other providers retain the existing committed-event behavior.
-        let finalizationWait: StreamingFinalizationWait
-        if let finalizationEvents = provider.finalizationEvents {
-            finalizationWait = .provider(finalizationEvents)
-        } else {
-            // Set up the commit signal BEFORE sending commit to avoid a race with the response.
-            let (signalStream, signalContinuation) = AsyncStream.makeStream(of: Void.self)
-            self.commitSignal = signalContinuation
-            finalizationWait = .committedEvent(signalStream)
+        let deadline = provider.finishDeadline
+        let outcome = await finishWithinDeadline(provider, deadline: deadline)
+        if let stopStartedAt {
+            logger.notice(
+                "Streaming stop finished outcome=\(outcome.label, privacy: .public) elapsed=\(Date().timeIntervalSince(stopStartedAt), format: .fixed(precision: 3), privacy: .public)s deadline=\(deadline, privacy: .public)"
+            )
+        }
+        if state == .cancelled {
+            if case .deadlineExceeded(let finishing) = outcome { cancelTeardownIfNeeded(finishing) }
+            throw CancellationError()
         }
 
-        // Send commit to finalize any remaining audio
-        do {
-            try await provider.commit()
-        } catch {
-            commitSignal?.finish()
-            commitSignal = nil
-            logger.error("Failed to send commit: \(error, privacy: .public)")
+        switch outcome {
+        case .finalized(let text):
+            state = .done
+            await cleanupStreaming()
+            return .finalized(text: text)
+        case .unconfirmed:
+            logger.warning("Provider did not confirm full stream finalization; using batch fallback")
+            state = .done
+            await cleanupStreaming()
+            return .requiresBatchFallback
+        case .failed(let error):
+            logger.error("Streaming finish failed: \(error, privacy: .public)")
             state = .failed
             await cleanupStreaming()
             throw error
-        }
-
-        let finalText: String
-        switch finalizationWait {
-        case .provider(let events):
-            let finalization = await waitForExplicitFinalization(events: events)
-            guard finalization.received else {
-                logger.warning("Provider did not confirm full stream finalization; using batch fallback")
-                state = .done
-                await cleanupStreaming()
-                return .requiresBatchFallback
-            }
-            finalText = finalization.text
-        case .committedEvent(let signalStream):
-            finalText = await waitForFinalCommit(signalStream: signalStream)
-        }
-        if let stopStartedAt {
-            logger.notice(
-                "Streaming stop completed elapsed=\(Date().timeIntervalSince(stopStartedAt), format: .fixed(precision: 3), privacy: .public)s finalChars=\(finalText.count, privacy: .public)"
+        case .deadlineExceeded(let finishing):
+            // The stalled finish keeps running in the background; finishCancellation awaits it.
+            let partial = committedSegments.joined(separator: " ")
+            logger.warning(
+                "Streaming finish exceeded its deadline; batchFallback=\(batchFallbackAvailable, privacy: .public) partialChars=\(partial.count, privacy: .public)"
             )
+            state = .done
+            tearDownInBackground(awaiting: finishing)
+            // Partial committed text would paste a truncated transcript; only streaming-only providers keep it.
+            return batchFallbackAvailable ? .requiresBatchFallback : .finalized(text: partial)
+        case .cancelled(let finishing):
+            cancelTeardownIfNeeded(finishing)
+            throw CancellationError()
         }
-
-        state = .done
-        await cleanupStreaming()
-
-        return .finalized(text: finalText)
     }
 
     /// Cancels the streaming session without waiting for results.
     func cancel() {
         state = .cancelled
+        let finish = activeFinish
+        activeFinish = nil
+        if let finish { finish.outcomes.yield(.cancelled(finish.task)) }
+        tearDownInBackground(awaiting: finish?.task)
+        logger.notice("Streaming cancelled")
+    }
+
+    private func cancelTeardownIfNeeded(_ finishing: Task<Void, Never>) {
+        guard !finishing.isCancelled else { return }
+        state = .cancelled
+        tearDownInBackground(awaiting: finishing)
+    }
+
+    /// Stops all streaming work without awaiting it; `finishCancellation` awaits the teardown.
+    private func tearDownInBackground(awaiting finishing: Task<Void, Never>?) {
         onPartialTranscript = nil
         let eventConsumer = eventConsumerTask
         let sender = sendTask
@@ -289,6 +327,7 @@ class StreamingTranscriptionService {
         eventConsumerTask = nil
         sendTask?.cancel()
         sendTask = nil
+        finishing?.cancel()
         chunkSource.finish()
 
         // Clean up commit signal if waiting
@@ -298,18 +337,18 @@ class StreamingTranscriptionService {
         let providerToDisconnect = provider
         provider = nil
 
-        if providerToDisconnect != nil || eventConsumer != nil || sender != nil {
+        if providerToDisconnect != nil || eventConsumer != nil || sender != nil || finishing != nil {
             let previousCancellation = cancellationTask
             cancellationTask = Task {
                 await previousCancellation?.value
                 await providerToDisconnect?.disconnect()
                 await sender?.value
                 await eventConsumer?.value
+                await finishing?.value
             }
         }
 
         committedSegments = []
-        logger.notice("Streaming cancelled")
     }
 
     func finishCancellation() async {
@@ -445,65 +484,85 @@ class StreamingTranscriptionService {
         }
     }
 
-    /// Waits for the server to acknowledge our explicit commit, with a 10-second timeout.
-    private func waitForFinalCommit(signalStream: AsyncStream<Void>) async -> String {
-        // Race: wait for commit acknowledgment vs timeout
-        let receivedInTime = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { @MainActor in
-                for await _ in signalStream {
-                    return true
-                }
-                return false
+    /// Runs drain, commit and the final wait, and returns the first of their outcome, the deadline or cancellation.
+    private func finishWithinDeadline(
+        _ provider: StreamingTranscriptionProvider, deadline: Duration
+    ) async -> StreamingFinishOutcome {
+        let (outcomes, continuation) = AsyncStream.makeStream(of: StreamingFinishOutcome.self)
+        // Unstructured, so a finish that ignores cancellation (a CoreML pass) cannot hold the deadline open.
+        let finishing = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                continuation.yield(try await self.finishStream(provider))
+            } catch {
+                continuation.yield(.failed(error))
             }
-
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)  // 10 seconds
-                return false
-            }
-
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
         }
-        logger.notice(
-            "Streaming final wait finished received=\(receivedInTime, privacy: .public) segments=\(self.committedSegments.count, privacy: .public)"
-        )
-
-        // Clean up the signal
-        commitSignal?.finish()
-        commitSignal = nil
-
-        if !receivedInTime && committedSegments.isEmpty {
-            logger.warning("No transcript received from streaming")
+        activeFinish = (continuation, finishing)
+        let sleep = finishDeadlineSleep
+        let timer = Task {
+            guard (try? await sleep(deadline)) != nil else { return }
+            continuation.yield(.deadlineExceeded(finishing))
         }
-
-        return committedSegments.isEmpty ? "" : committedSegments.joined(separator: " ")
+        let outcome = await withTaskCancellationHandler {
+            var iterator = outcomes.makeAsyncIterator()
+            return await iterator.next() ?? .cancelled(finishing)
+        } onCancel: {
+            continuation.yield(.cancelled(finishing))
+        }
+        continuation.finish()
+        timer.cancel()
+        activeFinish = nil
+        return outcome
     }
 
-    /// Waits for a provider's documented end-of-stream acknowledgement and authoritative full transcript.
-    private func waitForExplicitFinalization(events: AsyncStream<String>) async -> (received: Bool, text: String) {
-        let result = await withTaskGroup(of: (Bool, String).self) { group in
-            group.addTask {
-                for await text in events {
-                    return (true, text)
-                }
-                return (false, "")
-            }
+    private func finishStream(_ provider: StreamingTranscriptionProvider) async throws -> StreamingFinishOutcome {
+        lastFinishPhases = StreamingFinishPhases()
+        let clock = ContinuousClock()
+        var phaseStart = clock.now
+        // Finish the chunk source so the send loop drains remaining chunks and exits naturally.
+        await drainRemainingChunks()
+        try Task.checkCancellation()
+        lastFinishPhases.drain = clock.now - phaseStart
+        phaseStart = clock.now
 
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                return (false, "")
-            }
-
-            let result = await group.next() ?? (false, "")
-            group.cancelAll()
-            return result
+        // Providers with a documented terminal acknowledgement expose an authoritative
+        // full-transcript stream. All other providers retain the existing committed-event behavior.
+        let finalizationWait: StreamingFinalizationWait
+        if let finalizationEvents = provider.finalizationEvents {
+            finalizationWait = .provider(finalizationEvents)
+        } else {
+            // Set up the commit signal BEFORE sending commit to avoid a race with the response.
+            let (signalStream, signalContinuation) = AsyncStream.makeStream(of: Void.self)
+            self.commitSignal = signalContinuation
+            finalizationWait = .committedEvent(signalStream)
         }
 
-        logger.notice(
-            "Streaming explicit finalization finished received=\(result.0, privacy: .public) chars=\(result.1.count, privacy: .public)"
-        )
-        return (result.0, result.1)
+        // Send commit to finalize any remaining audio
+        do {
+            try await provider.commit()
+        } catch {
+            commitSignal?.finish()
+            commitSignal = nil
+            throw error
+        }
+        try Task.checkCancellation()
+        lastFinishPhases.commit = clock.now - phaseStart
+        phaseStart = clock.now
+
+        switch finalizationWait {
+        case .provider(let events):
+            var iterator = events.makeAsyncIterator()
+            let text = await iterator.next()
+            lastFinishPhases.wait = clock.now - phaseStart
+            return text.map { .finalized($0) } ?? .unconfirmed
+        case .committedEvent(let signalStream):
+            for await _ in signalStream { break }
+            commitSignal?.finish()
+            commitSignal = nil
+            lastFinishPhases.wait = clock.now - phaseStart
+            return .finalized(committedSegments.joined(separator: " "))
+        }
     }
 
     private func cleanupStreaming() async {

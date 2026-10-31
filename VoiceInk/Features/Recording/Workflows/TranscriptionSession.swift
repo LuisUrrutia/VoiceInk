@@ -151,7 +151,7 @@ final class StreamingTranscriptionSession: TranscriptionSession {
             do {
                 let start = Date()
                 logger.notice("Streaming stop/transcribe started model=\(model.displayName, privacy: .public)")
-                let result = try await streamingService.stopAndFinalize()
+                let result = try await streamingService.stopAndFinalize(batchFallbackAvailable: !requiresStreaming)
                 try checkCancellation()
                 switch result {
                 case .finalized(let text):
@@ -171,7 +171,9 @@ final class StreamingTranscriptionSession: TranscriptionSession {
         }
 
         stopStreaming()
-        await finishPreparation()
+        // A stream abandoned at its finish deadline may still be running; the owning preparation awaits
+        // its teardown, so batch only waits for startup.
+        await startupTask?.value
         try checkCancellation()
 
         let fallbackStart = Date()
