@@ -124,8 +124,12 @@ final class MeetingCallMonitor {
                 browsers.insert(browser)
             }
         }
-        if let recordedCall, recordedCall.provider == .meet, let browser = recordedCall.browser {
-            // The recorded Meet call lasts while its browser uses the microphone, whatever tab is in front.
+        // A recorded or snoozed Meet call lasts while its browser uses the microphone, whatever tab is in front, so
+        // switching tabs neither ends a recording nor restarts the minute before another offer.
+        let ownedMeetBrowser = recordedCall?.provider == .meet
+            ? recordedCall?.browser : (detector.isSnoozed(.meet) ? callBrowsers[.meet] : nil)
+        if !detector.isSnoozed(.meet), recordedCall?.provider != .meet { callBrowsers[.meet] = nil }
+        if let browser = ownedMeetBrowser {
             if browsers.contains(browser) { providers.insert(.meet) }
         } else {
             for browser in browsers where await isOnMeet(browser, at: now) {
@@ -212,6 +216,8 @@ final class MeetingCallMonitor {
     }
 
     private func record(_ provider: MeetingProvider, automatically: Bool) async {
+        // Two calls can become stable in one observation; the first start wins and owns the detected-call state.
+        guard !dependencies.recorder.isRecording, !dependencies.recorder.isStarting else { return }
         let title = provider.callName + " " + Date().formatted(date: .abbreviated, time: .shortened)
         recordedCall = (provider, provider == .meet ? callBrowsers[.meet] : nil)
         recordedCallEndedWhileStarting = false
