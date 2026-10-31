@@ -221,6 +221,78 @@ final class NoSpeechGateTests: XCTestCase {
         XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .discarded)
     }
 
+    func testNoSpeechNoticeKeepsTheNotchRecorderExpanded() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fixture = try makeRecording(
+            samples: silence(16_000), url: directory.appendingPathComponent("notch.wav"),
+            directory: directory, detector: SpeechDetectorFixture(verdict: false)
+        )
+        let view = NotchRecorderView(
+            stateProvider: fixture.engine, recorder: fixture.engine.recorder,
+            assistantSession: fixture.engine.assistantSession,
+            onRecordButtonTapped: {}, onCloseTapped: {}, onAssistantFollowUp: { _ in }
+        )
+
+        await fixture.engine.toggleRecord()
+        await fulfillment(of: [fixture.released], timeout: 3)
+
+        XCTAssertEqual(fixture.engine.recordingState, .idle)
+        XCTAssertEqual(view.displayState, .active)
+        try await Task.sleep(for: .seconds(1.4))
+        XCTAssertNil(fixture.engine.recordingNotice)
+        XCTAssertEqual(view.displayState, .collapsed)
+    }
+
+    func testPendingGateDoesNotReplaceThePreviousLastResult() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let detector = SpeechDetectorFixture(verdict: false, isHeld: true)
+        let fixture = try makeRecording(
+            samples: noise(rmsDBFS: -30, count: 16_000),
+            url: directory.appendingPathComponent("pending.wav"), directory: directory, detector: detector
+        )
+        let previous = Transcription(text: "Previous dictation", duration: 1, transcriptionStatus: .completed)
+        fixture.engine.modelContext.insert(previous)
+        try fixture.engine.modelContext.save()
+
+        let stop = Task { await fixture.engine.toggleRecord() }
+        await fulfillment(of: [detector.entered], timeout: 3)
+        let duringEvaluation = LastTranscriptionService.getLastTranscription(from: fixture.engine.modelContext)
+        detector.release()
+        await stop.value
+        await fulfillment(of: [fixture.released], timeout: 3)
+
+        XCTAssertEqual(duringEvaluation?.id, previous.id)
+        XCTAssertEqual(LastTranscriptionService.getLastTranscription(from: fixture.engine.modelContext)?.id, previous.id)
+        XCTAssertEqual(try history(in: fixture.engine).map(\.id), [previous.id])
+    }
+
+    func testLastResultSkipsPendingAndPreservesLegacyAndCanceledHistory() throws {
+        let container = try ModelContainer(
+            for: Transcription.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let context = ModelContext(container)
+        let legacy = Transcription(text: "Legacy result", duration: 1)
+        legacy.transcriptionStatus = nil
+        legacy.timestamp = Date(timeIntervalSince1970: 1)
+        let pending = Transcription(text: "", duration: 0)
+        pending.timestamp = Date(timeIntervalSince1970: 3)
+        context.insert(legacy)
+        context.insert(pending)
+        try context.save()
+
+        let lastBeforeCancellation = LastTranscriptionService.getLastTranscription(from: context)
+        let canceled = Transcription(text: "", duration: 1, transcriptionStatus: .canceled)
+        canceled.timestamp = Date(timeIntervalSince1970: 2)
+        context.insert(canceled)
+        try context.save()
+        let lastAfterCancellation = LastTranscriptionService.getLastTranscription(from: context)
+
+        XCTAssertEqual(lastBeforeCancellation?.id, legacy.id)
+        XCTAssertEqual(lastAfterCancellation?.id, canceled.id)
+    }
+
     func testStartSoundHeardByTheMicrophoneDoesNotCountAsSpeech() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

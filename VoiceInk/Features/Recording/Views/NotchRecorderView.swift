@@ -16,14 +16,14 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
     // MARK: - Display State
 
-    private enum DisplayState: Equatable {
+    enum DisplayState: Equatable {
         case collapsed
         case active
         case liveText
         case assistant
     }
 
-    private var displayState: DisplayState {
+    var displayState: DisplayState {
         if assistantSession.isVisible {
             return .assistant
         }
@@ -33,6 +33,8 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             let shouldShowLive = showLiveTranscript && !stateProvider.partialTranscript.isEmpty
             return shouldShowLive ? .liveText : .active
         case .starting, .transcribing, .enhancing:
+            return .active
+        case .idle where stateProvider.recordingNotice != nil:
             return .active
         default:
             return .collapsed
