@@ -131,7 +131,7 @@ class Recorder: NSObject, ObservableObject {
         audioRestorationTask = nil
         if applyRecordingEffects {
             pauseMedia(sessionID: playbackSessionID)
-            muteSystemAudio(sessionID: playbackSessionID)
+            quietSystemAudio(sessionID: playbackSessionID)
         }
 
         let coreAudioRecorder = recorder ?? CoreAudioRecorder()
@@ -261,11 +261,12 @@ class Recorder: NSObject, ObservableObject {
         audioRestorationTask?.cancel()
         audioRestorationTask = Task { [mediaController, playbackController] in
             if let sessionID {
-                await mediaController.unmuteSystemAudio(sessionID: sessionID)
+                await mediaController.restoreSystemAudio(sessionID: sessionID)
             }
-            // A muted output must be audible before the release tone plays.
-            if let afterOutputUnmuted, !Task.isCancelled {
-                afterOutputUnmuted()
+            // A muted or lowered output must be audible before the release tone plays.
+            if let afterOutputUnmuted {
+                await mediaController.waitForLoweredOutputRestoration()
+                if !Task.isCancelled { afterOutputUnmuted() }
             }
             if let sessionID {
                 await playbackController.resumeMedia(sessionID: sessionID)
@@ -273,13 +274,15 @@ class Recorder: NSObject, ObservableObject {
         }
     }
 
-    private func muteSystemAudio(sessionID: UUID) {
+    private func quietSystemAudio(sessionID: UUID) {
         audioMuteTask?.cancel()
         audioMuteTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(nanoseconds: self.recordingAudioActionDelayNanoseconds)
             guard !Task.isCancelled else { return }
+            // Mute and Lower are exclusive; each call acts only when its behavior is selected.
             _ = self.mediaController.muteSystemAudio(sessionID: sessionID)
+            self.mediaController.lowerSystemAudio(sessionID: sessionID)
         }
     }
 

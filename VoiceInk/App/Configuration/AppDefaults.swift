@@ -45,6 +45,8 @@ enum AppDefaults {
 
             // Audio & Media
             "isSystemMuteEnabled": true,
+            MediaController.loweringKey: false,
+            MediaController.loweringLevelKey: MediaController.defaultLoweringLevel,
             "audioResumptionDelay": 0.0,
             "isPauseMediaEnabled": false,
             UserDefaults.Keys.keepMicrophoneReady: false,

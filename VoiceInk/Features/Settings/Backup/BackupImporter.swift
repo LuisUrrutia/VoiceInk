@@ -181,8 +181,11 @@ enum BackupImporter {
             UserDefaults.standard.set(audioRetention, forKey: CleanupSettingsKeys.audioRetentionPeriod)
         }
 
-        if let muteSystem = general.isSystemMuteEnabled {
-            mediaController.isSystemMuteEnabled = muteSystem
+        mediaController.recordingOutputBehavior = general.recordingOutputBehavior(
+            restoring: mediaController.recordingOutputBehavior
+        )
+        if let loweringLevel = general.systemAudioLoweringLevel {
+            mediaController.systemAudioLoweringLevel = loweringLevel
         }
         if let pauseMedia = general.isPauseMediaEnabled {
             playbackController.isPauseMediaEnabled = pauseMedia

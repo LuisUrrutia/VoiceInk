@@ -42,7 +42,21 @@ struct AudioSetupView: View {
                 Section {
                     IdleMicrophoneSettingsView(recorder: engine.recorder)
 
-                    Toggle("Mute Audio While Recording", isOn: $mediaController.isSystemMuteEnabled)
+                    LabeledContent("System Audio While Recording") {
+                        Picker("System Audio While Recording", selection: $mediaController.recordingOutputBehavior) {
+                            Text("Unchanged").tag(RecordingOutputAudioBehavior.unchanged)
+                            Text("Mute").tag(RecordingOutputAudioBehavior.mute)
+                            Text("Lower").tag(RecordingOutputAudioBehavior.lower)
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+
+                    if mediaController.recordingOutputBehavior == .lower {
+                        LabeledContent("Lowered Volume") {
+                            loweredVolumeSlider
+                        }
+                    }
 
                     Toggle("Pause Media While Recording", isOn: $playbackController.isPauseMediaEnabled)
 
@@ -367,8 +381,25 @@ struct AudioSetupView: View {
         .labelsHidden()
     }
 
+    private var loweredVolumeSlider: some View {
+        let percentage = mediaController.systemAudioLoweringLevel.formatted(.percent.precision(.fractionLength(0)))
+        return HStack(spacing: 8) {
+            Slider(value: $mediaController.systemAudioLoweringLevel, in: 0...1, step: 0.05) {
+                Text("Lowered Volume")
+            }
+            .labelsHidden()
+            .frame(maxWidth: 180)
+            .accessibilityValue(percentage)
+            Text(percentage)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 40, alignment: .trailing)
+        }
+        .help("Percentage of the current volume kept while recording. Changes apply to the next recording.")
+    }
+
     private var canEditResumeDelay: Bool {
-        mediaController.isSystemMuteEnabled || playbackController.isPauseMediaEnabled
+        mediaController.recordingOutputBehavior != .unchanged || playbackController.isPauseMediaEnabled
     }
 
     private func movePrioritizedDeviceUp(_ device: PrioritizedDevice) {

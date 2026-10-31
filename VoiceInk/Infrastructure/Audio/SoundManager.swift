@@ -45,7 +45,16 @@ class SoundManager: ObservableObject {
 
     func playStopSound() {
         guard CustomSoundManager.shared.isSoundEnabled(for: .stop) else { return }
-        playbackEngine.playStopSound()
+        let mediaController = MediaController.shared
+        guard mediaController.isRestoringLoweredOutput else {
+            playbackEngine.playStopSound()
+            return
+        }
+        // A lowered output would play the tone quietly; the caller's delivery does not wait.
+        Task { [playbackEngine] in
+            await mediaController.waitForLoweredOutputRestoration()
+            playbackEngine.playStopSound()
+        }
     }
 
     func playEscSound() {
