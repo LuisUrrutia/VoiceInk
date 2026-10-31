@@ -11,6 +11,7 @@ enum ShortcutAction: Hashable, Sendable {
     case openQuickHistory
     case quickAddToDictionary
     case toggleMeeting
+    case toggleAnnotate
     case mode(UUID)
     case recorderPanelEscape
     case recorderPanelReturn
@@ -51,6 +52,8 @@ enum ShortcutAction: Hashable, Sendable {
             return "quickAddToDictionary"
         case .toggleMeeting:
             return "toggleMeeting"
+        case .toggleAnnotate:
+            return "toggleAnnotate"
         case .mode(let id):
             return "mode_\(id.uuidString)"
         case .recorderPanelEscape:
@@ -84,6 +87,8 @@ enum ShortcutAction: Hashable, Sendable {
             return String(localized: "Quick Add to Dictionary")
         case .toggleMeeting:
             return String(localized: "Record or Stop Meeting")
+        case .toggleAnnotate:
+            return String(localized: "Start or Stop Annotation")
         case .mode(let id):
             if let config = ModeManager.shared.getConfiguration(with: id) {
                 return String(format: String(localized: "%@ Mode"), config.name)
@@ -110,6 +115,7 @@ enum ShortcutAction: Hashable, Sendable {
         .openQuickHistory,
         .quickAddToDictionary,
         .toggleMeeting,
+        .toggleAnnotate,
     ]
 
     static let recorderPanelStoredActions: [Self] = [
@@ -129,11 +135,20 @@ enum ShortcutAction: Hashable, Sendable {
 
     /// Global utility actions whose feature is on; a disabled Labs feature keeps its stored binding unregistered.
     static func activeGlobalUtilityActions(defaults: UserDefaults = .standard) -> [Self] {
-        globalUtilityActions.filter { $0 != .toggleMeeting || Labs.isEnabled(.meetings, in: defaults) }
+        globalUtilityActions.filter { action in action.labsFeature.map { Labs.isEnabled($0, in: defaults) } ?? true }
+    }
+
+    /// The Labs feature whose switch registers this shortcut.
+    var labsFeature: LabsFeature? {
+        switch self {
+        case .toggleMeeting: .meetings
+        case .toggleAnnotate: .annotate
+        default: nil
+        }
     }
 
     /// Stored actions outside modes, including those added after the KeyboardShortcuts migration.
-    static let storedGlobalActions: [Self] = legacyKeyboardShortcutActions + [.rawRecording, .toggleMeeting]
+    static let storedGlobalActions: [Self] = legacyKeyboardShortcutActions + [.rawRecording, .toggleMeeting, .toggleAnnotate]
 
     var dictationProcessing: DictationProcessing {
         self == .rawRecording ? .raw : .standard

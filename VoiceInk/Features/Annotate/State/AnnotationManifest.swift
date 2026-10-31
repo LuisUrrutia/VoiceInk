@@ -1,0 +1,106 @@
+import CoreGraphics
+import Foundation
+
+extension LabsFeature {
+    static let annotate = LabsFeature(
+        id: "annotate",
+        title: "Annotate",
+        summary: "Record your screen while you narrate, then copy a timestamped bundle for an AI agent."
+    )
+}
+
+/// `annotation.json`, the bundle's machine-readable record. Times are seconds since the annotation started;
+/// screen positions are normalized to the recorded display (0...1, origin top-left).
+struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
+    static let currentVersion = 1
+    static let fileName = "annotation.json"
+    static let videoFileName = "recording.mp4"
+    static let narrationFileName = "narration.wav"
+    static let summaryFileName = "summary.md"
+
+    enum Status: String, Codable, Sendable {
+        case recording, processing, ready, failed
+    }
+
+    struct Display: Codable, Equatable, Sendable {
+        var id: UInt32
+        var width: Int
+        var height: Int
+        var scale: Double
+    }
+
+    var version = Self.currentVersion
+    var id: UUID
+    var createdAt: Date
+    var status: Status = .recording
+    var duration: TimeInterval = 0
+    var display: Display?
+    /// Where the video's first frame lies on the annotation timeline.
+    var videoOffset: TimeInterval?
+    var narrationTimeline = MeetingTrackTimeline()
+    var transcript: [TimedTranscriptSegment] = []
+    var transcriptModel: String?
+    var failure: String?
+
+    init(id: UUID = UUID(), createdAt: Date = Date()) {
+        self.id = id
+        // Whole seconds survive ISO 8601 dates unchanged.
+        self.createdAt = Date(timeIntervalSince1970: createdAt.timeIntervalSince1970.rounded(.down))
+    }
+}
+
+/// `Annotations/<id>/` folders in the build's isolated persistence directory: owner-only, manifests replaced
+/// atomically.
+struct AnnotationStore: Sendable {
+    let rootURL: URL
+    var movesToTrash = true
+
+    static let `default` = AnnotationStore(
+        rootURL: VoiceInkPersistence.directoryURL.appendingPathComponent("Annotations", isDirectory: true)
+    )
+
+    func directory(for id: UUID) -> URL { rootURL.appendingPathComponent(id.uuidString, isDirectory: true) }
+
+    func url(for id: UUID, file: String) -> URL { directory(for: id).appendingPathComponent(file) }
+
+    func createDirectory(for id: UUID) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fileManager.createDirectory(at: directory(for: id), withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    }
+
+    func save(_ manifest: AnnotationManifest) throws {
+        let url = url(for: manifest.id, file: AnnotationManifest.fileName)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(manifest).write(to: url, options: [.atomic])
+        protect(url)
+    }
+
+    func load(id: UUID) throws -> AnnotationManifest {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(AnnotationManifest.self, from: Data(contentsOf: url(for: id, file: AnnotationManifest.fileName)))
+    }
+
+    func loadAll() -> [AnnotationManifest] {
+        let entries = (try? FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil)) ?? []
+        return entries.compactMap { UUID(uuidString: $0.lastPathComponent).flatMap { try? load(id: $0) } }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func delete(id: UUID) throws {
+        let directory = directory(for: id)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        if movesToTrash {
+            try FileManager.default.trashItem(at: directory, resultingItemURL: nil)
+        } else {
+            try FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    func protect(_ url: URL) {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+}

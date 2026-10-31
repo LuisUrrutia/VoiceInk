@@ -171,6 +171,8 @@ struct VoiceInkApp: App {
 
         MeetingTranscriptionCoordinator.shared.configure(engine: engine)
         MeetingRecorder.shared.startMaintenance()
+        AnnotationProcessor.shared.configure(engine: engine)
+        AnnotationCapsuleController.shared.start()
         MeetingIndicatorController.shared.start()
         MeetingCallMonitor.shared.start()
 

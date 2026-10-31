@@ -269,7 +269,7 @@ enum ShortcutMigration {
             return ["openHistoryWindow"]
         case .quickAddToDictionary:
             return ["quickAddToDictionary"]
-        case .toggleMeeting:
+        case .toggleMeeting, .toggleAnnotate:
             return []
         case .mode(let id):
             return ["mode_\(id.uuidString)", "powerMode_\(id.uuidString)"]
