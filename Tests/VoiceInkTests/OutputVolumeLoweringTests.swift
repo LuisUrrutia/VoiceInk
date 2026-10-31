@@ -6,6 +6,8 @@ import XCTest
 private final class FakeOutputVolume: OutputVolumeControl {
     var values: [Float32]
     var failNextWrite = false
+    /// Accepts writes without applying them, like an output that acknowledges them late.
+    var defersWrites = false
     private(set) var writeCount = 0
 
     init(_ values: [Float32]) { self.values = values }
@@ -20,6 +22,7 @@ private final class FakeOutputVolume: OutputVolumeControl {
             values[0] = newValues[0]
             return false
         }
+        if defersWrites { return true }
         // Hardware quantizes scalars.
         values = newValues.map { ($0 * 1000).rounded() / 1000 }
         return true
@@ -135,6 +138,25 @@ final class OutputVolumeLoweringTests: XCTestCase {
         ramp.restoreImmediately()
 
         XCTAssertEqual(device.values, [0.5, 0.5])
+        XCTAssertTrue(ramp.isFinished)
+    }
+
+    func testLateAcknowledgementAfterSettlingIsStillRestored() throws {
+        let device = FakeOutputVolume([0.5, 0.5])
+        let ramp = try XCTUnwrap(OutputVolumeRamp(control: device))
+        device.defersWrites = true
+        ramp.retarget(factor: 0.2)
+        ramp.advance(toElapsed: 1)
+        XCTAssertFalse(ramp.isSettled)
+        ramp.advance(toElapsed: OutputVolumeRamp.settleLimit)
+        XCTAssertTrue(ramp.isSettled)
+
+        device.defersWrites = false
+        device.values = [0.1, 0.1]
+        ramp.retarget(factor: nil)
+        ramp.advance(toElapsed: 1)
+
+        assertClose(device.values, [0.5, 0.5])
         XCTAssertTrue(ramp.isFinished)
     }
 

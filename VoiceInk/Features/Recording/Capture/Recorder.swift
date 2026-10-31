@@ -263,9 +263,10 @@ class Recorder: NSObject, ObservableObject {
             if let sessionID {
                 await mediaController.restoreSystemAudio(sessionID: sessionID)
             }
-            // A muted output must be audible before the release tone plays.
-            if let afterOutputUnmuted, !Task.isCancelled {
-                afterOutputUnmuted()
+            // A muted or lowered output must be audible before the release tone plays.
+            if let afterOutputUnmuted {
+                await mediaController.waitForLoweredOutputRestoration()
+                if !Task.isCancelled { afterOutputUnmuted() }
             }
             if let sessionID {
                 await playbackController.resumeMedia(sessionID: sessionID)

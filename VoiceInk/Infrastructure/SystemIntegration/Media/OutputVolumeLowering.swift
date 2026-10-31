@@ -45,8 +45,7 @@ final class OutputVolumeRamp {
             isFinished = true
             return
         }
-        if isSettled, current.map({ !Self.matches($0, accepted) }) ?? true {
-            // A change after settling is the user's; leave it alone.
+        if isSettled, isUserChange(current) {
             isFinished = true
             return
         }
@@ -76,8 +75,14 @@ final class OutputVolumeRamp {
     func restoreImmediately() {
         guard !isFinished else { return }
         isFinished = true
-        if isSettled, control.read().map({ !Self.matches($0, accepted) }) ?? true { return }
+        if isSettled, isUserChange(control.read()) { return }
         _ = control.write(original)
+    }
+
+    /// A change after settling is the user's, unless it is a late acknowledgement of the target.
+    private func isUserChange(_ current: [Float32]?) -> Bool {
+        guard let current else { return true }
+        return !Self.matches(current, accepted) && !Self.matches(current, target)
     }
 
     private func rollBack() {
