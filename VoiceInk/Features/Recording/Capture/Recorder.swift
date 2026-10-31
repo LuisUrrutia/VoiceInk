@@ -21,6 +21,7 @@ class Recorder: NSObject, ObservableObject {
     private var keepReadyCancellable: AnyCancellable?
     private var permissionCheckCancellable: AnyCancellable?
     private var observerAvailabilityCancellable: AnyCancellable?
+    private var meetingStartCancellable: AnyCancellable?
     private var isSystemSleeping = false
     var recordingDeviceChangeObserver: NSObjectProtocol?
     var recordingDeviceNotificationTask: Task<Void, Never>?
@@ -96,6 +97,10 @@ class Recorder: NSObject, ObservableObject {
                 Task { @MainActor in
                     self?.updateIdleCapture(reason: "setting")
                 }
+            }
+        meetingStartCancellable = NotificationCenter.default.publisher(for: MeetingRecorder.willStartNotification)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.releaseOutputEffectsForMeeting() }
             }
         observerAvailabilityCancellable = NotificationCenter.default.publisher(for: ShortcutMonitor.captureAvailabilityDidChange)
             .sink { [weak self] _ in
@@ -305,12 +310,23 @@ class Recorder: NSObject, ObservableObject {
         }
     }
 
+    /// A meeting starting during a dictation cancels its pending effects and restores any it applied, so the call
+    /// stays audible from the meeting's start.
+    private func releaseOutputEffectsForMeeting() {
+        guard isDictationCapture, !hasStoppedRecording, let playbackSessionID else { return }
+        audioMuteTask?.cancel()
+        audioMuteTask = nil
+        mediaPauseTask?.cancel()
+        mediaPauseTask = nil
+        restoreRecordingAudio(sessionID: playbackSessionID, afterOutputUnmuted: nil)
+    }
+
     private func quietSystemAudio(sessionID: UUID) {
         audioMuteTask?.cancel()
         audioMuteTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(nanoseconds: self.recordingAudioActionDelayNanoseconds)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.meetingCoordinator?.suppressesDictationOutputEffects != true else { return }
             self.outputEffects.quietOutput(sessionID)
         }
     }

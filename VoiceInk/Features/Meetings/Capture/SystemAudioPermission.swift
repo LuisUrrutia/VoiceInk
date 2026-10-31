@@ -21,7 +21,8 @@ protocol SystemAudioAuthorizing: Sendable {
 /// offers no public API. A missing symbol degrades to `.unknown`, never to a crash.
 struct TCCSystemAudioAuthorization: SystemAudioAuthorizing {
     private typealias Preflight = @convention(c) (CFString, CFDictionary?) -> Int32
-    private typealias Request = @convention(c) (CFString, CFDictionary?, @convention(block) (Bool) -> Void) -> Void
+    // TCC keeps the completion block until the user answers, so it must be escaping.
+    private typealias Request = @convention(c) (CFString, CFDictionary?, @escaping @convention(block) (Bool) -> Void) -> Void
 
     private struct Symbols: @unchecked Sendable {
         let preflight: Preflight

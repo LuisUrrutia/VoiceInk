@@ -276,6 +276,55 @@ import os
         XCTAssertEqual(timeline.anchors.count, 1)
     }
 
+    func testMicrophoneBlockAfterAGapStartsANewAnchor() async throws {
+        let fixture = makeRecorder()
+        try await fixture.recorder.start()
+        let start = fixture.clock.now
+        fixture.microphone.emit(frames: 1_600, capturedThrough: start + 100_000_000)
+        fixture.microphone.emit(frames: 1_600, capturedThrough: start + 1_100_000_000)
+        let stopped = await fixture.recorder.stop()
+
+        let timeline = try XCTUnwrap(stopped?.track(.microphone)?.timeline)
+        XCTAssertEqual(timeline.time(forFrame: 800), 0.05, accuracy: 0.001)
+        XCTAssertEqual(timeline.time(forFrame: 1_600), 1.0, accuracy: 0.001)
+        XCTAssertEqual(timeline.time(forFrame: 2_400), 1.05, accuracy: 0.001)
+    }
+
+    func testAMeetingStartingDuringADictationCancelsItsPendingMute() async throws {
+        let directory = root.appendingPathComponent("overlap", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let coordinator = RecordingCoordinatorSpy()
+        coordinator.suppresses = false
+        var quiets = 0
+        let recorder = Recorder(
+            hardware: FakeMeetingMicrophoneHardware(), deviceManager: MeetingAudioDevices(userDefaults: defaults),
+            defaults: defaults, isMicrophoneAuthorized: { true }, meetingCoordinator: coordinator,
+            outputEffects: RecordingOutputEffects(pauseMedia: { _ in }, quietOutput: { _ in quiets += 1 })
+        )
+        try await recorder.startRecording(toOutputFile: directory.appendingPathComponent("a.wav"))
+
+        try await Task.sleep(for: .milliseconds(50))
+        coordinator.suppresses = true
+        NotificationCenter.default.post(name: MeetingRecorder.willStartNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(400))
+        await recorder.stopRecording()
+
+        XCTAssertEqual(quiets, 0)
+    }
+
+    func testAVisibleRecorderPanelUpdatesTheMeetingReservationWhenTheSwitchChanges() async throws {
+        let ui = RecorderUIManager()
+        let panel = RecorderPanelShortcutManager(recorderUIManager: ui, defaults: defaults)
+        ui.isRecorderPanelVisible = true
+        try await waitUntil { panel.reservedActions.contains(.toggleMeeting) }
+
+        Labs.setEnabled(false, for: .meetings, in: defaults)
+        try await waitUntil { !panel.reservedActions.contains(.toggleMeeting) }
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+        try await waitUntil { panel.reservedActions.contains(.toggleMeeting) }
+        ui.isRecorderPanelVisible = false
+    }
+
     func testDictationAlreadyCapturingWhenTheMeetingStartsIsExcludedFromItsStart() async throws {
         let fixture = makeRecorder()
         fixture.recorder.dictationCaptureBegan()

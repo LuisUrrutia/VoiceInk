@@ -20,6 +20,7 @@ final class MeetingMicrophoneCapture {
     private struct Progress {
         var result = MeetingTrackCaptureResult()
         var meetingStartNanoseconds: UInt64 = 0
+        var writtenFrames = 0
     }
 
     init(
@@ -127,13 +128,18 @@ final class MeetingMicrophoneCapture {
         if heard { progress.withLock { $0.result.heardSignal = true } }
     }
 
-    /// The written frame count ends where that input block's capture ended, whatever the converter's chunking.
+    /// Each input block's frames end where its capture ended, whatever the converter's chunking. The anchor sits
+    /// at the block's first frame, so a block that resumes after a gap starts the new anchor.
     nonisolated private static func record(
         writtenFrames: Int, capturedEnd: UInt64, into progress: OSAllocatedUnfairLock<Progress>
     ) {
         progress.withLock { progress in
+            let firstFrame = progress.writtenFrames
+            progress.writtenFrames = writtenFrames
+            guard writtenFrames > firstFrame else { return }
             let end = Double(Int64(bitPattern: capturedEnd &- progress.meetingStartNanoseconds)) / 1_000_000_000
-            progress.result.timeline.record(frame: writtenFrames, at: end)
+            let start = end - Double(writtenFrames - firstFrame) / MeetingTrackTimeline.sampleRate
+            progress.result.timeline.record(frame: firstFrame, at: start)
         }
     }
 }
