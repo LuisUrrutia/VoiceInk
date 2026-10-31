@@ -7,6 +7,7 @@ struct AudioSetupView: View {
     @ObservedObject private var audioDeviceManager = AudioDeviceManager.shared
     @ObservedObject private var mediaController = MediaController.shared
     @ObservedObject private var playbackController = PlaybackController.shared
+    @AppStorage(UserDefaults.Keys.keepMicrophoneReady) private var keepMicrophoneReady = false
     @State private var microphoneSourceBeforePriorityOrder: MicrophoneSourceSelection = .systemDefault
     @State private var refreshIconRotation = 0.0
     @State private var requirementsMicrophone: PrioritizedDevice?
@@ -40,6 +41,22 @@ struct AudioSetupView: View {
                 }
 
                 Section {
+                    LabeledContent("Idle Microphone") {
+                        Picker("Idle Microphone", selection: $keepMicrophoneReady) {
+                            Text("Release When Idle").tag(false)
+                            Text("Keep Ready").tag(true)
+                        }
+                        .labelsHidden()
+                    }
+                    .pickerStyle(.menu)
+
+                    Text(
+                        "Keep Ready starts recording without waiting for the microphone and includes up to 0.45 seconds spoken before the shortcut. The microphone stays open while VoiceInk is idle: the macOS microphone indicator stays on, battery use increases, and Bluetooth headsets stay in their lower-quality call mode. Idle audio stays only in memory and is never saved."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                     Toggle("Mute Audio While Recording", isOn: $mediaController.isSystemMuteEnabled)
 
                     Toggle("Pause Media While Recording", isOn: $playbackController.isPauseMediaEnabled)

@@ -13,6 +13,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         var frameCount: UInt32 = 0
         var channelCount: UInt32 = 0
         var sampleRate: Double = 0
+        var endNanoseconds: UInt64 = 0
 
         init(capacitySamples: UInt32) {
             self.capacitySamples = capacitySamples
@@ -33,6 +34,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private var processingFailure: Error?
 
     private var isRecording = false
+    private var isCaptureRunning = false
     private var isAudioUnitInitialized = false
     private var currentDeviceID: AudioDeviceID = 0
     private var recordingURL: URL?
@@ -71,7 +73,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private let inputWriteIndex = ManagedAtomic<UInt64>(0)
     private let inputReadIndex = ManagedAtomic<UInt64>(0)
     private let audioProcessingScheduled = ManagedAtomic(false)
-    private let recordingActive = ManagedAtomic(false)
+    private let captureActive = ManagedAtomic(false)
     private let renderCallbacksInFlight = ManagedAtomic<UInt32>(0)
     private let firstAudioTimestamp = ManagedAtomic<UInt64>(0)
     private let capturedThroughTimestamp = ManagedAtomic<UInt64>(0)
@@ -82,6 +84,10 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     }()
     private let droppedInputBuffersBackpressure = ManagedAtomic<UInt64>(0)
     private let droppedInputBuffersCapacity = ManagedAtomic<UInt64>(0)
+    // Idle capture history and the press it is held for; the buffer is owned by the processing queue.
+    private var preRoll: PreRollBuffer?
+    private let pendingPreRollPress = ManagedAtomic<UInt64>(0)
+    private(set) var attachedPreRollDuration: TimeInterval = 0
 
     var firstAudioTimestampNanoseconds: UInt64? {
         let timestamp = firstAudioTimestamp.load(ordering: .relaxed)
@@ -171,6 +177,18 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     func startRecording(
         toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]? = nil
     ) throws {
+        try startRecording(
+            toOutputFile: url, deviceID: deviceID, selectedInputChannels: selectedInputChannels,
+            preRollPressNanoseconds: nil
+        )
+    }
+
+    /// Starts recording; idle capture on the same input contributes audio from up to one
+    /// pre-roll window before `preRollPressNanoseconds`, ahead of the live input.
+    func startRecording(
+        toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?,
+        preRollPressNanoseconds: UInt64?
+    ) throws {
         // Stop any existing recording
         stopRecording()
 
@@ -178,28 +196,84 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
 
         do {
             recordingURL = url
+            attachedPreRollDuration = 0
 
             // The output file is per recording; the AUHAL setup above is reused.
-            try withAudioProcessingQueue {
+            let attachedPreRoll = try withAudioProcessingQueue {
+                if isCaptureRunning { processQueuedInputBuffers() }
                 processingFailure = nil
-                audioWriter = try RecordingAudioWriter(
+                let writer = try RecordingAudioWriter(
                     url: url, sampleRate: deviceFormat.mSampleRate, channelCount: captureChannelCount
                 )
-                audioWriter?.onAudioChunk = { [weak self] data in self?.onAudioChunk?(data) }
+                writer.onAudioChunk = { [weak self] data in self?.onAudioChunk?(data) }
+                audioWriter = writer
+                return try attachPreRoll(to: writer, pressNanoseconds: preRollPressNanoseconds)
             }
-            resetAudioProcessingState()
-            firstAudioTimestamp.store(0, ordering: .relaxed)
+            pendingPreRollPress.store(0, ordering: .relaxed)
             capturedThroughTimestamp.store(0, ordering: .releasing)
 
-            try startAudioUnit()
+            if isCaptureRunning {
+                // Live input continues on the running unit; queued blocks follow the attached pre-roll.
+                attachedPreRollDuration = attachedPreRoll
+                firstAudioTimestamp.store(
+                    attachedPreRoll > 0 ? DispatchTime.now().uptimeNanoseconds : 0, ordering: .relaxed
+                )
+                isRecording = true
+                logger.notice(
+                    "🎙️ Recording started from idle capture with \(Int(attachedPreRoll * 1000), privacy: .public) ms of pre-roll"
+                )
+            } else {
+                resetAudioProcessingState()
+                firstAudioTimestamp.store(0, ordering: .relaxed)
+                try startAudioUnit()
+                isRecording = true
+            }
         } catch {
             isRecording = false
-            recordingActive.store(false, ordering: .releasing)
+            captureActive.store(false, ordering: .releasing)
             closeOutputFile()
             recordingURL = nil
             teardownPreparedAudioUnit()
             throw error
         }
+    }
+
+    /// Keeps the input running while idle so a recording can include pre-roll. No file is written.
+    func startIdleCapture(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
+        guard !isRecording else { return }
+        try prepare(deviceID: deviceID, selectedInputChannels: selectedInputChannels)
+        guard !isCaptureRunning else { return }
+
+        withAudioProcessingQueue {
+            preRoll = PreRollBuffer(sampleRate: deviceFormat.mSampleRate, channelCount: Int(captureChannelCount))
+        }
+        resetAudioProcessingState()
+        do {
+            try startAudioUnit()
+        } catch {
+            withAudioProcessingQueue { preRoll = nil }
+            throw error
+        }
+        logger.notice("🎙️ Idle capture started on device \(deviceID, privacy: .public)")
+    }
+
+    /// Closes idle capture and discards its history, keeping the prepared AUHAL.
+    func stopIdleCapture() {
+        guard !isRecording, isCaptureRunning, let unit = audioUnit else { return }
+        stopRunningAudioUnit(unit)
+        drainAudioProcessingQueue()
+        withAudioProcessingQueue { preRoll = nil }
+        pendingPreRollPress.store(0, ordering: .relaxed)
+        resetMeters()
+        logger.notice("🎙️ Idle capture stopped")
+    }
+
+    var isIdleCaptureRunning: Bool { isCaptureRunning && !isRecording }
+
+    /// Retains idle audio from one window before `pressNanoseconds` until the recording starts.
+    /// The hold lapses after `PreRollBuffer.pendingPressLimitNanoseconds`. Safe from any thread.
+    func holdPreRoll(forPressAt pressNanoseconds: UInt64) {
+        pendingPreRollPress.store(pressNanoseconds, ordering: .relaxed)
     }
 
     /// Stops the current recording
@@ -210,20 +284,10 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
 
         let wasRecording = isRecording
         isRecording = false
-        recordingActive.store(false, ordering: .releasing)
+        captureActive.store(false, ordering: .releasing)
 
         if wasRecording, let unit = audioUnit {
-            let stopStatus = AudioOutputUnitStop(unit)
-            if stopStatus != noErr {
-                logger.warning("🎙️ AudioOutputUnitStop returned \(stopStatus, privacy: .public)")
-            }
-
-            waitForRenderCallbacksToFinish()
-
-            let resetStatus = AudioUnitReset(unit, kAudioUnitScope_Global, 0)
-            if resetStatus != noErr {
-                logger.warning("🎙️ AudioUnitReset returned \(resetStatus, privacy: .public)")
-            }
+            stopRunningAudioUnit(unit)
         }
 
         drainAudioProcessingQueue()
@@ -274,7 +338,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             "🎙️ Switching recording device from \(oldDeviceID, privacy: .public) to \(newDeviceID, privacy: .public)")
 
         // Step 1: Stop the AudioUnit (but keep file open)
-        recordingActive.store(false, ordering: .releasing)
+        captureActive.store(false, ordering: .releasing)
         var status = AudioOutputUnitStop(unit)
         if status != noErr {
             logger.warning("🎙️ Warning: AudioOutputUnitStop returned \(status, privacy: .public)")
@@ -314,7 +378,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             if initializeStatus == noErr {
                 let startStatus = AudioOutputUnitStart(unit)
                 if startStatus == noErr {
-                    recordingActive.store(true, ordering: .releasing)
+                    captureActive.store(true, ordering: .releasing)
                 }
             }
             throw CoreAudioRecorderError.failedToSetDevice(status: status)
@@ -377,7 +441,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         if status != noErr {
             throw CoreAudioRecorderError.failedToStart(status: status)
         }
-        recordingActive.store(true, ordering: .releasing)
+        captureActive.store(true, ordering: .releasing)
 
         logger.notice("🎙️ Successfully switched to device \(newDeviceID, privacy: .public)")
     }
@@ -665,14 +729,29 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             throw CoreAudioRecorderError.audioUnitNotInitialized
         }
 
-        isRecording = true
-        recordingActive.store(true, ordering: .releasing)
+        captureActive.store(true, ordering: .releasing)
         let status = AudioOutputUnitStart(audioUnit)
         if status != noErr {
-            isRecording = false
-            recordingActive.store(false, ordering: .releasing)
+            captureActive.store(false, ordering: .releasing)
             logger.error("Failed to start AudioUnit: \(status, privacy: .public)")
             throw CoreAudioRecorderError.failedToStart(status: status)
+        }
+        isCaptureRunning = true
+    }
+
+    private func stopRunningAudioUnit(_ unit: AudioUnit) {
+        captureActive.store(false, ordering: .releasing)
+        let stopStatus = AudioOutputUnitStop(unit)
+        if stopStatus != noErr {
+            logger.warning("🎙️ AudioOutputUnitStop returned \(stopStatus, privacy: .public)")
+        }
+        isCaptureRunning = false
+
+        waitForRenderCallbacksToFinish()
+
+        let resetStatus = AudioUnitReset(unit, kAudioUnitScope_Global, 0)
+        if resetStatus != noErr {
+            logger.warning("🎙️ AudioUnitReset returned \(resetStatus, privacy: .public)")
         }
     }
 
@@ -738,7 +817,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     }
 
     private func teardownPreparedAudioUnit() {
-        recordingActive.store(false, ordering: .releasing)
+        captureActive.store(false, ordering: .releasing)
         if let unit = audioUnit {
             AudioOutputUnitStop(unit)
             waitForRenderCallbacksToFinish()
@@ -748,9 +827,12 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             AudioComponentInstanceDispose(unit)
             audioUnit = nil
         }
+        isCaptureRunning = false
         drainAudioProcessingQueue()
         logDroppedInputBufferCounters(context: "teardown")
         isAudioUnitInitialized = false
+        withAudioProcessingQueue { preRoll = nil }
+        pendingPreRollPress.store(0, ordering: .relaxed)
         freeBuffers()
     }
 
@@ -807,7 +889,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         }
 
         guard let audioUnit = audioUnit,
-            recordingActive.load(ordering: .acquiring)
+            captureActive.load(ordering: .acquiring)
         else {
             return noErr
         }
@@ -850,10 +932,9 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
             return status
         }
 
+        let capturedAt = DispatchTime.now().uptimeNanoseconds
         if inNumberFrames > 0, firstAudioTimestamp.load(ordering: .relaxed) == 0 {
-            _ = firstAudioTimestamp.compareExchange(
-                expected: 0, desired: DispatchTime.now().uptimeNanoseconds, ordering: .relaxed
-            )
+            _ = firstAudioTimestamp.compareExchange(expected: 0, desired: capturedAt, ordering: .relaxed)
         }
 
         capturedThroughTimestamp.store(
@@ -867,7 +948,8 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         enqueueInputBuffer(
             &bufferList,
             frameCount: inNumberFrames,
-            inputSampleRate: inputSampleRate
+            inputSampleRate: inputSampleRate,
+            capturedAt: capturedAt
         )
 
         return noErr
@@ -919,7 +1001,8 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private func enqueueInputBuffer(
         _ inputBuffer: inout AudioBufferList,
         frameCount: UInt32,
-        inputSampleRate: Double
+        inputSampleRate: Double,
+        capturedAt: UInt64
     ) {
         guard !inputBufferSlots.isEmpty,
             let inputData = inputBuffer.mBuffers.mData
@@ -946,6 +1029,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         slot.frameCount = frameCount
         slot.channelCount = channelCount
         slot.sampleRate = inputSampleRate
+        slot.endNanoseconds = capturedAt
 
         let inputSamples = inputData.assumingMemoryBound(to: Float32.self)
         slot.samples.update(from: inputSamples, count: Int(sampleCount))
@@ -986,7 +1070,8 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
                 inputSamples: slot.samples,
                 frameCount: slot.frameCount,
                 inputChannels: slot.channelCount,
-                inputSampleRate: slot.sampleRate
+                inputSampleRate: slot.sampleRate,
+                endNanoseconds: slot.endNanoseconds
             )
             inputReadIndex.store(readIndex + 1, ordering: .releasing)
             processedBuffers += 1
@@ -1039,17 +1124,47 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         inputSamples: UnsafeMutablePointer<Float32>,
         frameCount: UInt32,
         inputChannels: UInt32,
-        inputSampleRate: Double
+        inputSampleRate: Double,
+        endNanoseconds: UInt64
     ) {
-        guard let audioWriter, processingFailure == nil else { return }
+        let samples = UnsafeBufferPointer(start: inputSamples, count: Int(frameCount) * Int(inputChannels))
+        guard let audioWriter else {
+            appendToPreRoll(
+                samples, inputChannels: inputChannels, inputSampleRate: inputSampleRate,
+                endNanoseconds: endNanoseconds
+            )
+            return
+        }
+        guard processingFailure == nil else { return }
         do {
             try audioWriter.append(
-                UnsafeBufferPointer(start: inputSamples, count: Int(frameCount) * Int(inputChannels)),
-                frameCount: frameCount, sampleRate: inputSampleRate, channelCount: inputChannels
+                samples, frameCount: frameCount, sampleRate: inputSampleRate, channelCount: inputChannels
             )
         } catch {
             recordProcessingFailure(error)
         }
+    }
+
+    private func appendToPreRoll(
+        _ samples: UnsafeBufferPointer<Float32>, inputChannels: UInt32, inputSampleRate: Double,
+        endNanoseconds: UInt64
+    ) {
+        guard var buffer = preRoll else { return }
+        if buffer.sampleRate != inputSampleRate || buffer.channelCount != Int(inputChannels) {
+            buffer = PreRollBuffer(sampleRate: inputSampleRate, channelCount: Int(inputChannels))
+        }
+        // Release the stored copy so appending mutates the buffer in place.
+        preRoll = nil
+        let press = pendingPreRollPress.load(ordering: .relaxed)
+        buffer.append(samples, endNanoseconds: endNanoseconds, pendingPressNanoseconds: press == 0 ? nil : press)
+        preRoll = buffer
+    }
+
+    private func attachPreRoll(to writer: RecordingAudioWriter, pressNanoseconds: UInt64?) throws -> TimeInterval {
+        guard var buffer = preRoll else { return 0 }
+        preRoll = nil
+        guard let pressNanoseconds else { return 0 }
+        return try writer.appendPreRoll(from: &buffer, pressNanoseconds: pressNanoseconds)
     }
 
     private func recordProcessingFailure(_ error: Error) {

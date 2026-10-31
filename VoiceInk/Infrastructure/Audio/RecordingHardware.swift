@@ -12,14 +12,32 @@ protocol RecordingHardware: AnyObject, Sendable {
 
     func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
     func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
+    func startRecording(
+        toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?,
+        preRollPressNanoseconds: UInt64?
+    ) throws
     func stopRecording()
     func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
     func invalidatePreparation()
     func teardown()
+    func startIdleCapture(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws
+    func stopIdleCapture()
+    func holdPreRoll(forPressAt pressNanoseconds: UInt64)
 }
 
 extension RecordingHardware {
     var recordingError: Error? { nil }
     var firstAudioTimestampNanoseconds: UInt64? { nil }
     var capturedThroughNanoseconds: UInt64? { nil }
+
+    func startRecording(
+        toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?,
+        preRollPressNanoseconds: UInt64?
+    ) throws {
+        try startRecording(toOutputFile: url, deviceID: deviceID, selectedInputChannels: selectedInputChannels)
+    }
+
+    func startIdleCapture(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
+    func stopIdleCapture() {}
+    func holdPreRoll(forPressAt pressNanoseconds: UInt64) {}
 }

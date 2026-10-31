@@ -190,6 +190,7 @@ enum BackupImporter {
         if let audioDelay = general.audioResumptionDelay {
             mediaController.audioResumptionDelay = audioDelay
         }
+        general.restoreMicrophoneReadiness()
         if let experimentalEnabled = general.isExperimentalFeaturesEnabled {
             UserDefaults.standard.set(experimentalEnabled, forKey: "isExperimentalFeaturesEnabled")
             if experimentalEnabled == false {

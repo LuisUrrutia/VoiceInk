@@ -18,14 +18,16 @@ extension Recorder {
     func startHardwareRecording(
         _ recorder: any RecordingHardware,
         to url: URL,
-        deviceID: AudioDeviceID
+        deviceID: AudioDeviceID,
+        preRollPressNanoseconds: UInt64?
     ) async throws {
         let selectedChannels = deviceManager.selectedInputChannels(for: deviceID)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             audioSetupQueue.async {
                 do {
                     try recorder.startRecording(
-                        toOutputFile: url, deviceID: deviceID, selectedInputChannels: selectedChannels
+                        toOutputFile: url, deviceID: deviceID, selectedInputChannels: selectedChannels,
+                        preRollPressNanoseconds: preRollPressNanoseconds
                     )
                     continuation.resume()
                 } catch {

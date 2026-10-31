@@ -328,6 +328,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         } else {
             guard recordingState == .idle else { return }
             capturedDelivery.timing.mark(.engineStart)
+            recorder.holdPreRoll(forPressAt: capturedDelivery.timing.originNanoseconds)
             let canContinueAssistantSession = isAssistantFollowUp && assistantSession.canSendFollowUp
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
@@ -382,7 +383,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 self.recordingState = .starting
 
                 preparation.timing.mark(.audioStartRequested)
-                try await self.recorder.startRecording(toOutputFile: permanentURL)
+                try await self.recorder.startRecording(
+                    toOutputFile: permanentURL, preRollPressNanoseconds: preparation.timing.originNanoseconds
+                )
 
                 guard self.activeRecordingStartID == startID,
                     self.recorderUIManager?.isRecorderPanelVisible ?? false,

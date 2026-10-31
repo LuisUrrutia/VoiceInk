@@ -79,6 +79,21 @@ final class RecordingAudioWriter {
         if let failure { throw failure }
     }
 
+    /// Feeds held idle audio through this recording's converter ahead of live input, so the WAV and
+    /// stream receive identical PCM. Returns the attached duration and empties the buffer.
+    func appendPreRoll(from buffer: inout PreRollBuffer, pressNanoseconds: UInt64) throws -> TimeInterval {
+        let samples = buffer.take(pressNanoseconds: pressNanoseconds)
+        let frameCount = samples.count / buffer.channelCount
+        guard frameCount > 0 else { return 0 }
+        try samples.withUnsafeBufferPointer { samples in
+            try append(
+                samples, frameCount: UInt32(frameCount), sampleRate: buffer.sampleRate,
+                channelCount: UInt32(buffer.channelCount)
+            )
+        }
+        return Double(frameCount) / buffer.sampleRate
+    }
+
     private func write(_ data: Data) throws {
         guard let file else { throw RecordingAudioError.finished }
         let status = data.withUnsafeBytes { bytes in
