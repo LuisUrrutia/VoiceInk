@@ -16,17 +16,27 @@ public final class HistoryMCPServer {
     /// Returns the reply line, or `nil` for notifications.
     public func handle(_ line: String) -> Data? {
         guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-        guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)),
-            let message = object as? [String: Any]
-        else {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8), options: .fragmentsAllowed) else {
             return reply(id: NSNull(), error: (-32700, "Parse error"))
         }
-        let id = message["id"]
-        guard let method = message["method"] as? String else {
-            return id == nil ? nil : reply(id: id!, error: (-32600, "Invalid request"))
+        guard let message = object as? [String: Any], message["jsonrpc"] as? String == "2.0" else {
+            return reply(id: NSNull(), error: (-32600, "Invalid request"))
         }
+        let id = message["id"]
+        if let id, !Self.isValidID(id) {
+            return reply(id: NSNull(), error: (-32600, "Invalid request"))
+        }
+        guard let method = message["method"] as? String else {
+            return reply(id: id ?? NSNull(), error: (-32600, "Invalid request"))
+        }
+        // Notifications get no reply, even when malformed.
         guard let id else { return nil }
-        let params = message["params"] as? [String: Any] ?? [:]
+        let params: [String: Any]
+        switch message["params"] {
+        case nil: params = [:]
+        case let object as [String: Any]: params = object
+        default: return reply(id: id, error: (-32602, "params must be an object"))
+        }
         switch method {
         case "initialize":
             let requested = params["protocolVersion"] as? String
@@ -51,7 +61,13 @@ public final class HistoryMCPServer {
             else {
                 return reply(id: id, error: (-32602, "Unknown tool"))
             }
-            return reply(id: id, result: call(name, arguments: params["arguments"] as? [String: Any] ?? [:]))
+            let arguments: [String: Any]
+            switch params["arguments"] {
+            case nil: arguments = [:]
+            case let object as [String: Any]: arguments = object
+            default: return reply(id: id, error: (-32602, "arguments must be an object"))
+            }
+            return reply(id: id, result: call(name, arguments: arguments))
         default:
             return reply(id: id, error: (-32601, "Method not found"))
         }
@@ -83,7 +99,18 @@ public final class HistoryMCPServer {
         ]
     }
 
+    private static func isValidID(_ id: Any) -> Bool {
+        if id is String { return true }
+        guard let number = id as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        return number.doubleValue.rounded() == number.doubleValue
+    }
+
     static func request(for name: String, arguments: [String: Any], now: Date) throws -> HistoryAccessRequest {
+        let schema = tools.first { $0["name"] as? String == name }?["inputSchema"] as? [String: Any]
+        let allowed = Set((schema?["properties"] as? [String: Any]).map { Array($0.keys) } ?? [])
+        if let unknown = arguments.keys.sorted().first(where: { !allowed.contains($0) }) {
+            throw HistoryUsageError("Unknown argument: \(unknown)")
+        }
         func string(_ key: String) throws -> String? {
             guard let value = arguments[key] else { return nil }
             guard let text = value as? String else { throw HistoryUsageError("\(key) must be a string") }
@@ -101,9 +128,10 @@ public final class HistoryMCPServer {
         default:
             var limit: Int?
             if let value = arguments["limit"] {
+                // Check the full value before narrowing, so huge integers cannot wrap into range.
                 guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
                     number.doubleValue == number.doubleValue.rounded(),
-                    (1...HistoryAccess.maximumLimit).contains(number.intValue)
+                    (1...Double(HistoryAccess.maximumLimit)).contains(number.doubleValue)
                 else {
                     throw HistoryUsageError("limit must be an integer from 1 to \(HistoryAccess.maximumLimit)")
                 }

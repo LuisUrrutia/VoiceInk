@@ -190,6 +190,36 @@ final class HistoryAccessCLITests: XCTestCase {
         XCTAssertEqual(transport.requests.count, 1)
     }
 
+    func testMCPRejectsMalformedEnvelopesAndArgumentsWithoutQuerying() throws {
+        let transport = FakeTransport(response: .page([entry], nextCursor: nil))
+        let server = HistoryMCPServer(now: { self.now }, transport: { transport })
+        func errorCode(_ line: String) throws -> Int? {
+            (try json(server.handle(line))["error"] as? [String: Any])?["code"] as? Int
+        }
+        func isToolError(_ arguments: String) throws -> Bool? {
+            let line = #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_history","arguments":"#
+                + arguments + "}}"
+            return (try json(server.handle(line))["result"] as? [String: Any])?["isError"] as? Bool
+        }
+
+        XCTAssertEqual(try errorCode("{}"), -32600)
+        XCTAssertEqual(try errorCode("[]"), -32600)
+        XCTAssertEqual(try errorCode(#"{"id":1,"method":"ping"}"#), -32600)
+        XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#), -32600)
+        XCTAssertEqual(try errorCode(#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":[]}"#), -32602)
+        XCTAssertEqual(try errorCode(
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_history","arguments":"x"}}"#), -32602)
+        XCTAssertEqual(try isToolError(#"{"since_ms":5}"#), true)
+        XCTAssertEqual(try isToolError(#"{"limit":18446744073709551617}"#), true)
+        XCTAssertEqual(try isToolError(#"{"limit":2.5}"#), true)
+        XCTAssertEqual(try isToolError(#"{"limit":"5"}"#), true)
+        XCTAssertEqual(try isToolError(#"{"query":"x"}"#), true)
+        XCTAssertNil(server.handle(#"{"jsonrpc":"2.0","method":"tools/call","params":"bad"}"#))
+        XCTAssertEqual(transport.requests, [])
+        XCTAssertEqual(try isToolError(#"{"limit":200}"#), false)
+        XCTAssertEqual(transport.requests, [HistoryAccessRequest(command: .list, limit: 200)])
+    }
+
     func testMCPReportsUnavailableAppAsToolError() throws {
         let server = HistoryMCPServer(now: { self.now }, transport: {
             FakeTransport(error: HistoryClientError.unavailable("VoiceInk is not running"))
