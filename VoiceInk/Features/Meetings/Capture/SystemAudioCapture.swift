@@ -232,6 +232,7 @@ final class ProcessTapSystemAudioCapture: SystemAudioCapturing, @unchecked Senda
         }
 
         let startNanoseconds = hostNanoseconds(time) ?? DispatchTime.now().uptimeNanoseconds
+        let firstFrame = writer.writtenFrames
         let peak = mono.prefix(frameCount).reduce(Float(0)) { max($0, abs($1)) }
         do {
             try mono.withUnsafeBufferPointer { samples in
@@ -244,12 +245,10 @@ final class ProcessTapSystemAudioCapture: SystemAudioCapturing, @unchecked Senda
             record(failure: error)
             return
         }
-        // Written frames end where this buffer's capture ended, as for the microphone track.
+        // The anchor sits at the buffer's first frame, so a buffer that resumes after a gap starts the new anchor.
         let bufferStart = Double(Int64(bitPattern: startNanoseconds &- meetingStartNanoseconds)) / 1_000_000_000
-        let bufferEnd = bufferStart + Double(frameCount) / tap.format.mSampleRate
-        let writtenFrames = writer.writtenFrames
         state.withLock {
-            $0.result.timeline.record(frame: writtenFrames, at: bufferEnd)
+            $0.result.timeline.record(frame: firstFrame, at: bufferStart)
             if peak >= Self.heardPeakThreshold { $0.result.heardSignal = true }
             $0.lastDeliveryNanoseconds = DispatchTime.now().uptimeNanoseconds
         }

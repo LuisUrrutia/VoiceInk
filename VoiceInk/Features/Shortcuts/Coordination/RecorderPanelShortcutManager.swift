@@ -11,8 +11,12 @@ final class RecorderPanelShortcutManager: ObservableObject {
     private var settingsChangeObserver: NSObjectProtocol?
     private var modeAvailabilityObserver: NSObjectProtocol?
     private var recordingStateCancellable: AnyCancellable?
+    private var meetingsSwitchCancellable: AnyCancellable?
+    /// Actions whose bindings the visible panel last reserved against cancellation chords.
+    private(set) var reservedActions: [ShortcutAction] = []
     private var observedSendKey: FinishAndSendKey
     private let visibleRecorderMonitor: ShortcutMonitor
+    private let defaults: UserDefaults
 
     // Double-tap Escape handling
     private var firstEscapePressTime: Date? = nil
@@ -29,9 +33,11 @@ final class RecorderPanelShortcutManager: ObservableObject {
 
     init(
         recorderUIManager: RecorderUIManager,
-        heldRecordingShortcut: @escaping @Sendable () -> Shortcut? = { nil }
+        heldRecordingShortcut: @escaping @Sendable () -> Shortcut? = { nil },
+        defaults: UserDefaults = .standard
     ) {
         self.recorderUIManager = recorderUIManager
+        self.defaults = defaults
         self.visibleRecorderMonitor = ShortcutMonitor(owner: "recorder-panel", heldRecordingShortcut: heldRecordingShortcut)
         self.observedSendKey = FinishAndSendSettings.selectedKey
         setupShortcutChangeObserver()
@@ -59,6 +65,10 @@ final class RecorderPanelShortcutManager: ObservableObject {
         setupVisibilityObserver()
         recordingStateCancellable = recorderUIManager.recordingStatePublisher?.sink { [weak self] state in
             Task { @MainActor in self?.refreshVisibleShortcuts(reason: "recording-state.\(state)") }
+        }
+        // The meeting shortcut is reserved only while Meetings is on.
+        meetingsSwitchCancellable = Labs.enabledPublisher(.meetings, in: defaults).dropFirst().sink { [weak self] _ in
+            Task { @MainActor in self?.refreshVisibleShortcuts(reason: "labs.meetings") }
         }
     }
 
@@ -141,8 +151,9 @@ final class RecorderPanelShortcutManager: ObservableObject {
 
         // Exact assignments take priority over cancellation with recording modifiers.
         let reservedActions = [ShortcutAction.primaryRecording, .secondaryRecording]
-            + ShortcutAction.activeGlobalUtilityActions()
+            + ShortcutAction.activeGlobalUtilityActions(defaults: defaults)
             + ModeManager.shared.enabledConfigurations.map { ShortcutAction.mode($0.id) }
+        self.reservedActions = reservedActions
         let reservedShortcuts = Array(ShortcutStore.shortcuts(for: reservedActions).values)
             + shortcuts.filter { $0.key != .cancelRecorder && $0.key != .recorderPanelEscape }.map(\.value)
 
@@ -272,6 +283,7 @@ final class RecorderPanelShortcutManager: ObservableObject {
 
         visibilityTask?.cancel()
         recordingStateCancellable?.cancel()
+        meetingsSwitchCancellable?.cancel()
         visibleRecorderMonitor.stop(reason: "deinit")
         resetEscapeState()
     }

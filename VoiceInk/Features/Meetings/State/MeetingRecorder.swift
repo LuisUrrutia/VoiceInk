@@ -48,6 +48,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     }
 
     static let assertionName = "VoiceInk meeting recording"
+    /// Posted on the main thread when a meeting starts, before any capture opens.
+    static let willStartNotification = Notification.Name("VoiceInkMeetingWillStart")
     /// A tap that delivers nothing for this long is replaced.
     static let stallTimeoutNanoseconds: UInt64 = 3_000_000_000
 
@@ -169,6 +171,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         guard dependencies.isMicrophoneAuthorized() else { throw MeetingRecorderError.microphoneNotAuthorized }
         isStarting = true
         defer { isStarting = false }
+        NotificationCenter.default.post(name: Self.willStartNotification, object: self)
         let generation = startGeneration
         guard await requestSystemAudioAccess().allowsCapture else { throw MeetingRecorderError.systemAudioDenied }
         try checkStillWanted(generation)
