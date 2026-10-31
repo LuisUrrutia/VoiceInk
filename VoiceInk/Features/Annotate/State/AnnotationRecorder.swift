@@ -200,6 +200,7 @@ final class AnnotationRecorder: ObservableObject {
         }
         manifest.duration = seconds(end, since: session.startNanoseconds)
         manifest.narrationTimeline = microphone.timeline
+        manifest.narrationFailure = microphone.failure
         manifest.status = manifest.failure == nil ? .processing : .failed
         try? dependencies.store.save(manifest)
         reload()

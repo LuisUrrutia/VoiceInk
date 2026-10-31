@@ -144,6 +144,9 @@ enum AnnotationSummary {
                 lines.append("- \(MeetingMarkdown.timestamp(segment.start)) “\(segment.text)”")
             }
         }
+        if let failure = manifest.narrationFailure {
+            lines += ["", "_\(String(format: String(localized: "The narration recording failed (%@), so it may be incomplete."), failure))_"]
+        }
         if let failure = manifest.failure {
             lines += ["", "_\(failure)_"]
         }
