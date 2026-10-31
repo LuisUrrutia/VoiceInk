@@ -663,7 +663,19 @@ final class FakeMeetingMicrophoneHardware: RecordingHardware, @unchecked Sendabl
         }
     }
 
-    func stopRecording() { state.withLock { $0.stopCount += 1 } }
+    /// When set, `stopRecording` blocks the microphone queue until `releaseStop()`.
+    let stopGate = DispatchSemaphore(value: 0)
+    private let holdsStopFlag = OSAllocatedUnfairLock(initialState: false)
+    var holdStop: Bool {
+        get { holdsStopFlag.withLock { $0 } }
+        set { holdsStopFlag.withLock { $0 = newValue } }
+    }
+    func releaseStop() { stopGate.signal() }
+
+    func stopRecording() {
+        if holdStop { stopGate.wait() }
+        state.withLock { $0.stopCount += 1 }
+    }
 
     func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
         state.withLock { $0.switchedDevices.append(deviceID) }
