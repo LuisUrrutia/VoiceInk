@@ -14,8 +14,9 @@ struct DictationFeedback {
     private(set) var stopTime: TimeInterval?
     private(set) var isFinished = false
 
+    /// A stop tone delayed by output restoration still plays after a fast outcome, which then had no done tone.
     mutating func recordingStopped(at time: TimeInterval) -> Tone? {
-        guard stopTime == nil, !isFinished else { return nil }
+        guard stopTime == nil else { return nil }
         stopTime = time
         return .stop
     }

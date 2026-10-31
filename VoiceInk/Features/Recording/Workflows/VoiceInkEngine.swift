@@ -254,7 +254,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let context = recordingContextCapture.take()
             pipelineContextCapture = context
             defer {
-                delivery?.cancel()
+                delivery?.completePipeline()
                 if activePipelineDelivery === delivery { activePipelineDelivery = nil }
                 context?.cancel()
                 if pipelineContextCapture === context {

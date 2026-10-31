@@ -30,9 +30,10 @@ final class DictationFeedbackTests: XCTestCase {
         var cancelled = stopped
         XCTAssertNil(cancelled.pasteFinished(.cancelled, at: 5))
 
-        var failedBeforeStop = DictationFeedback()
-        XCTAssertEqual(failedBeforeStop.failed(), .error)
-        XCTAssertNil(failedBeforeStop.recordingStopped(at: 1))
+        var pastedBeforeStopTone = DictationFeedback()
+        XCTAssertNil(pastedBeforeStopTone.pasteFinished(.commandPosted, at: 1))
+        XCTAssertEqual(pastedBeforeStopTone.recordingStopped(at: 2), .stop)
+        XCTAssertNil(pastedBeforeStopTone.failed())
     }
 
     func testCanceledOrSupersededSessionsPlayNothing() {
@@ -49,6 +50,23 @@ final class DictationFeedbackTests: XCTestCase {
         canceledBeforeStop.session.cancel()
         canceledBeforeStop.session.recordingStopped()
         XCTAssertEqual(canceledBeforeStop.tones, [])
+
+        let canceledThenCompleted = SessionFixture()
+        canceledThenCompleted.session.cancel()
+        canceledThenCompleted.session.completePipeline()
+        canceledThenCompleted.session.recordingStopped()
+        XCTAssertEqual(canceledThenCompleted.tones, [])
+    }
+
+    func testStopToneDelayedPastPipelineCompletionStillPlays() {
+        let fixture = SessionFixture()
+
+        fixture.session.pasteFinished(.commandPosted)
+        fixture.session.completePipeline()
+        fixture.session.recordingStopped()
+
+        XCTAssertTrue(fixture.session.isCancelled)
+        XCTAssertEqual(fixture.tones, [.stop])
     }
 
     // MARK: - Delivery outcomes

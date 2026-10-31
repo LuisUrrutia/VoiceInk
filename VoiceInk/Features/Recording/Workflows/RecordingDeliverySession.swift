@@ -52,6 +52,7 @@ final class RecordingDeliverySession {
     let timing: RecordingTimingTrace
     private(set) var isCancelled = false
     private(set) var feedback = DictationFeedback()
+    private var completedPipeline = false
     private var cancelPendingTask: (() -> Void)?
     private var idleSleepHold: IdleSleepPrevention.Hold?
     private let playFeedback: @MainActor (DictationFeedback.Tone) -> Void
@@ -97,6 +98,12 @@ final class RecordingDeliverySession {
         idleSleepHold = hold
     }
 
+    /// Ends the session like `cancel()`, but a stop tone still waiting for restored output plays.
+    func completePipeline() {
+        if !isCancelled { completedPipeline = true }
+        cancel()
+    }
+
     func cancel() {
         isCancelled = true
         cancelPendingTask?()
@@ -107,7 +114,7 @@ final class RecordingDeliverySession {
 
     // Canceled and superseded sessions stay silent.
     func recordingStopped() {
-        guard !isCancelled, let tone = feedback.recordingStopped(at: now()) else { return }
+        guard !isCancelled || completedPipeline, let tone = feedback.recordingStopped(at: now()) else { return }
         playFeedback(tone)
     }
 
