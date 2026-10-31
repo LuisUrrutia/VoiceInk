@@ -342,6 +342,51 @@ final class NoSpeechGateTests: XCTestCase {
         XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .discarded)
     }
 
+    func testPreRollKeepsSpeechBeforeReleaseWhileExcludingTheStopTone() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("warm-release.wav")
+        let detector = SpeechDetectorFixture(verdict: true)
+        let fixture = try makeRecording(
+            samples: silence(17_600) + noise(rmsDBFS: -30, count: 4_000) + tone(amplitude: 0.3, count: 3_200),
+            url: url, directory: directory, detector: detector, preRollNanoseconds: 450_000_000
+        )
+        let release = RecordingReleaseTail(releasedAtNanoseconds: fixture.timing.originNanoseconds + 900_000_000)
+
+        let stop = Task { await fixture.engine.toggleRecord(releaseTail: release) }
+        await fulfillment(of: [fixture.session.transcribeEntered], timeout: 3)
+
+        XCTAssertEqual(detector.receivedSampleCounts, [21_600])
+        XCTAssertEqual(fixture.session.transcribeCount, 1)
+        XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .completed)
+        XCTAssertEqual(try history(in: fixture.engine).count, 1)
+        await fixture.engine.cancelRecording()
+        await stop.value
+        await fulfillment(of: [fixture.released], timeout: 3)
+    }
+
+    func testPreRollAlignsTheStartSoundWithoutCountingItAsSpeech() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("warm-start-sound.wav")
+        let detector = SpeechDetectorFixture(verdict: true)
+        let fixture = try makeRecording(
+            samples: silence(7_200) + tone(amplitude: 0.2, count: 8_000) + silence(8_000),
+            url: url, directory: directory, detector: detector,
+            startSoundDuration: 0.5, preRollNanoseconds: 450_000_000
+        )
+
+        let stop = Task { await fixture.engine.toggleRecord() }
+        await fulfillment(of: [fixture.released], timeout: 3)
+
+        XCTAssertEqual(detector.receivedSampleCounts, [])
+        XCTAssertEqual(fixture.session.transcribeCount, 0)
+        XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .discarded)
+        XCTAssertTrue(try history(in: fixture.engine).isEmpty)
+        await fixture.engine.cancelRecording()
+        await stop.value
+    }
+
     func testNoSpeechNoticeKeepsTheNotchRecorderExpanded() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -571,7 +616,8 @@ final class NoSpeechGateTests: XCTestCase {
 
     private func makeRecording(
         samples: [Float], url: URL, directory: URL, detector: SpeechDetectorFixture, isGateEnabled: Bool = true,
-        startSoundDuration: TimeInterval? = nil, hasCaptureTimestamp: Bool = true
+        startSoundDuration: TimeInterval? = nil, hasCaptureTimestamp: Bool = true,
+        preRollNanoseconds: UInt64? = nil
     ) throws -> RecordingFixture {
         let durationNanoseconds = UInt64(Double(samples.count) / 16_000 * 1_000_000_000)
         let timing = RecordingTimingTrace(originNanoseconds: DispatchTime.now().uptimeNanoseconds - durationNanoseconds)
@@ -592,7 +638,10 @@ final class NoSpeechGateTests: XCTestCase {
             transcriptionModelManager: TranscriptionModelManager(
                 whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager()
             ),
-            recorder: Recorder(hardware: try FixtureRecordingHardware(url: url, samples: samples)),
+            recorder: Recorder(hardware: try FixtureRecordingHardware(
+                url: url, samples: samples,
+                preRollStartNanoseconds: preRollNanoseconds.map { timing.originNanoseconds - $0 }
+            )),
             speechDetector: detector, isNoSpeechGateEnabled: { isGateEnabled }, startSoundPlayback: { startSound }
         )
         let session = GateSessionFixture()
@@ -790,15 +839,17 @@ private final class FixtureRecordingHardware: RecordingHardware, @unchecked Send
     let peakPower: Float = -160
     let recordingError: Error? = nil
     let firstAudioTimestampNanoseconds: UInt64? = nil
+    let preRollStartNanoseconds: UInt64?
 
     var onAudioChunk: ((Data) -> Void)? {
         get { state.withLock { $0 } }
         set { state.withLock { $0 = newValue } }
     }
 
-    init(url: URL, samples: [Float]) throws {
+    init(url: URL, samples: [Float], preRollStartNanoseconds: UInt64? = nil) throws {
         self.url = url
         self.samples = samples
+        self.preRollStartNanoseconds = preRollStartNanoseconds
     }
 
     func stopRecording() {

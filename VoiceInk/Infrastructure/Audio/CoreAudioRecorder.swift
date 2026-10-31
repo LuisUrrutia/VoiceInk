@@ -89,6 +89,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
     private var preRoll: PreRollBuffer?
     private let pendingPreRollPress = ManagedAtomic<UInt64>(0)
     private(set) var attachedPreRollDuration: TimeInterval = 0
+    private(set) var preRollStartNanoseconds: UInt64?
 
     var firstAudioTimestampNanoseconds: UInt64? {
         firstAudioTimestamp.nanoseconds
@@ -197,6 +198,7 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         do {
             recordingURL = url
             attachedPreRollDuration = 0
+            preRollStartNanoseconds = nil
             idleCaptureActive.store(false, ordering: .releasing)
             if preRollPressNanoseconds == nil
                 || pendingPreRollPress.load(ordering: .acquiring) != preRollPressNanoseconds
@@ -1187,7 +1189,9 @@ final class CoreAudioRecorder: RecordingHardware, @unchecked Sendable {
         guard var buffer = preRoll else { return 0 }
         preRoll = nil
         guard let pressNanoseconds else { return 0 }
-        return try writer.appendPreRoll(from: &buffer, pressNanoseconds: pressNanoseconds)
+        let duration = try writer.appendPreRoll(from: &buffer, pressNanoseconds: pressNanoseconds)
+        preRollStartNanoseconds = writer.preRollStartNanoseconds
+        return duration
     }
 
     private func recordProcessingFailure(_ error: Error) {

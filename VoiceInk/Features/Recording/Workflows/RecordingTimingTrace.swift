@@ -24,6 +24,7 @@ final class RecordingTimingTrace: @unchecked Sendable {
     let recordingID: UUID
     let originNanoseconds: UInt64
     private let events = OSAllocatedUnfairLock(initialState: [Phase: Event]())
+    private let preRollStart = OSAllocatedUnfairLock<UInt64?>(initialState: nil)
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "RecordingTiming")
 
     init(
@@ -54,5 +55,11 @@ final class RecordingTimingTrace: @unchecked Sendable {
 
     var snapshot: [Event] {
         events.withLock { Array($0.values).sorted { $0.elapsedNanoseconds < $1.elapsedNanoseconds } }
+    }
+
+    var preRollStartNanoseconds: UInt64? { preRollStart.withLock { $0 } }
+
+    func recordPreRollStart(at nanoseconds: UInt64) {
+        preRollStart.withLock { if $0 == nil { $0 = nanoseconds } }
     }
 }

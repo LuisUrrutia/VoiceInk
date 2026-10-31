@@ -120,6 +120,7 @@ final class PreRollRecordingWriterTests: XCTestCase {
         try writer.finish()
 
         XCTAssertEqual(attached, 0.45, accuracy: 1 / rate)
+        XCTAssertEqual(writer.preRollStartNanoseconds, end - 450_000_000)
         XCTAssertEqual(buffer.frameCount, 0)
         let reference = try ContinuousAudioConverter(sampleRate: rate, channelCount: 1)
         var expected = Data()
@@ -130,6 +131,28 @@ final class PreRollRecordingWriterTests: XCTestCase {
         try reference.finish { expected.append($0) }
         XCTAssertEqual(stream.withLock { $0 }, expected)
         XCTAssertEqual(try wavPCM(url), expected)
+    }
+
+    func testPreRollTimelineUsesStoredFramesAcrossAnIdleCaptureGap() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PreRoll-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var buffer = PreRollBuffer(sampleRate: 16_000, channelCount: 1)
+        let samples = [Float](repeating: 0.1, count: 1_600)
+        samples.withUnsafeBufferPointer {
+            buffer.append($0, endNanoseconds: 1_000_000_000, pendingPressNanoseconds: nil)
+            buffer.append($0, endNanoseconds: 1_200_000_000, pendingPressNanoseconds: nil)
+        }
+        let writer = try RecordingAudioWriter(
+            url: directory.appendingPathComponent("gap.wav"), sampleRate: 16_000, channelCount: 1
+        )
+
+        let duration = try writer.appendPreRoll(from: &buffer, pressNanoseconds: 1_200_000_000)
+        try writer.finish()
+
+        XCTAssertEqual(duration, 0.2, accuracy: 1 / 16_000)
+        XCTAssertEqual(writer.preRollStartNanoseconds, 1_000_000_000)
+        XCTAssertEqual(writer.writtenDuration, 0.2, accuracy: 1 / 16_000)
     }
 
     private func wavPCM(_ url: URL) throws -> Data {

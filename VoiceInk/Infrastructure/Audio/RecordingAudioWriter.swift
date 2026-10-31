@@ -7,6 +7,7 @@ final class RecordingAudioWriter {
     private var converter: ContinuousAudioConverter
     var onAudioChunk: ((Data) -> Void)?
     private(set) var failure: Error?
+    private(set) var preRollStartNanoseconds: UInt64?
     private var writtenFrameCount = 0
 
     var writtenDuration: TimeInterval { Double(writtenFrameCount) / Self.outputSampleRate }
@@ -82,6 +83,7 @@ final class RecordingAudioWriter {
     /// Feeds held idle audio through this recording's converter ahead of live input, so the WAV and
     /// stream receive identical PCM. Returns the attached duration and empties the buffer.
     func appendPreRoll(from buffer: inout PreRollBuffer, pressNanoseconds: UInt64) throws -> TimeInterval {
+        let capturedEnd = buffer.newestFrameEndNanoseconds
         let samples = buffer.take(pressNanoseconds: pressNanoseconds)
         let frameCount = samples.count / buffer.channelCount
         guard frameCount > 0 else { return 0 }
@@ -91,7 +93,11 @@ final class RecordingAudioWriter {
                 channelCount: UInt32(buffer.channelCount)
             )
         }
-        return Double(frameCount) / buffer.sampleRate
+        let duration = Double(frameCount) / buffer.sampleRate
+        // Anchor the PCM timeline at its end so dropped idle buffers do not count as stored frames.
+        let span = UInt64((duration * 1_000_000_000).rounded())
+        preRollStartNanoseconds = capturedEnd >= span ? capturedEnd - span : 0
+        return duration
     }
 
     private func write(_ data: Data) throws {

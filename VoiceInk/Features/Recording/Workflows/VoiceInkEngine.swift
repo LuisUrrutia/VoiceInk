@@ -856,7 +856,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             timing?.mark(.speechGate, outcome: .skipped)
             return false
         }
-        let firstAudioNanoseconds = trace.originNanoseconds + firstAudio.elapsedNanoseconds
+        let firstAudioNanoseconds = trace.preRollStartNanoseconds
+            ?? trace.originNanoseconds + firstAudio.elapsedNanoseconds
         let releasedFrames = NoSpeechGate.releasedFrameCount(
             firstAudioNanoseconds: firstAudioNanoseconds,
             releaseNanoseconds: trace.originNanoseconds + release.elapsedNanoseconds
@@ -1212,6 +1213,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     private func recordClosedAudioTiming(_ timing: RecordingTimingTrace?) {
+        if let preRollStart = recorder.preRollStartNanoseconds {
+            timing?.recordPreRollStart(at: preRollStart)
+        }
         if let firstAudio = recorder.firstAudioTimestampNanoseconds {
             timing?.mark(.firstAudio, at: firstAudio)
         }
