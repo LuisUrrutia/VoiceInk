@@ -14,6 +14,10 @@ struct InfoTip: View {
 
     // State
     @State private var isShowingTip: Bool = false
+    @State private var isPinned = false
+    @State private var isHoveringIcon = false
+    @State private var isHoveringTip = false
+    @State private var pendingHide: Task<Void, Never>?
 
     var body: some View {
         Image(appSymbol: iconName)
@@ -22,7 +26,11 @@ struct InfoTip: View {
             .fontWeight(.semibold)
             .padding(5)
             .contentShape(Rectangle())
-            .popover(isPresented: $isShowingTip) {
+            .onHover { hovering in
+                isHoveringIcon = hovering
+                updateHoverPresentation()
+            }
+            .popover(isPresented: tipPresentation) {
                 VStack(alignment: .leading, spacing: 0) {
                     if learnMoreLink != nil {
                         (Text(message)
@@ -40,15 +48,52 @@ struct InfoTip: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(width: width, alignment: .leading)
                 .padding(14)
+                .onHover { hovering in
+                    isHoveringTip = hovering
+                    updateHoverPresentation()
+                }
                 .onTapGesture {
                     if let url = learnMoreLink {
                         NSWorkspace.shared.open(url)
                     }
                 }
             }
-            .onTapGesture {
-                isShowingTip.toggle()
-            }
+            .onTapGesture(perform: togglePinned)
+            .accessibilityElement()
+            .accessibilityLabel("More information")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { togglePinned() }
+            .onDisappear { pendingHide?.cancel() }
+    }
+
+    /// A system dismissal (click outside, Escape) also ends a pinned tip.
+    private var tipPresentation: Binding<Bool> {
+        Binding(
+            get: { isShowingTip },
+            set: { isPresented in
+                isShowingTip = isPresented
+                if !isPresented { isPinned = false }
+            })
+    }
+
+    private func togglePinned() {
+        pendingHide?.cancel()
+        isPinned = !(isPinned && isShowingTip)
+        isShowingTip = isPinned
+    }
+
+    private func updateHoverPresentation() {
+        pendingHide?.cancel()
+        if isHoveringIcon || isHoveringTip {
+            isShowingTip = true
+            return
+        }
+        guard !isPinned else { return }
+        // Leave time to move the pointer from the icon into the popover, which is a separate window.
+        pendingHide = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            if !isHoveringIcon && !isHoveringTip && !isPinned { isShowingTip = false }
+        }
     }
 }
 
