@@ -68,7 +68,7 @@ struct Settings {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let archive = try decoder.decode(Archive.self, from: Data(contentsOf: url))
-        guard archive.format == "voiceink.dictionary", (1...2).contains(archive.schemaVersion) else {
+        guard archive.format == "voiceink.dictionary", (1...3).contains(archive.schemaVersion) else {
             throw CLIError.message("Unsupported VoiceInk Dictionary export")
         }
         return WordReplacementPlan(rules: archive.replacements.enumerated().map { index, entry in
