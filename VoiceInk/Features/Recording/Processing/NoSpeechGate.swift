@@ -16,7 +16,7 @@ enum NoSpeechGateSettings {
     }
 }
 
-/// Discards live captures without speech before any model runs, because models invent
+/// Discards live captures without speech before final transcription and delivery, because models invent
 /// phrases such as "thank you" for silence. Adapted from Hex's `dictate.silence-gate`.
 enum NoSpeechGate {
     static let sampleRate = 16_000.0
@@ -124,6 +124,11 @@ enum NoSpeechGate {
             ? Double(playback.startNanoseconds - firstAudioNanoseconds)
             : -Double(firstAudioNanoseconds - playback.startNanoseconds)
         return Int((delta * sampleRate / 1_000_000_000).rounded())
+    }
+
+    static func releasedFrameCount(firstAudioNanoseconds: UInt64, releaseNanoseconds: UInt64) -> Int {
+        guard releaseNanoseconds > firstAudioNanoseconds else { return 0 }
+        return Int((Double(releaseNanoseconds - firstAudioNanoseconds) * sampleRate / 1_000_000_000).rounded(.down))
     }
 
     /// The loudest window's DC-removed RMS level in dBFS, floored at -120 dBFS.

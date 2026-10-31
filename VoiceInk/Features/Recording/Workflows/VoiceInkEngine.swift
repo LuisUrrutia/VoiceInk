@@ -843,17 +843,27 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return false
         }
         let transcriptionID = transcription.id
-        let startSound = startSoundPlayback()
-        let startSoundOffset = timing.flatMap { timing in
-            let firstAudio = timing.snapshot.first { $0.phase == .firstAudio }
-            return NoSpeechGate.startSoundOffsetFrames(
-                playback: startSound, requestNanoseconds: timing.originNanoseconds,
-                firstAudioNanoseconds: firstAudio.map { timing.originNanoseconds + $0.elapsedNanoseconds }
-            )
+        let events = timing?.snapshot ?? []
+        guard let trace = timing, let firstAudio = events.first(where: { $0.phase == .firstAudio }),
+            let release = events.first(where: { $0.phase == .shortcutReleased })
+                ?? events.first(where: { $0.phase == .stopReceived })
+        else {
+            timing?.mark(.speechGate, outcome: .skipped)
+            return false
         }
+        let firstAudioNanoseconds = trace.originNanoseconds + firstAudio.elapsedNanoseconds
+        let releasedFrames = NoSpeechGate.releasedFrameCount(
+            firstAudioNanoseconds: firstAudioNanoseconds,
+            releaseNanoseconds: trace.originNanoseconds + release.elapsedNanoseconds
+        )
+        let startSound = startSoundPlayback()
+        let startSoundOffset = NoSpeechGate.startSoundOffsetFrames(
+            playback: startSound, requestNanoseconds: trace.originNanoseconds,
+            firstAudioNanoseconds: firstAudioNanoseconds
+        )
         let evaluation = await NoSpeechGate.evaluate(
             audioURL: audioURL, startSound: startSound, startSoundOffsetFrames: startSoundOffset,
-            detector: speechDetector
+            releasedFrameCount: releasedFrames, detector: speechDetector
         )
         guard let evaluation, evaluation.decision.discardsRecording else {
             timing?.mark(.speechGate)

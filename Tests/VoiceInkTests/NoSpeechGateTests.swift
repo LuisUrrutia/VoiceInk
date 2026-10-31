@@ -85,6 +85,24 @@ final class NoSpeechGateTests: XCTestCase {
         XCTAssertEqual(detector.receivedSampleCounts, [24_000])
     }
 
+    func testReleaseBoundaryUsesElapsedAudioFramesAndRoundsDown() {
+        let firstAudio: UInt64 = 5_000_000_000
+
+        let oneSecond = NoSpeechGate.releasedFrameCount(
+            firstAudioNanoseconds: firstAudio, releaseNanoseconds: firstAudio + 1_000_000_000
+        )
+        let partialFrame = NoSpeechGate.releasedFrameCount(
+            firstAudioNanoseconds: firstAudio, releaseNanoseconds: firstAudio + 100_000
+        )
+        let beforeAudio = NoSpeechGate.releasedFrameCount(
+            firstAudioNanoseconds: firstAudio, releaseNanoseconds: firstAudio - 1
+        )
+
+        XCTAssertEqual(oneSecond, 16_000)
+        XCTAssertEqual(partialFrame, 1)
+        XCTAssertEqual(beforeAudio, 0)
+    }
+
     func testClosedWAVEvaluationIgnoresTheStartSound() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -303,6 +321,27 @@ final class NoSpeechGateTests: XCTestCase {
         XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .discarded)
     }
 
+    func testShortcutTailAndItsStopToneCannotMakeSilentLiveAudioPass() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("release-tone.wav")
+        let detector = SpeechDetectorFixture(verdict: true)
+        let fixture = try makeRecording(
+            samples: silence(16_000) + tone(amplitude: 0.3, count: 3_200),
+            url: url, directory: directory, detector: detector
+        )
+        let release = RecordingReleaseTail(releasedAtNanoseconds: fixture.timing.originNanoseconds + 1_000_000_000)
+
+        await fixture.engine.toggleRecord(releaseTail: release)
+        await fulfillment(of: [fixture.released], timeout: 3)
+
+        XCTAssertTrue(try history(in: fixture.engine).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(detector.receivedSampleCounts, [])
+        XCTAssertEqual(fixture.session.transcribeCount, 0)
+        XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .discarded)
+    }
+
     func testNoSpeechNoticeKeepsTheNotchRecorderExpanded() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -400,7 +439,7 @@ final class NoSpeechGateTests: XCTestCase {
         let url = directory.appendingPathComponent("speech.wav")
         let fixture = try makeRecording(
             samples: noise(rmsDBFS: -30, count: 16_000), url: url, directory: directory,
-            detector: SpeechDetectorFixture(verdict: true)
+            detector: SpeechDetectorFixture(verdict: true), startSoundDuration: 3
         )
 
         let stop = Task { await fixture.engine.toggleRecord() }
@@ -432,6 +471,26 @@ final class NoSpeechGateTests: XCTestCase {
         await fixture.engine.cancelRecording()
         await stop.value
         await fulfillment(of: [fixture.released], timeout: 3)
+        XCTAssertEqual(try history(in: fixture.engine).count, 1)
+    }
+
+    func testUnknownCaptureBoundaryPreservesTheRecording() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let detector = SpeechDetectorFixture(verdict: false)
+        let fixture = try makeRecording(
+            samples: silence(16_000), url: directory.appendingPathComponent("unknown-boundary.wav"),
+            directory: directory, detector: detector, hasCaptureTimestamp: false
+        )
+
+        let stop = Task { await fixture.engine.toggleRecord() }
+        await fulfillment(of: [fixture.session.transcribeEntered], timeout: 3)
+        await fixture.engine.cancelRecording()
+        await stop.value
+        await fulfillment(of: [fixture.released], timeout: 3)
+
+        XCTAssertEqual(outcome(of: .speechGate, in: fixture.timing), .skipped)
+        XCTAssertEqual(detector.receivedSampleCounts, [])
         XCTAssertEqual(try history(in: fixture.engine).count, 1)
     }
 
@@ -512,16 +571,17 @@ final class NoSpeechGateTests: XCTestCase {
 
     private func makeRecording(
         samples: [Float], url: URL, directory: URL, detector: SpeechDetectorFixture, isGateEnabled: Bool = true,
-        startSoundDuration: TimeInterval? = nil
+        startSoundDuration: TimeInterval? = nil, hasCaptureTimestamp: Bool = true
     ) throws -> RecordingFixture {
-        let timing = RecordingTimingTrace()
+        let durationNanoseconds = UInt64(Double(samples.count) / 16_000 * 1_000_000_000)
+        let timing = RecordingTimingTrace(originNanoseconds: DispatchTime.now().uptimeNanoseconds - durationNanoseconds)
         let startSound = startSoundDuration.map {
             SoundPlayback(
                 startNanoseconds: timing.originNanoseconds, duration: $0,
                 reference: FeedbackSoundReference(samples: tone(amplitude: 0.2, count: Int($0 * 16_000)))
             )
         }
-        timing.mark(.firstAudio, at: timing.originNanoseconds)
+        if hasCaptureTimestamp { timing.mark(.firstAudio, at: timing.originNanoseconds) }
         let container = try ModelContainer(
             for: Transcription.self, VocabularyWord.self, VocabularySection.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
