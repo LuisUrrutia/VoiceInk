@@ -99,7 +99,8 @@ enum ModelCatalog {
         from models: [any TranscriptionModel],
         installation: ModelInstallationFilter,
         sortOrder: ModelCatalogSortOrder,
-        searchText: String = "", isInstalled: (any TranscriptionModel) -> Bool
+        searchText: String = "", recommendations: ModelRecommendations = .none,
+        isInstalled: (any TranscriptionModel) -> Bool
     ) -> [any TranscriptionModel] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = models.filter { model in
@@ -120,7 +121,16 @@ enum ModelCatalog {
             }
         }
 
-        guard sortOrder != .catalog else { return filtered }
+        guard sortOrder != .catalog else {
+            guard !recommendations.isEmpty else { return filtered }
+            return filtered.enumerated()
+                .sorted { first, second in
+                    let firstRank = recommendations.rank(of: first.element) ?? Int.max
+                    let secondRank = recommendations.rank(of: second.element) ?? Int.max
+                    return firstRank == secondRank ? first.offset < second.offset : firstRank < secondRank
+                }
+                .map(\.element)
+        }
 
         return filtered.enumerated()
             .sorted { first, second in

@@ -19,6 +19,12 @@ struct ModeConfigFormView: View {
     @State private var isShowingDeleteConfirmation = false
     @State private var isShowingDefaultModeDeleteAlert = false
     @State private var isContextAwarenessExpanded = false
+    @State private var pendingTranscriptionModelSwitch: PendingTranscriptionModelSwitch?
+
+    private struct PendingTranscriptionModelSwitch {
+        let selectionKey: String
+        let languageChange: TranscriptionLanguageChange
+    }
 
     private var isDeletingDefaultMode: Bool {
         modeManager.getConfiguration(with: draft.id)?.isDefault == true
@@ -188,11 +194,30 @@ struct ModeConfigFormView: View {
             } else {
                 let availableModels = warmupSnapshot.usableTranscriptionModels
                 let openRouterModels = availableModels.filter { $0.provider == .openRouter }
+                let recommendations = ModelRecommendations(languages: draft.transcriptionLanguages)
+                let recommendedModels = availableModels.filter { recommendations.rank(of: $0) != nil }
+                    .sorted { (recommendations.rank(of: $0) ?? 0) < (recommendations.rank(of: $1) ?? 0) }
+                let otherModels = availableModels.filter {
+                    $0.provider != .openRouter && recommendations.rank(of: $0) == nil
+                }
 
                 LabeledContent("Model") {
                     Menu {
-                        ForEach(availableModels.filter { $0.provider != .openRouter }, id: \.selectionKey) { model in
-                            transcriptionModelMenuItem(model)
+                        if !recommendedModels.isEmpty {
+                            Section(
+                                String(
+                                    format: String(localized: "Suggested for %@"), recommendations.languageDescription)
+                            ) {
+                                ForEach(recommendedModels, id: \.selectionKey) { model in
+                                    transcriptionModelMenuItem(model, role: recommendations.role(for: model))
+                                }
+                            }
+                        }
+
+                        Section {
+                            ForEach(otherModels, id: \.selectionKey) { model in
+                                transcriptionModelMenuItem(model)
+                            }
                         }
 
                         if !openRouterModels.isEmpty {
@@ -210,6 +235,22 @@ struct ModeConfigFormView: View {
                             .lineLimit(1)
                     }
                     .menuStyle(.borderlessButton)
+                }
+                .confirmationDialog(
+                    pendingTranscriptionModelSwitch?.languageChange.title ?? "",
+                    isPresented: Binding(
+                        get: { pendingTranscriptionModelSwitch != nil },
+                        set: { if !$0 { pendingTranscriptionModelSwitch = nil } }
+                    ),
+                    titleVisibility: .visible,
+                    presenting: pendingTranscriptionModelSwitch
+                ) { pendingSwitch in
+                    Button("Switch Model") {
+                        draft.selectedTranscriptionModelName = pendingSwitch.selectionKey
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { pendingSwitch in
+                    Text(pendingSwitch.languageChange.message)
                 }
                 .onChange(of: draft.selectedTranscriptionModelName) { _, newModelName in
                     if let modelName = newModelName,
@@ -240,15 +281,30 @@ struct ModeConfigFormView: View {
     }
 
     @ViewBuilder
-    private func transcriptionModelMenuItem(_ model: any TranscriptionModel) -> some View {
+    private func transcriptionModelMenuItem(
+        _ model: any TranscriptionModel, role: ModelRecommendationRole? = nil
+    ) -> some View {
+        let title = role.map { String(format: String(localized: "%1$@ (%2$@)"), model.displayName, $0.title) }
+            ?? model.displayName
         Button {
-            draft.selectedTranscriptionModelName = model.selectionKey
+            selectTranscriptionModel(model)
         } label: {
             if draft.selectedTranscriptionModelName == model.selectionKey {
-                Label(model.displayName, appSymbol: "checkmark")
+                Label(title, appSymbol: "checkmark")
             } else {
-                Text(model.displayName)
+                Text(title)
             }
+        }
+    }
+
+    /// Asks before a model switch drops or replaces the mode's saved languages.
+    private func selectTranscriptionModel(_ model: any TranscriptionModel) {
+        guard draft.selectedTranscriptionModelName != model.selectionKey else { return }
+        if let languageChange = TranscriptionLanguageChange(selection: draft.transcriptionLanguages, model: model) {
+            pendingTranscriptionModelSwitch = PendingTranscriptionModelSwitch(
+                selectionKey: model.selectionKey, languageChange: languageChange)
+        } else {
+            draft.selectedTranscriptionModelName = model.selectionKey
         }
     }
 
