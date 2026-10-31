@@ -51,6 +51,27 @@ While a meeting records:
 If you quit VoiceInk while a meeting records, both files are closed and the
 meeting is marked **Interrupted**.
 
+## Call detection
+
+While Meetings is on, VoiceInk notices calls in Zoom, Google Meet, Slack huddles,
+Microsoft Teams and FaceTime. For each app, choose on the Meetings page:
+
+| Choice | What happens when a call starts |
+|---|---|
+| **Ask** (default) | A small prompt offers **Record**, **Not now** and **Never for this app**. It disappears after 20 seconds without recording. |
+| **Always record** | Recording starts, and a notice says it started automatically. |
+| **Never offer** | Nothing. |
+
+- A call is an app using the microphone for 2 seconds. **Not now** stays quiet
+  until that app has been off the microphone for a minute.
+- A recording never stops by itself. When the app leaves the call, VoiceInk asks
+  whether to keep recording or stop and transcribe.
+- Google Meet is recognized only in the front tab of a supported browser that
+  VoiceInk is already allowed to control (System Settings › Privacy & Security ›
+  Automation). VoiceInk never asks for that permission during a call. Firefox is
+  not supported.
+- Turn off **Offer to record detected calls** to stop all detection.
+
 ## Transcripts
 
 When a meeting stops, VoiceInk transcribes it on this Mac and writes a Markdown

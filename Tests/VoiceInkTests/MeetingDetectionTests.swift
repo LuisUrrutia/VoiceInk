@@ -1,0 +1,347 @@
+import XCTest
+
+@testable import VoiceInk
+
+@MainActor final class MeetingDetectionTests: XCTestCase {
+    private var root: URL!
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
+    override func setUp() async throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("MeetingDetectionTests-\(UUID().uuidString)")
+        suiteName = "MeetingDetectionTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: root)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    // MARK: - Providers
+
+    func testNativeCallAppsAndBrowsersAreRecognizedThroughTheirProcesses() {
+        XCTAssertEqual(MeetingProvider.nativeProvider(forBundleIDs: ["us.zoom.caphost", "us.zoom.xos"]), .zoom)
+        XCTAssertEqual(MeetingProvider.nativeProvider(forBundleIDs: ["com.microsoft.teams2.helper"]), .teams)
+        XCTAssertEqual(MeetingProvider.nativeProvider(forBundleIDs: ["com.tinyspeck.slackmacgap.helper"]), .slack)
+        XCTAssertEqual(MeetingProvider.nativeProvider(forBundleIDs: ["com.apple.avconferenced"]), .facetime)
+        XCTAssertNil(MeetingProvider.nativeProvider(forBundleIDs: ["com.apple.WebKit.GPU", "com.apple.Safari"]))
+        XCTAssertEqual(MeetingProvider.browser(forBundleIDs: ["com.apple.WebKit.GPU", "com.apple.Safari"]), .safari)
+        XCTAssertEqual(MeetingProvider.browser(forBundleIDs: ["com.google.Chrome.helper"]), .chrome)
+        XCTAssertNil(MeetingProvider.browser(forBundleIDs: ["com.google.Chromecast"]))
+        XCTAssertNil(MeetingProvider.nativeProvider(forBundleIDs: ["com.prakashjoshipax.VoiceInk"]))
+    }
+
+    func testOnlyMeetCallPagesCount() {
+        XCTAssertTrue(MeetingProvider.isMeetCall("https://meet.google.com/abc-defg-hij"))
+        XCTAssertTrue(MeetingProvider.isMeetCall("https://meet.google.com/abc-defg-hij?authuser=1"))
+        XCTAssertFalse(MeetingProvider.isMeetCall("https://meet.google.com/"))
+        XCTAssertFalse(MeetingProvider.isMeetCall("https://meet.google.com/landing"))
+        XCTAssertFalse(MeetingProvider.isMeetCall("https://meet.google.com/new"))
+        XCTAssertFalse(MeetingProvider.isMeetCall("https://calendar.google.com/meet.google.com/abc"))
+    }
+
+    // MARK: - Detector
+
+    func testACallStartsAfterTwoSecondsAndEndsAfterThreeOff() {
+        var detector = CallDetector()
+
+        XCTAssertEqual(detector.observe([.zoom], at: 0), [])
+        XCTAssertEqual(detector.observe([.zoom], at: 1.9), [])
+        XCTAssertEqual(detector.observe([.zoom], at: 2), [.started(.zoom)])
+        XCTAssertEqual(detector.observe([.zoom], at: 3), [])
+        XCTAssertEqual(detector.observe([], at: 5), [])
+        XCTAssertEqual(detector.observe([], at: 6), [.ended(.zoom)])
+        XCTAssertEqual(detector.observe([], at: 7), [])
+    }
+
+    func testABriefMicrophoneUseIsNoCall() {
+        var detector = CallDetector()
+
+        XCTAssertEqual(detector.observe([.slack], at: 0), [])
+        XCTAssertEqual(detector.observe([], at: 1), [])
+        XCTAssertEqual(detector.observe([.slack], at: 2), [])
+        XCTAssertEqual(detector.observe([.slack], at: 3.5), [])
+        XCTAssertEqual(detector.observe([.slack], at: 4), [.started(.slack)])
+    }
+
+    func testALongObservationGapRestartsPendingRuns() {
+        var detector = CallDetector()
+
+        XCTAssertEqual(detector.observe([.teams], at: 0), [])
+        XCTAssertEqual(detector.observe([.teams], at: 30), [])
+        XCTAssertEqual(detector.observe([.teams], at: 32), [.started(.teams)])
+    }
+
+    func testASnoozeLastsUntilTheProviderIsOffTheMicrophoneForAMinute() {
+        var detector = CallDetector()
+        _ = detector.observe([.zoom], at: 0)
+        _ = detector.observe([.zoom], at: 2)
+        detector.snooze(.zoom)
+
+        _ = detector.observe([], at: 10)
+        _ = detector.observe([.zoom], at: 20)
+        XCTAssertTrue(detector.isSnoozed(.zoom))
+        _ = detector.observe([], at: 30)
+        _ = detector.observe([], at: 89)
+        XCTAssertTrue(detector.isSnoozed(.zoom))
+        _ = detector.observe([], at: 90)
+
+        XCTAssertFalse(detector.isSnoozed(.zoom))
+    }
+
+    // MARK: - Policies
+
+    func testPoliciesDefaultToAskAndRoundTripThroughBackups() {
+        XCTAssertEqual(MeetingSettings.policy(for: .zoom, in: defaults), .ask)
+        MeetingSettings.setPolicy(.alwaysRecord, for: .zoom, in: defaults)
+        MeetingSettings.setPolicy(.neverOffer, for: .facetime, in: defaults)
+        defaults.set(false, forKey: MeetingSettings.detectsCallsKey)
+        let backup = MeetingSettings.Backup.capture(from: defaults)
+        let restoredName = "\(suiteName!).restored"
+        let restored = UserDefaults(suiteName: restoredName)!
+        defer { restored.removePersistentDomain(forName: restoredName) }
+
+        backup.restore(in: restored)
+        MeetingSettings.Backup(providerPolicies: ["zoom": "bogus", "skype": "always_record"]).restore(in: restored)
+
+        XCTAssertEqual(MeetingSettings.policy(for: .zoom, in: restored), .alwaysRecord)
+        XCTAssertEqual(MeetingSettings.policy(for: .facetime, in: restored), .neverOffer)
+        XCTAssertEqual(MeetingSettings.policy(for: .meet, in: restored), .ask)
+        XCTAssertFalse(MeetingSettings.detectsCalls(in: restored))
+        MeetingSettings.setPolicy(.ask, for: .zoom, in: restored)
+        XCTAssertNil((restored.dictionary(forKey: MeetingSettings.providerPoliciesKey) as? [String: String])?["zoom"])
+    }
+
+    // MARK: - Monitor
+
+    func testAskOffersRecordingAndRecordStartsAMeetingForTheProvider() async throws {
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+
+        await observe(fixture, seconds: [0, 2])
+        XCTAssertEqual(fixture.prompt.offers, [.zoom])
+        fixture.prompt.answerOffer(.record)
+        try await waitUntil { fixture.recorder.isRecording }
+
+        XCTAssertEqual(fixture.recorder.activeMeeting?.provider, "zoom")
+        XCTAssertTrue(fixture.recorder.activeMeeting?.title.hasPrefix(MeetingProvider.zoom.callName) == true)
+        _ = await fixture.recorder.stop()
+    }
+
+    func testNotNowSnoozesAndNeverOfferChangesThePolicy() async throws {
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [0, 2])
+        fixture.prompt.answerOffer(.notNow)
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [3, 6])
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [7, 9])
+        XCTAssertEqual(fixture.prompt.offers, [.zoom])
+
+        fixture.processes.bundleIDs = [["com.tinyspeck.slackmacgap"]]
+        await observe(fixture, seconds: [20, 22])
+        fixture.prompt.answerOffer(.neverOffer)
+
+        XCTAssertEqual(MeetingSettings.policy(for: .slack, in: defaults), .neverOffer)
+        XCTAssertFalse(fixture.recorder.isRecording)
+    }
+
+    func testAlwaysRecordStartsWithoutAskingAndTheCallEndingAsksToStop() async throws {
+        MeetingSettings.setPolicy(.alwaysRecord, for: .teams, in: defaults)
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["com.microsoft.teams2"]]
+
+        await observe(fixture, seconds: [0, 2])
+        try await waitUntil { fixture.recorder.isRecording }
+        XCTAssertTrue(fixture.prompt.offers.isEmpty)
+        XCTAssertEqual(fixture.prompt.automaticStarts, [.teams])
+
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [3, 6])
+        XCTAssertEqual(fixture.prompt.stopOffers, [.teams])
+        XCTAssertTrue(fixture.recorder.isRecording)
+        fixture.prompt.answerStop(.stop)
+
+        try await waitUntil { !fixture.recorder.isRecording }
+    }
+
+    func testNeverOfferAndRecordingInProgressStayQuiet() async throws {
+        MeetingSettings.setPolicy(.neverOffer, for: .facetime, in: defaults)
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["com.apple.avconferenced"]]
+        await observe(fixture, seconds: [0, 2])
+
+        try await fixture.recorder.start(title: "Manual")
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [3, 5])
+
+        XCTAssertTrue(fixture.prompt.offers.isEmpty)
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [6, 9])
+        XCTAssertTrue(fixture.prompt.stopOffers.isEmpty, "a manual meeting has no provider to leave")
+        _ = await fixture.recorder.stop()
+    }
+
+    func testMeetIsRecognizedOnlyOnACallPageInABrowserVoiceInkCanRead() async throws {
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["com.google.Chrome.helper", "com.google.Chrome"]]
+        fixture.urls[.chrome] = "https://meet.google.com/landing"
+        await observe(fixture, seconds: [0, 2, 3])
+        XCTAssertTrue(fixture.prompt.offers.isEmpty)
+
+        fixture.urls[.chrome] = "https://meet.google.com/abc-defg-hij"
+        await observe(fixture, seconds: [6, 8])
+        XCTAssertEqual(fixture.prompt.offers, [.meet])
+
+        fixture.processes.bundleIDs = [["com.apple.WebKit.GPU", "com.apple.Safari"]]
+        fixture.urls[.safari] = nil
+        await observe(fixture, seconds: [20, 22, 25, 30])
+        XCTAssertEqual(fixture.prompt.offers, [.meet])
+    }
+
+    func testTurningDetectionOffDismissesAndStopsObserving() async throws {
+        let fixture = makeMonitor()
+        fixture.monitor.start()
+        try await waitUntil { fixture.processes.calls > 0 }
+
+        defaults.set(false, forKey: MeetingSettings.detectsCallsKey)
+        try await waitUntil { fixture.prompt.dismissals > 0 }
+        let calls = fixture.processes.calls
+        try await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertEqual(fixture.processes.calls, calls)
+    }
+
+    func testCoreAudioListsProcessesWithoutThisProcess() {
+        let processes = CoreAudioInputProcessListing().processesUsingInput()
+
+        XCTAssertFalse(processes.contains { $0.pid == getpid() })
+        XCTAssertEqual(CoreAudioInputProcessListing.lineage(of: getpid()).first, getpid())
+    }
+
+    // MARK: - Fixture
+
+    private struct MonitorFixture {
+        let monitor: MeetingCallMonitor
+        let recorder: MeetingRecorder
+        let processes: FakeInputProcesses
+        let prompt: FakeCallPrompt
+        let clock: DetectionClock
+        let urls: BrowserURLs
+    }
+
+    private func makeMonitor() -> MonitorFixture {
+        let devices = MeetingAudioDevices(userDefaults: defaults)
+        var recorderDependencies = MeetingRecorder.Dependencies()
+        recorderDependencies.store = MeetingStore(rootURL: root)
+        recorderDependencies.permission = AllowedSystemAudio()
+        recorderDependencies.makeSystemAudio = { QuietSystemAudio() }
+        recorderDependencies.makeMicrophone = { MeetingMicrophoneCapture(deviceManager: devices, makeHardware: { FakeMeetingMicrophoneHardware() }) }
+        recorderDependencies.isMicrophoneAuthorized = { true }
+        recorderDependencies.defaults = defaults
+        let recorder = MeetingRecorder(dependencies: recorderDependencies)
+        let processes = FakeInputProcesses()
+        let prompt = FakeCallPrompt()
+        let clock = DetectionClock()
+        let urls = BrowserURLs()
+        var dependencies = MeetingCallMonitor.Dependencies()
+        dependencies.processes = processes
+        dependencies.browserURL = { urls[$0] }
+        dependencies.prompt = prompt
+        dependencies.recorder = recorder
+        dependencies.defaults = defaults
+        dependencies.now = { clock.now }
+        dependencies.pollInterval = .milliseconds(5)
+        return MonitorFixture(
+            monitor: MeetingCallMonitor(dependencies: dependencies), recorder: recorder, processes: processes,
+            prompt: prompt, clock: clock, urls: urls
+        )
+    }
+
+    private func observe(_ fixture: MonitorFixture, seconds: [TimeInterval]) async {
+        for second in seconds {
+            fixture.clock.now = second
+            await fixture.monitor.poll()
+        }
+    }
+
+    private func waitUntil(timeout: Duration = .seconds(2), _ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return XCTFail("Condition not met in time") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+}
+
+private final class DetectionClock: @unchecked Sendable {
+    var now: TimeInterval = 0
+}
+
+@MainActor
+private final class BrowserURLs {
+    private var values: [BrowserType: String] = [:]
+    subscript(browser: BrowserType) -> String? {
+        get { values[browser] }
+        set { values[browser] = newValue }
+    }
+}
+
+private final class FakeInputProcesses: AudioInputProcessListing, @unchecked Sendable {
+    var bundleIDs: [[String]] = []
+    private(set) var calls = 0
+
+    func processesUsingInput() -> [AudioInputProcess] {
+        calls += 1
+        return bundleIDs.enumerated().map { AudioInputProcess(pid: pid_t(1_000 + $0.offset), bundleIDs: $0.element) }
+    }
+}
+
+@MainActor
+private final class FakeCallPrompt: MeetingCallPrompting {
+    var offers: [MeetingProvider] = []
+    var stopOffers: [MeetingProvider] = []
+    var automaticStarts: [MeetingProvider] = []
+    var dismissals = 0
+    private var offerAnswer: (@MainActor (MeetingCallPromptAnswer) -> Void)?
+    private var stopAnswer: (@MainActor (MeetingCallPromptAnswer) -> Void)?
+
+    func offerRecording(_ provider: MeetingProvider, timeout: Duration, answer: @escaping @MainActor (MeetingCallPromptAnswer) -> Void) {
+        offers.append(provider)
+        offerAnswer = answer
+    }
+
+    func offerStop(_ provider: MeetingProvider, answer: @escaping @MainActor (MeetingCallPromptAnswer) -> Void) {
+        stopOffers.append(provider)
+        stopAnswer = answer
+    }
+
+    func showStartedAutomatically(_ provider: MeetingProvider) { automaticStarts.append(provider) }
+
+    func dismiss() { dismissals += 1 }
+
+    func answerOffer(_ answer: MeetingCallPromptAnswer) {
+        offerAnswer?(answer)
+        offerAnswer = nil
+    }
+
+    func answerStop(_ answer: MeetingCallPromptAnswer) {
+        stopAnswer?(answer)
+        stopAnswer = nil
+    }
+}
+
+private final class AllowedSystemAudio: SystemAudioAuthorizing {
+    func status() -> SystemAudioAuthorization { .granted }
+    func request() async -> SystemAudioAuthorization { .granted }
+}
+
+private final class QuietSystemAudio: SystemAudioCapturing, @unchecked Sendable {
+    var lastDeliveryNanoseconds: UInt64? { DispatchTime.now().uptimeNanoseconds }
+    func start(writingTo url: URL, meetingStartNanoseconds: UInt64) throws {}
+    func restart() throws {}
+    func stop() -> MeetingTrackCaptureResult { MeetingTrackCaptureResult() }
+}

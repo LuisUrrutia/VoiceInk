@@ -5,6 +5,8 @@ struct MeetingsView: View {
     @ObservedObject private var recorder = MeetingRecorder.shared
     @AppStorage(MeetingSettings.outputFolderKey) private var outputFolderPath = ""
     @AppStorage(MeetingSettings.showsRecordingIndicatorKey) private var showsRecordingIndicator = true
+    @AppStorage(MeetingSettings.detectsCallsKey) private var detectsCalls = true
+    @State private var policies: [MeetingProvider: MeetingProviderPolicy] = [:]
 
     var body: some View {
         Form {
@@ -34,6 +36,22 @@ struct MeetingsView: View {
                 Toggle("Show recording indicator", isOn: $showsRecordingIndicator)
             }
 
+            Section {
+                Toggle("Offer to record detected calls", isOn: $detectsCalls)
+                if detectsCalls {
+                    ForEach(MeetingProvider.allCases, id: \.self) { provider in
+                        Picker(provider.displayName, selection: policyBinding(for: provider)) {
+                            ForEach(MeetingProviderPolicy.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                        }
+                    }
+                }
+            } header: {
+                Text("Call detection")
+            } footer: {
+                Text("VoiceInk notices when one of these apps uses the microphone. Google Meet is recognized in the front tab of a supported browser that VoiceInk may already automate. A recording never stops by itself: when the app leaves the call, VoiceInk asks.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Meetings") {
                 if recorder.meetings.isEmpty {
                     Text("No meetings yet.").foregroundStyle(.secondary)
@@ -46,6 +64,8 @@ struct MeetingsView: View {
         }
         .formStyle(AppSettingsFormStyle())
         .onAppear {
+            // Never offer can be chosen from a call prompt while this page is closed.
+            policies = Dictionary(uniqueKeysWithValues: MeetingProvider.allCases.map { ($0, MeetingSettings.policy(for: $0)) })
             recorder.refreshAuthorization()
             recorder.reloadMeetings()
         }
@@ -98,6 +118,16 @@ struct MeetingsView: View {
         case .denied: "Denied. Without it, the other participants are not recorded."
         case .unknown: "VoiceInk cannot read this permission. If Them stays silent, allow VoiceInk in System Settings."
         }
+    }
+
+    private func policyBinding(for provider: MeetingProvider) -> Binding<MeetingProviderPolicy> {
+        Binding(
+            get: { policies[provider] ?? MeetingSettings.policy(for: provider) },
+            set: {
+                MeetingSettings.setPolicy($0, for: provider)
+                policies[provider] = $0
+            }
+        )
     }
 
     private func openSystemAudioSettings() {
