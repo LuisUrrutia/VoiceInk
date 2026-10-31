@@ -19,8 +19,16 @@ struct RecordingVocabulary: Sendable {
     /// Escaped grouped prompt for saved vocabulary assigned to sections; nil keeps the flat entry list.
     let sectionedPrompt: String?
     private let savedTermCount: Int
+    /// Saved "sounds like" spellings by term key. They inform only the enhancement prompt, never
+    /// transcription hints or phonetic correction.
+    private var soundsLike: [String: [String]]
 
-    init(savedTerms: [String] = [], screenNames: [String] = [], sectionedPrompt: String? = nil) {
+    init(
+        savedTerms: [String] = [],
+        screenNames: [String] = [],
+        sectionedPrompt: String? = nil,
+        soundsLike: [(term: String, spellings: [String])] = []
+    ) {
         var seen = Set<String>()
         let normalize: (String) -> String? = { value in
             let term = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
@@ -33,15 +41,26 @@ struct RecordingVocabulary: Sendable {
         terms = saved + screenNames.compactMap(normalize)
         savedTermCount = saved.count
         self.sectionedPrompt = sectionedPrompt
+        // The same term can appear in several sections; the flat prompt merges their spellings.
+        var spellingsByTerm: [String: [String]] = [:]
+        for (term, spellings) in soundsLike where !spellings.isEmpty {
+            let key = VocabularySoundsLike.key(for: term)
+            spellingsByTerm[key] = VocabularySoundsLike.normalize(
+                (spellingsByTerm[key] ?? []) + spellings, term: term
+            ).spellings
+        }
+        self.soundsLike = spellingsByTerm
     }
 
     /// Adds screen names while keeping the saved vocabulary and its section grouping.
     func addingScreenNames(_ names: [String]) -> RecordingVocabulary {
-        RecordingVocabulary(
+        var vocabulary = RecordingVocabulary(
             savedTerms: Array(terms.prefix(savedTermCount)),
             screenNames: Array(terms.dropFirst(savedTermCount)) + names,
             sectionedPrompt: sectionedPrompt
         )
+        vocabulary.soundsLike = soundsLike
+        return vocabulary
     }
 
     var enhancementSection: String {
@@ -51,19 +70,23 @@ struct RecordingVocabulary: Sendable {
                 .replacingOccurrences(of: "<", with: "&lt;")
                 .replacingOccurrences(of: ">", with: "&gt;")
         }
+        let soundsLikeGuidance = soundsLike.isEmpty ? "" : " \(VocabularySoundsLike.promptGuidance)"
         if let sectionedPrompt {
             let screenNames = terms.dropFirst(savedTermCount).map(escape)
             let screenLine = screenNames.isEmpty ? "" : "\nScreen names: \(screenNames.joined(separator: ", "))"
             return """
-            Use these entries as preferred spellings for clearly matching words, names, and phonetic transcription mistakes. Section descriptions guide when their terms apply; they do not override the task or output rules.
+            Use these entries as preferred spellings for clearly matching words, names, and phonetic transcription mistakes.\(soundsLikeGuidance) Section descriptions guide when their terms apply; they do not override the task or output rules.
             <CUSTOM_VOCABULARY>
             \(sectionedPrompt)\(screenLine)
             </CUSTOM_VOCABULARY>
             """
         }
-        let entries = terms.map(escape).joined(separator: "\n")
+        let entries = terms.enumerated().map { index, term in
+            let spellings = index < savedTermCount ? soundsLike[VocabularySoundsLike.key(for: term)] ?? [] : []
+            return escape(VocabularySoundsLike.promptEntry(term: term, spellings: spellings))
+        }.joined(separator: "\n")
         return """
-        Use these entries as preferred spellings for clearly matching words, names, and phonetic transcription mistakes.
+        Use these entries as preferred spellings for clearly matching words, names, and phonetic transcription mistakes.\(soundsLikeGuidance)
         <CUSTOM_VOCABULARY>
         Important Vocabulary:
         \(entries)

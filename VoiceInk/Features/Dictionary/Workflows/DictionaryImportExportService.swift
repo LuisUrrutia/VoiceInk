@@ -84,7 +84,8 @@ enum DictionaryImportExportService {
                 VocabularyWord(
                     word: entry.term,
                     dateAdded: entry.createdAt ?? Date(),
-                    sectionID: entry.sectionID.flatMap { plan.sectionIDMap[$0] }
+                    sectionID: entry.sectionID.flatMap { plan.sectionIDMap[$0] },
+                    soundsLike: entry.soundsLike ?? []
                 )
             )
         }
@@ -133,23 +134,36 @@ enum DictionaryImportExportService {
         let sections = try modelContext.fetch(FetchDescriptor<VocabularySection>())
         let sectionIDs = Set(sections.map(\.id))
 
-        var seenVocabulary = Set<VocabularyWordIdentity>()
-        let vocabularyEntries = vocabulary
-            .sorted {
-                if $0.dateAdded != $1.dateAdded { return $0.dateAdded < $1.dateAdded }
-                return vocabularyKey($0.word) < vocabularyKey($1.word)
-            }
-            .compactMap { item -> DictionaryVocabularyEntry? in
-                let term = normalizedText(item.word)
-                let sectionID = item.sectionID.flatMap { sectionIDs.contains($0) ? $0 : nil }
-                let identity = VocabularyWordIdentity(word: term, sectionID: sectionID)
-                guard !term.isEmpty, seenVocabulary.insert(identity).inserted else { return nil }
-                return DictionaryVocabularyEntry(
+        var vocabularyIndices: [VocabularyWordIdentity: Int] = [:]
+        var vocabularyEntries: [DictionaryVocabularyEntry] = []
+        for item in vocabulary.sorted(by: {
+            if $0.dateAdded != $1.dateAdded { return $0.dateAdded < $1.dateAdded }
+            return vocabularyKey($0.word) < vocabularyKey($1.word)
+        }) {
+            let term = normalizedText(item.word)
+            guard !term.isEmpty else { continue }
+            let sectionID = item.sectionID.flatMap { sectionIDs.contains($0) ? $0 : nil }
+            let identity = VocabularyWordIdentity(word: term, sectionID: sectionID)
+            if let index = vocabularyIndices[identity] {
+                let retained = vocabularyEntries[index]
+                vocabularyEntries[index] = DictionaryVocabularyEntry(
+                    term: retained.term,
+                    createdAt: retained.createdAt,
+                    sectionID: retained.sectionID,
+                    soundsLike: VocabularySoundsLike.normalize(
+                        (retained.soundsLike ?? []) + item.soundsLike, term: retained.term
+                    ).spellings
+                )
+            } else {
+                vocabularyIndices[identity] = vocabularyEntries.count
+                vocabularyEntries.append(DictionaryVocabularyEntry(
                     term: term,
                     createdAt: item.dateAdded,
-                    sectionID: sectionID
-                )
+                    sectionID: sectionID,
+                    soundsLike: item.soundsLike
+                ))
             }
+        }
 
         struct ReplacementGroup {
             var sources: [String]
@@ -352,7 +366,8 @@ enum DictionaryImportExportService {
                 continue
             }
             acceptedVocabulary.append(DictionaryVocabularyEntry(
-                term: term, createdAt: entry.createdAt, sectionID: entry.sectionID
+                term: term, createdAt: entry.createdAt, sectionID: entry.sectionID,
+                soundsLike: VocabularySoundsLike.normalize(entry.soundsLike ?? [], term: term).spellings
             ))
         }
 

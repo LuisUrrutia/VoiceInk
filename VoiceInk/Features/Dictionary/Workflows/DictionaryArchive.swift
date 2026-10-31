@@ -4,7 +4,8 @@ struct DictionaryArchive: Codable, Sendable {
     // This identifier and schema version are independent of the app version so
     // dictionary files remain portable across VoiceInk releases.
     static let formatIdentifier = "voiceink.dictionary"
-    static let currentSchemaVersion = 2
+    // Version 3 adds optional vocabulary `soundsLike`; versions 1 and 2 remain readable.
+    static let currentSchemaVersion = 3
 
     let format: String
     let schemaVersion: Int
@@ -50,11 +51,14 @@ struct DictionaryVocabularyEntry: Codable, Sendable {
     let term: String
     let createdAt: Date?
     let sectionID: UUID?
+    /// Omitted when empty.
+    let soundsLike: [String]?
 
-    init(term: String, createdAt: Date?, sectionID: UUID? = nil) {
+    init(term: String, createdAt: Date?, sectionID: UUID? = nil, soundsLike: [String]? = nil) {
         self.term = term
         self.createdAt = createdAt
         self.sectionID = sectionID
+        self.soundsLike = soundsLike?.isEmpty == true ? nil : soundsLike
     }
 }
 

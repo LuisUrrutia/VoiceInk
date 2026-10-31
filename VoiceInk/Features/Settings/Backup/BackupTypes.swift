@@ -149,10 +149,12 @@ struct GeneralBackup: Codable {
 struct WordBackup: Codable {
     let word: String
     let sectionID: UUID?
+    let soundsLike: [String]?
 
-    init(word: String, sectionID: UUID? = nil) {
+    init(word: String, sectionID: UUID? = nil, soundsLike: [String] = []) {
         self.word = word
         self.sectionID = sectionID
+        self.soundsLike = soundsLike.isEmpty ? nil : soundsLike
     }
 }
 

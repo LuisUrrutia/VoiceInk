@@ -841,6 +841,83 @@ final class ConfigurationFileTests: XCTestCase {
         XCTAssertEqual(try root()["dictionary"]?.decoded(as: ConfigurationDictionary.self).vocabulary.map(\.term), ["Observed"])
     }
 
+    func testVocabularySpellingsLoadInPlaceAndClearWhenOmittedNullOrEmpty() throws {
+        let context = ModelContext(container)
+        let word = VocabularyWord(word: "VoiceInk", dateAdded: Date(timeIntervalSince1970: 1_700_000_000))
+        let history = Transcription(text: "Keep history", duration: 1)
+        context.insert(word)
+        context.insert(history)
+        try context.save()
+        let wordID = word.persistentModelID
+        let entry = { (soundsLike: String) in
+            "{\"schemaVersion\":1,\"dictionary\":{\"sections\":[],\"vocabulary\":[{\"term\":\"VoiceInk\"\(soundsLike)}],\"replacements\":[]}}"
+        }
+
+        for (soundsLike, expected) in [
+            (",\"soundsLike\":[\"voice  ink\",\"voicing\"]", ["voice ink", "voicing"]),
+            ("", []), (",\"soundsLike\":[\"voicing\"]", ["voicing"]), (",\"soundsLike\":null", []),
+            (",\"soundsLike\":[\"voicing\"]", ["voicing"]), (",\"soundsLike\":[]", []),
+        ] {
+            try write(entry(soundsLike))
+            let service = store()
+            service.load(into: container)
+            let reader = ModelContext(container)
+
+            XCTAssertTrue(service.isReady, service.errorMessage ?? soundsLike)
+            let saved = try XCTUnwrap(reader.fetch(FetchDescriptor<VocabularyWord>()).first)
+            XCTAssertEqual(saved.persistentModelID, wordID, soundsLike)
+            XCTAssertEqual(saved.soundsLike, expected, soundsLike)
+            XCTAssertEqual(saved.dateAdded.timeIntervalSince1970, 1_700_000_000)
+            XCTAssertEqual(try reader.fetch(FetchDescriptor<Transcription>()).map(\.id), [history.id])
+        }
+    }
+
+    func testVocabularySpellingsSaveFromAppAndRoundTrip() throws {
+        try write("{\"schemaVersion\":1}")
+        let service = store()
+        service.load(into: container)
+        let context = ModelContext(container)
+        context.insert(VocabularyWord(word: "WebSocket", soundsLike: ["web socket"]))
+        context.insert(VocabularyWord(word: "Plain"))
+        try context.save()
+
+        service.saveNow()
+        let saved = try XCTUnwrap(root()["dictionary"]).decoded(as: ConfigurationDictionary.self)
+        let reopened = store()
+        reopened.load(into: container)
+
+        XCTAssertTrue(service.isReady, service.errorMessage ?? "")
+        XCTAssertTrue(reopened.isReady, reopened.errorMessage ?? "")
+        XCTAssertEqual(saved.vocabulary.first { $0.term == "WebSocket" }?.soundsLike, ["web socket"])
+        XCTAssertNil(saved.vocabulary.first { $0.term == "Plain" }?.soundsLike)
+        guard case .array(let vocabulary)? = try root()["dictionary"]?.object?["vocabulary"] else {
+            return XCTFail("Missing vocabulary")
+        }
+        XCTAssertNil(vocabulary.first { $0.object?["term"] == .string("Plain") }?.object?["soundsLike"])
+        XCTAssertEqual(try ConfigurationDictionary.capture(in: ModelContext(container)), saved)
+    }
+
+    func testInvalidVocabularySpellingsLeaveTheDictionaryUntouched() throws {
+        let context = ModelContext(container)
+        context.insert(VocabularyWord(word: "Keep", soundsLike: ["kept"]))
+        try context.save()
+        let tooMany = (0...VocabularySoundsLike.maximumCount).map { "\"s\($0)\"" }.joined(separator: ",")
+        let tooLong = String(repeating: "x", count: VocabularySoundsLike.maximumLength + 1)
+
+        for spellings in ["\"a,b\"", "\"same\",\"SAME\"", "\"name\"", "\" \"", tooMany, "\"\(tooLong)\""] {
+            let text = "{\"schemaVersion\":1,\"dictionary\":{\"sections\":[],\"vocabulary\":[{\"term\":\"Name\",\"soundsLike\":[\(spellings)]}],\"replacements\":[]}}"
+            try write(text)
+            let service = store()
+            service.load(into: container)
+
+            XCTAssertFalse(service.isReady, spellings)
+            let words = try ModelContext(container).fetch(FetchDescriptor<VocabularyWord>())
+            XCTAssertEqual(words.map(\.word), ["Keep"], spellings)
+            XCTAssertEqual(words.first?.soundsLike, ["kept"], spellings)
+            XCTAssertEqual(try Data(contentsOf: file), Data(text.utf8))
+        }
+    }
+
     func testDictionaryReloadPreservesPersistentIdentitiesAndMissingDates() throws {
         let context = ModelContext(container)
         let word = VocabularyWord(word: "Retained", dateAdded: Date(timeIntervalSince1970: 1_700_000_000))

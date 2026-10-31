@@ -12,6 +12,15 @@ struct ConfigurationDictionary: Codable, Equatable {
         let term: String
         let sectionID: UUID?
         let addedAt: Double?
+        /// Omitted or null means no spellings; captures write it only when nonempty.
+        let soundsLike: [String]?
+
+        init(term: String, sectionID: UUID?, addedAt: Double?, soundsLike: [String]? = nil) {
+            self.term = term
+            self.sectionID = sectionID
+            self.addedAt = addedAt
+            self.soundsLike = soundsLike
+        }
     }
 
     struct Replacement: Codable, Equatable {
@@ -41,6 +50,16 @@ struct ConfigurationDictionary: Codable, Equatable {
         try ConfigurationPreferences.requireUnique(
             vocabulary.map { VocabularyWordIdentity(word: $0.term, sectionID: $0.sectionID) }, key: "dictionary.vocabulary"
         )
+        for word in vocabulary {
+            let spellings = word.soundsLike ?? []
+            guard spellings.allSatisfy({ !$0.contains(",") }),
+                VocabularySoundsLike.normalize(spellings, term: word.term).spellings.count == spellings.count
+            else {
+                throw ConfigurationError.invalid(
+                    "Vocabulary soundsLike spellings must be nonempty, comma-free and unique, differ from their term, and fit \(VocabularySoundsLike.maximumCount) spellings of \(VocabularySoundsLike.maximumLength) characters."
+                )
+            }
+        }
         try ConfigurationPreferences.requireUnique(replacements.compactMap(\.id), key: "dictionary.replacements")
         // Existing stores can contain conflicting or cyclic rules; the replacement plan preserves them.
         for rule in replacements {
@@ -62,7 +81,9 @@ struct ConfigurationDictionary: Codable, Equatable {
             Section(id: $0.id, name: $0.name, description: $0.sectionDescription)
         }.sorted { $0.id.uuidString < $1.id.uuidString }
         let vocabulary = try context.fetch(FetchDescriptor<VocabularyWord>()).map {
-            Word(term: $0.word, sectionID: $0.sectionID, addedAt: $0.dateAdded.timeIntervalSince1970)
+            let soundsLike = $0.soundsLike
+            return Word(term: $0.word, sectionID: $0.sectionID, addedAt: $0.dateAdded.timeIntervalSince1970,
+                        soundsLike: soundsLike.isEmpty ? nil : soundsLike)
         }.sorted {
             let left = ($0.sectionID?.uuidString ?? "", $0.term)
             let right = ($1.sectionID?.uuidString ?? "", $1.term)
@@ -107,13 +128,16 @@ struct ConfigurationDictionary: Codable, Equatable {
             }
             for word in vocabulary {
                 let identity = VocabularyWordIdentity(word: word.term, sectionID: word.sectionID)
+                let soundsLike = VocabularySoundsLike.normalize(word.soundsLike ?? [], term: word.term).spellings
                 if let existing = wordsByIdentity[identity] {
                     retained.insert(existing.persistentModelID)
                     if existing.word != word.term { existing.word = word.term }
                     if let date = word.addedAt.map(Date.init(timeIntervalSince1970:)), existing.dateAdded != date { existing.dateAdded = date }
+                    if existing.soundsLike != soundsLike { existing.soundsLike = soundsLike }
                 } else {
                     context.insert(VocabularyWord(word: word.term,
-                        dateAdded: word.addedAt.map(Date.init(timeIntervalSince1970:)) ?? Date(), sectionID: word.sectionID))
+                        dateAdded: word.addedAt.map(Date.init(timeIntervalSince1970:)) ?? Date(), sectionID: word.sectionID,
+                        soundsLike: soundsLike))
                 }
             }
             for rule in replacements {

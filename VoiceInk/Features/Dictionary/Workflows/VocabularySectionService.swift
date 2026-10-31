@@ -57,17 +57,21 @@ enum VocabularySectionService {
     }
 
     static func delete(_ section: VocabularySection, words: [VocabularyWord], context: ModelContext) -> String? {
-        var unsectionedWords = Set(
-            words.lazy
-                .filter { $0.sectionID == nil }
-                .map { VocabularyWordIdentity(word: $0.word, sectionID: nil) }
+        var unsectionedWords = Dictionary(
+            words.filter { $0.sectionID == nil }.map { (VocabularyWordIdentity(word: $0.word, sectionID: nil), $0) },
+            uniquingKeysWith: { first, _ in first }
         )
         for word in words where word.sectionID == section.id {
             let identity = VocabularyWordIdentity(word: word.word, sectionID: nil)
-            if unsectionedWords.insert(identity).inserted {
-                word.sectionID = nil
-            } else {
+            if let retained = unsectionedWords[identity] {
+                let merged = VocabularySoundsLike.normalize(
+                    retained.soundsLike + word.soundsLike, term: retained.word
+                ).spellings
+                if merged != retained.soundsLike { retained.soundsLike = merged }
                 context.delete(word)
+            } else {
+                word.sectionID = nil
+                unsectionedWords[identity] = word
             }
         }
         context.delete(section)

@@ -33,6 +33,7 @@ struct VocabularyView: View {
     @Query private var vocabularySections: [VocabularySection]
     @Environment(\.modelContext) private var modelContext
     @State private var newWord = ""
+    @State private var newSoundsLike = ""
     @State private var showAlert = false
     @State private var alertMessage = ""
     @State private var sortMode: VocabularySortMode = .wordAsc
@@ -41,7 +42,12 @@ struct VocabularyView: View {
     @State private var sectionEditor: SectionEditor?
     @State private var sectionToDelete: VocabularySection?
     @State private var targetedDropTarget: VocabularyDropTarget?
-    @FocusState private var isWordFocused: Bool
+    @State private var editedWord: VocabularyWord?
+    @FocusState private var focusedField: ComposerField?
+
+    private enum ComposerField {
+        case word, soundsLike
+    }
 
     private struct SectionEditor: Identifiable {
         let id = UUID()
@@ -128,27 +134,55 @@ struct VocabularyView: View {
         }
     }
 
-    private var wordField: some View {
-        TextField("Word or phrase", text: $newWord, prompt: Text("Add a word or phrase"))
+    private var soundsLikeExceedsLimits: Bool {
+        VocabularySoundsLike.normalize(
+            VocabularySoundsLike.parse(newSoundsLike),
+            term: newWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        ).wasClamped
+    }
+
+    private func composerField(
+        _ title: LocalizedStringKey,
+        text: Binding<String>,
+        prompt: LocalizedStringKey,
+        field: ComposerField,
+        minWidth: CGFloat
+    ) -> some View {
+        let isFocused = focusedField == field
+        return TextField(title, text: text, prompt: Text(prompt))
             .textFieldStyle(.plain)
             .font(.system(size: 13))
-            .focused($isWordFocused)
+            .focused($focusedField, equals: field)
             .onSubmit { addWords() }
             .padding(.horizontal, 12)
-            .frame(minWidth: 120, minHeight: 36)
+            .frame(minWidth: minWidth, minHeight: 36)
             .appGlassControl()
             .overlay {
                 Capsule()
                     .strokeBorder(
-                        isWordFocused ? AppTheme.Accent.primary : AppTheme.Border.control.opacity(0.5),
-                        lineWidth: isWordFocused ? 1.5 : 0.5
+                        isFocused ? AppTheme.Accent.primary : AppTheme.Border.control.opacity(0.5),
+                        lineWidth: isFocused ? 1.5 : 0.5
                     )
                     .allowsHitTesting(false)
             }
             .contentShape(Capsule())
-            .onTapGesture { isWordFocused = true }
-            .accessibilityLabel("Word or phrase")
-            .help("Separate multiple entries with commas")
+            .onTapGesture { focusedField = field }
+            .accessibilityLabel(title)
+    }
+
+    private var wordField: some View {
+        composerField(
+            "Word or phrase", text: $newWord, prompt: "Add a word or phrase", field: .word, minWidth: 120
+        )
+        .help("Separate multiple entries with commas")
+    }
+
+    private var soundsLikeField: some View {
+        composerField(
+            "Sounds like", text: $newSoundsLike, prompt: "Sounds like (optional)", field: .soundsLike,
+            minWidth: 100
+        )
+        .help("Comma-separated spellings a transcript may show instead; AI enhancement uses them")
     }
 
     private var sectionMenu: some View {
@@ -177,13 +211,19 @@ struct VocabularyView: View {
     }
 
     private var composer: some View {
-        AppGlassContainer {
-            HStack(spacing: 10) {
-                wordField
-                sectionMenu
-                AppActionButton("Add word", kind: .primary, action: addWords)
-                    .disabled(!canAddWords)
-                    .fixedSize()
+        VStack(alignment: .leading, spacing: 6) {
+            AppGlassContainer {
+                HStack(spacing: 10) {
+                    wordField
+                    soundsLikeField
+                    sectionMenu
+                    AppActionButton("Add word", kind: .primary, action: addWords)
+                        .disabled(!canAddWords)
+                        .fixedSize()
+                }
+            }
+            if soundsLikeExceedsLimits {
+                VocabularySoundsLikeLimitNote()
             }
         }
     }
@@ -264,6 +304,11 @@ struct VocabularyView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage)
+        }
+        .onChange(of: vocabularyWords.map(\.persistentModelID)) { _, wordIDs in
+            if let editedWord, !wordIDs.contains(editedWord.persistentModelID) {
+                self.editedWord = nil
+            }
         }
         .sheet(item: $sectionEditor) { editor in
             VocabularySectionEditor(section: editor.section)
@@ -357,9 +402,14 @@ struct VocabularyView: View {
     private func wordFlow(_ words: [VocabularyWord]) -> some View {
         FlowLayout(spacing: 8) {
             ForEach(words) { item in
-                VocabularyWordView(item: item) {
-                    removeWord(item)
-                }
+                VocabularyWordView(
+                    item: item,
+                    isEditing: Binding(
+                        get: { editedWord?.persistentModelID == item.persistentModelID },
+                        set: { editedWord = $0 ? item : nil }
+                    ),
+                    onDelete: { removeWord(item) }
+                )
                 .contentShape(Rectangle())
                 .draggable(
                     VocabularyWordDragPayload(term: item.word, sectionID: item.sectionID).encoded
@@ -391,14 +441,16 @@ struct VocabularyView: View {
             context: modelContext,
             sectionID: selectedSectionID.flatMap { id in
                 vocabularySections.contains(where: { $0.id == id }) ? id : nil
-            })
+            },
+            soundsLike: newSoundsLike)
         {
             alertMessage = error
             showAlert = true
             return
         }
         newWord = ""
-        isWordFocused = true
+        newSoundsLike = ""
+        focusedField = .word
     }
 
     private func removeWord(_ word: VocabularyWord) {
@@ -427,6 +479,13 @@ struct VocabularyInfoPopover: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Text(
+                "Sounds like lists comma-separated spellings a transcript may show instead of one term. AI enhancement uses them to restore the term; transcription and word replacements do not. Click a term to edit its spellings."
+            )
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
             Divider()
 
             Text("Examples")
@@ -434,6 +493,13 @@ struct VocabularyInfoPopover: View {
                 .foregroundColor(.secondary)
 
             Text(verbatim: "Prakash, VoiceInk, SwiftData, WebSocket")
+                .font(.callout)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.textBackgroundColor))
+                .cornerRadius(6)
+
+            Text(verbatim: "VoiceInk — voice ink, voicing")
                 .font(.callout)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -447,12 +513,114 @@ struct VocabularyInfoPopover: View {
 
 struct VocabularyWordView: View {
     let item: VocabularyWord
+    @Binding var isEditing: Bool
     let onDelete: () -> Void
+
+    private var soundsLikeSummary: String {
+        item.soundsLike.joined(separator: ", ")
+    }
 
     var body: some View {
         DictionaryPill(onRemove: onDelete, removeHelp: "Remove word") {
-            Text(item.word)
-                .lineLimit(1)
+            Button {
+                isEditing = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text(item.word)
+                        .lineLimit(1)
+                    if !item.soundsLike.isEmpty {
+                        Text(verbatim: "≈ \(soundsLikeSummary)")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: 160, alignment: .leading)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(item.word)
+            .accessibilityValue(
+                item.soundsLike.isEmpty ? "" : String(localized: "Sounds like \(soundsLikeSummary)")
+            )
+            .accessibilityHint("Edit sounds like spellings")
+            .popover(isPresented: $isEditing, arrowEdge: .bottom) {
+                VocabularySoundsLikeEditor(word: item)
+            }
         }
+    }
+}
+
+struct VocabularySoundsLikeLimitNote: View {
+    var body: some View {
+        Text(
+            "Only the first \(VocabularySoundsLike.maximumCount) spellings of up to \(VocabularySoundsLike.maximumLength) characters are kept."
+        )
+        .font(.system(size: 12))
+        .foregroundStyle(.red)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct VocabularySoundsLikeEditor: View {
+    let word: VocabularyWord
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @State private var soundsLike: String
+    @State private var errorMessage: String?
+    @FocusState private var isFieldFocused: Bool
+
+    init(word: VocabularyWord) {
+        self.word = word
+        _soundsLike = State(initialValue: VocabularySoundsLike.serialize(word.soundsLike))
+    }
+
+    private var exceedsLimits: Bool {
+        VocabularySoundsLike.normalize(VocabularySoundsLike.parse(soundsLike), term: word.word).wasClamped
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(word.word)
+                .font(.headline)
+                .lineLimit(2)
+            TextField("Sounds like", text: $soundsLike, prompt: Text("voice ink, voicing"))
+                .textFieldStyle(.roundedBorder)
+                .focused($isFieldFocused)
+                .onSubmit(save)
+            Text("Comma-separated spellings a transcript may show instead. AI enhancement uses them to restore this term.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if exceedsLimits {
+                VocabularySoundsLikeLimitNote()
+            }
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(16)
+        .frame(width: 320)
+        .onAppear { isFieldFocused = true }
+    }
+
+    private func save() {
+        errorMessage = DictionaryService.updateVocabularySoundsLike(
+            word, soundsLike: soundsLike, context: modelContext
+        )
+        if errorMessage == nil { dismiss() }
     }
 }

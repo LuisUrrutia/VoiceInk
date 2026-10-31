@@ -260,7 +260,9 @@ enum BackupImporter {
 
         let archive = DictionaryArchive(
             vocabulary: (backup.vocabularyWords ?? []).map {
-                DictionaryVocabularyEntry(term: $0.word, createdAt: nil, sectionID: $0.sectionID)
+                DictionaryVocabularyEntry(
+                    term: $0.word, createdAt: nil, sectionID: $0.sectionID, soundsLike: $0.soundsLike
+                )
             },
             replacements: replacementEntries,
             sections: backup.vocabularySections ?? []
