@@ -62,14 +62,16 @@ Microsoft Teams and FaceTime. For each app, choose on the Meetings page:
 | **Always record** | Recording starts, and a notice says it started automatically. |
 | **Never offer** | Nothing. |
 
-- A call is an app using the microphone for 2 seconds. **Not now** stays quiet
-  until that app has been off the microphone for a minute.
+- A call is an app using the microphone for 2 seconds. After an offer or a
+  recording, VoiceInk stays quiet about that app until it has been off the
+  microphone for a minute.
 - A recording never stops by itself. When the app leaves the call, VoiceInk asks
   whether to keep recording or stop and transcribe.
 - Google Meet is recognized only in the front tab of a supported browser that
   VoiceInk is already allowed to control (System Settings › Privacy & Security ›
-  Automation). VoiceInk never asks for that permission during a call. Firefox is
-  not supported.
+  Automation). VoiceInk never asks for that permission during a call. Once a
+  Meet call records, switching tabs does not end it; the call ends when the
+  browser stops using the microphone. Firefox is not supported.
 - Turn off **Offer to record detected calls** to stop all detection.
 
 ## Transcripts

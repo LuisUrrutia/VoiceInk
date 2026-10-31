@@ -33,6 +33,14 @@ import XCTest
         XCTAssertNil(MeetingProvider.nativeProvider(forBundleIDs: ["com.prakashjoshipax.VoiceInk"]))
     }
 
+    func testSafarisWebKitProcessIsAttributedBySafarisNameOnly() {
+        let safari = CoreAudioInputProcessListing.withCanonicalHost(["com.apple.WebKit.GPU"], localizedName: "Safari Graphics and Media")
+        let other = CoreAudioInputProcessListing.withCanonicalHost(["com.apple.WebKit.GPU"], localizedName: "Mail Graphics and Media")
+
+        XCTAssertEqual(MeetingProvider.browser(forBundleIDs: safari), .safari)
+        XCTAssertNil(MeetingProvider.browser(forBundleIDs: other))
+    }
+
     func testOnlyMeetCallPagesCount() {
         XCTAssertTrue(MeetingProvider.isMeetCall("https://meet.google.com/abc-defg-hij"))
         XCTAssertTrue(MeetingProvider.isMeetCall("https://meet.google.com/abc-defg-hij?authuser=1"))
@@ -215,6 +223,125 @@ import XCTest
         XCTAssertEqual(fixture.processes.calls, calls)
     }
 
+    func testSwitchingTabsDuringARecordedMeetCallDoesNotEndIt() async throws {
+        MeetingSettings.setPolicy(.alwaysRecord, for: .meet, in: defaults)
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["com.google.Chrome.helper"]]
+        fixture.urls[.chrome] = "https://meet.google.com/abc-defg-hij"
+        await observe(fixture, seconds: [0, 2])
+        try await waitUntil { fixture.recorder.isRecording }
+
+        fixture.urls[.chrome] = "https://docs.google.com/document/d/notes"
+        await observe(fixture, seconds: [4, 7, 10])
+        XCTAssertTrue(fixture.prompt.stopOffers.isEmpty)
+
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [11, 14])
+        XCTAssertEqual(fixture.prompt.stopOffers, [.meet])
+        _ = await fixture.recorder.stop()
+    }
+
+    func testStartingAMeetingElsewhereWithdrawsAnOpenOffer() async throws {
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [0, 2])
+        XCTAssertEqual(fixture.prompt.offers, [.zoom])
+
+        try await fixture.recorder.start(title: "Manual")
+        fixture.prompt.answerOffer(.record)
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertGreaterThan(fixture.prompt.dismissals, 0)
+        XCTAssertEqual(fixture.recorder.activeMeeting?.title, "Manual")
+        _ = await fixture.recorder.stop()
+    }
+
+    func testACallEndingWhileItsRecordingStartsAsksOnceItStarted() async throws {
+        MeetingSettings.setPolicy(.alwaysRecord, for: .zoom, in: defaults)
+        let fixture = makeMonitor()
+        fixture.microphone.holdStart = true
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [0, 2])
+        try await waitUntil { fixture.recorder.isStarting }
+
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [3, 6])
+        XCTAssertTrue(fixture.prompt.stopOffers.isEmpty)
+        fixture.microphone.releaseStart()
+
+        try await waitUntil { fixture.prompt.stopOffers == [.zoom] }
+        XCTAssertTrue(fixture.recorder.isRecording)
+        _ = await fixture.recorder.stop()
+    }
+
+    func testARecordedCallIsNotOfferedAgainUntilItsAppIsOffTheMicrophoneForAMinute() async throws {
+        MeetingSettings.setPolicy(.alwaysRecord, for: .zoom, in: defaults)
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [0, 2])
+        try await waitUntil { fixture.recorder.isRecording }
+        _ = await fixture.recorder.stop()
+
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [3, 5])
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [6, 8, 9])
+        XCTAssertFalse(fixture.recorder.isRecording)
+
+        fixture.processes.bundleIDs = []
+        await observe(fixture, seconds: [10, 80])
+        fixture.processes.bundleIDs = [["us.zoom.xos"]]
+        await observe(fixture, seconds: [81, 83])
+        try await waitUntil { fixture.recorder.isRecording }
+        _ = await fixture.recorder.stop()
+    }
+
+    func testSwitchingDetectionOffDuringABrowserLookupDropsItsResult() async throws {
+        let fixture = makeMonitor()
+        fixture.processes.bundleIDs = [["com.google.Chrome.helper"]]
+        fixture.urls[.chrome] = "https://meet.google.com/abc-defg-hij"
+        fixture.urls.holdsLookups = true
+        fixture.monitor.start()
+        try await waitUntil { fixture.urls.heldLookups > 0 }
+
+        defaults.set(false, forKey: MeetingSettings.detectsCallsKey)
+        try await Task.sleep(for: .milliseconds(20))
+        fixture.urls.releaseLookups()
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertTrue(fixture.prompt.offers.isEmpty)
+    }
+
+    func testThePromptPanelTimesOutWithoutRecordingAndNeverAnswersAfterDismissal() async throws {
+        let panel = MeetingCallPromptPanel()
+        var answers: [MeetingCallPromptAnswer] = []
+
+        panel.offerRecording(.zoom, timeout: .milliseconds(30)) { answers.append($0) }
+        try await waitUntil { !answers.isEmpty }
+        panel.offerRecording(.slack, timeout: .milliseconds(30)) { answers.append($0) }
+        panel.dismiss()
+        try await Task.sleep(for: .milliseconds(80))
+
+        XCTAssertEqual(answers, [.notNow])
+    }
+
+    func testDetectionPreferencesRoundTripThroughTheConfigurationFile() throws {
+        MeetingSettings.setPolicy(.alwaysRecord, for: .meet, in: defaults)
+        defaults.set(false, forKey: MeetingSettings.detectsCallsKey)
+
+        let captured = try ConfigurationPreferences.capture(from: defaults)
+        let restoredName = "\(suiteName!).configuration"
+        let restored = UserDefaults(suiteName: restoredName)!
+        defer { restored.removePersistentDomain(forName: restoredName) }
+        try ConfigurationPreferences.apply(
+            captured.filter { [MeetingSettings.detectsCallsKey, MeetingSettings.providerPoliciesKey].contains($0.key) }, to: restored
+        )
+
+        XCTAssertEqual(captured[MeetingSettings.detectsCallsKey], .bool(false))
+        XCTAssertEqual(MeetingSettings.policy(for: .meet, in: restored), .alwaysRecord)
+        XCTAssertFalse(MeetingSettings.detectsCalls(in: restored))
+    }
+
     func testCoreAudioListsProcessesWithoutThisProcess() {
         let processes = CoreAudioInputProcessListing().processesUsingInput()
 
@@ -228,6 +355,7 @@ import XCTest
         let monitor: MeetingCallMonitor
         let recorder: MeetingRecorder
         let processes: FakeInputProcesses
+        let microphone: FakeMeetingMicrophoneHardware
         let prompt: FakeCallPrompt
         let clock: DetectionClock
         let urls: BrowserURLs
@@ -235,11 +363,12 @@ import XCTest
 
     private func makeMonitor() -> MonitorFixture {
         let devices = MeetingAudioDevices(userDefaults: defaults)
+        let microphone = FakeMeetingMicrophoneHardware()
         var recorderDependencies = MeetingRecorder.Dependencies()
         recorderDependencies.store = MeetingStore(rootURL: root)
         recorderDependencies.permission = AllowedSystemAudio()
         recorderDependencies.makeSystemAudio = { QuietSystemAudio() }
-        recorderDependencies.makeMicrophone = { MeetingMicrophoneCapture(deviceManager: devices, makeHardware: { FakeMeetingMicrophoneHardware() }) }
+        recorderDependencies.makeMicrophone = { MeetingMicrophoneCapture(deviceManager: devices, makeHardware: { microphone }) }
         recorderDependencies.isMicrophoneAuthorized = { true }
         recorderDependencies.defaults = defaults
         let recorder = MeetingRecorder(dependencies: recorderDependencies)
@@ -249,7 +378,7 @@ import XCTest
         let urls = BrowserURLs()
         var dependencies = MeetingCallMonitor.Dependencies()
         dependencies.processes = processes
-        dependencies.browserURL = { urls[$0] }
+        dependencies.browserURL = { await urls.lookup($0) }
         dependencies.prompt = prompt
         dependencies.recorder = recorder
         dependencies.defaults = defaults
@@ -257,7 +386,7 @@ import XCTest
         dependencies.pollInterval = .milliseconds(5)
         return MonitorFixture(
             monitor: MeetingCallMonitor(dependencies: dependencies), recorder: recorder, processes: processes,
-            prompt: prompt, clock: clock, urls: urls
+            microphone: microphone, prompt: prompt, clock: clock, urls: urls
         )
     }
 
@@ -284,9 +413,27 @@ private final class DetectionClock: @unchecked Sendable {
 @MainActor
 private final class BrowserURLs {
     private var values: [BrowserType: String] = [:]
+    var holdsLookups = false
+    private(set) var heldLookups = 0
+    private var held: [CheckedContinuation<Void, Never>] = []
+
     subscript(browser: BrowserType) -> String? {
         get { values[browser] }
         set { values[browser] = newValue }
+    }
+
+    func lookup(_ browser: BrowserType) async -> String? {
+        if holdsLookups {
+            heldLookups += 1
+            await withCheckedContinuation { held.append($0) }
+        }
+        return values[browser]
+    }
+
+    func releaseLookups() {
+        holdsLookups = false
+        held.forEach { $0.resume() }
+        held = []
     }
 }
 
@@ -321,7 +468,12 @@ private final class FakeCallPrompt: MeetingCallPrompting {
 
     func showStartedAutomatically(_ provider: MeetingProvider) { automaticStarts.append(provider) }
 
-    func dismiss() { dismissals += 1 }
+    /// Like the panel, a dismissed prompt never answers.
+    func dismiss() {
+        dismissals += 1
+        offerAnswer = nil
+        stopAnswer = nil
+    }
 
     func answerOffer(_ answer: MeetingCallPromptAnswer) {
         offerAnswer?(answer)

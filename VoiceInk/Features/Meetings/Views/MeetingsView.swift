@@ -63,9 +63,12 @@ struct MeetingsView: View {
             }
         }
         .formStyle(AppSettingsFormStyle())
+        // Never offer can be chosen from a call prompt, and a backup can restore policies, while this page is open.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: UserDefaults.standard)) { _ in
+            refreshPolicies()
+        }
         .onAppear {
-            // Never offer can be chosen from a call prompt while this page is closed.
-            policies = Dictionary(uniqueKeysWithValues: MeetingProvider.allCases.map { ($0, MeetingSettings.policy(for: $0)) })
+            refreshPolicies()
             recorder.refreshAuthorization()
             recorder.reloadMeetings()
         }
@@ -118,6 +121,11 @@ struct MeetingsView: View {
         case .denied: "Denied. Without it, the other participants are not recorded."
         case .unknown: "VoiceInk cannot read this permission. If Them stays silent, allow VoiceInk in System Settings."
         }
+    }
+
+    private func refreshPolicies() {
+        let current = Dictionary(uniqueKeysWithValues: MeetingProvider.allCases.map { ($0, MeetingSettings.policy(for: $0)) })
+        if current != policies { policies = current }
     }
 
     private func policyBinding(for provider: MeetingProvider) -> Binding<MeetingProviderPolicy> {
