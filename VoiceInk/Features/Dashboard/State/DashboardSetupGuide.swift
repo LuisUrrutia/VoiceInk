@@ -18,17 +18,17 @@ enum DashboardSetupGuide {
 
     static func steps(for configuration: Configuration) -> [Step] {
         let modes = configuration.modes
-        let hasConfiguredModes = hasUserModes(modes) || hasCustomizedDefaultMode(modes)
+        let modesConfigured = hasConfiguredModes(modes)
         var steps: [Step] = []
 
-        if !hasConfiguredModes, !hasChangedDefaultModel(modes),
+        if !modesConfigured, !hasChangedDefaultModel(modes),
             configuration.installedLocalModelNames.isSubset(of: initialModelNames)
         {
             steps.append(.chooseModel)
         }
         if !modes.contains(where: \.isEnabled) {
             steps.append(.createFirstMode)
-        } else if !hasConfiguredModes {
+        } else if !modesConfigured {
             steps.append(.customizeModes)
         }
         if !configuration.hasRecordingShortcut { steps.append(.setShortcuts) }
@@ -49,8 +49,14 @@ enum DashboardSetupGuide {
         return hasRecordingError || !issues.isEmpty || !readiness.issues(for: .paste).isEmpty
     }
 
-    private static func hasUserModes(_ modes: [ModeConfig]) -> Bool {
-        modes.contains { !StarterModeCatalog.ids.contains($0.id) }
+    /// Untouched onboarding starter modes are not configuration; new, edited or newly default modes are.
+    private static func hasConfiguredModes(_ modes: [ModeConfig]) -> Bool {
+        let defaultTemplateID = StarterModeCatalog.templates.first(where: \.isDefault)?.id
+        if let defaultMode = modes.first(where: \.isDefault), defaultMode.id != defaultTemplateID { return true }
+        return modes.contains { mode in
+            guard let template = StarterModeCatalog.templates.first(where: { $0.id == mode.id }) else { return true }
+            return isCustomized(mode, from: template)
+        }
     }
 
     private static func hasChangedDefaultModel(_ modes: [ModeConfig]) -> Bool {
@@ -58,11 +64,9 @@ enum DashboardSetupGuide {
         return modelName != StarterModeFactory.defaultTranscriptionModelName
     }
 
-    private static func hasCustomizedDefaultMode(_ modes: [ModeConfig]) -> Bool {
-        guard let mode = modes.first(where: \.isDefault) else { return false }
-        guard let template = StarterModeCatalog.templates.first(where: \.isDefault), mode.id == template.id else {
-            return true
-        }
+    private static func isCustomized(_ mode: ModeConfig, from template: StarterModeTemplate) -> Bool {
+        // Onboarding fills the Email starter's trigger group from the installed apps, so it has no fixed baseline.
+        let hasTriggerGroups = template.kind != .email && !(mode.triggerGroups ?? []).isEmpty
         return mode.name != template.name
             || mode.icon != template.icon
             || mode.isAIEnhancementEnabled != template.usesAIEnhancement
@@ -70,14 +74,15 @@ enum DashboardSetupGuide {
             || mode.outputMode != template.outputMode
             || mode.useSelectedTextContext != template.useSelectedTextContext
             || mode.useScreenCapture != template.useScreenCapture
-            || mode.useClipboardContext
+            || mode.useClipboardContext != (template.kind == .email)
             || !mode.isTextFormattingEnabled
+            || !mode.isRealtimeTranscriptionEnabled
             || mode.autoSendKey != .none
             || mode.customCommand != nil
             || !mode.triggerWords.isEmpty
             || !(mode.appConfigs ?? []).isEmpty
             || !(mode.urlConfigs ?? []).isEmpty
-            || !(mode.triggerGroups ?? []).isEmpty
+            || hasTriggerGroups
             || mode.transcriptionLanguages != ["auto"]
     }
 }

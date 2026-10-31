@@ -29,12 +29,22 @@ final class DashboardSetupGuideTests: XCTestCase {
     }
 
     func testOnboardingStarterModesAloneKeepModeStep() {
-        let enhancement = StarterModeCatalog.templates.first { $0.kind == .enhance }!
-        let starter = ModeConfig(id: enhancement.id, name: enhancement.name, isAIEnhancementEnabled: true)
+        var email = starterMode(.email)
+        email.triggerGroups = [ModeTriggerGroup(name: "Email", appConfigs: [], urlConfigs: [])]
+        let modes = [starterDictation(), starterMode(.enhance), email, starterMode(.rewrite), starterMode(.assistant)]
 
-        let steps = DashboardSetupGuide.steps(for: configuration(modes: [starterDictation(), starter]))
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: modes))
 
         XCTAssertEqual(steps, [.chooseModel, .customizeModes, .setShortcuts, .addVocabulary])
+    }
+
+    func testEditedNondefaultStarterModeHidesModelAndModeSteps() {
+        var enhancement = starterMode(.enhance)
+        enhancement.name = "Work notes"
+
+        let steps = DashboardSetupGuide.steps(for: configuration(modes: [starterDictation(), enhancement]))
+
+        XCTAssertEqual(steps, [.setShortcuts, .addVocabulary])
     }
 
     func testCustomizedDefaultModeHidesModelAndModeSteps() {
@@ -46,6 +56,7 @@ final class DashboardSetupGuideTests: XCTestCase {
             { $0.triggerWords = ["note"] },
             { $0.useClipboardContext = true },
             { $0.isTextFormattingEnabled = false },
+            { $0.isRealtimeTranscriptionEnabled = false },
         ]
 
         for customize in customizations {
@@ -125,14 +136,20 @@ final class DashboardSetupGuideTests: XCTestCase {
     }
 
     private func starterDictation() -> ModeConfig {
-        let template = StarterModeCatalog.templates.first(where: \.isDefault)!
+        starterMode(.clean)
+    }
+
+    /// Mirrors the configuration `StarterModeFactory` installs during onboarding.
+    private func starterMode(_ kind: StarterModeKind) -> ModeConfig {
+        let template = StarterModeCatalog.templates.first { $0.kind == kind }!
         return ModeConfig(
             id: template.id, name: template.name, icon: template.icon,
-            isAIEnhancementEnabled: template.usesAIEnhancement,
+            isAIEnhancementEnabled: template.usesAIEnhancement, selectedPrompt: template.promptId?.uuidString,
             selectedTranscriptionModelName: StarterModeFactory.defaultTranscriptionModelName,
-            selectedLanguage: "auto", useSelectedTextContext: template.useSelectedTextContext,
+            selectedLanguage: "auto", useClipboardContext: kind == .email,
+            useSelectedTextContext: template.useSelectedTextContext,
             useScreenCapture: template.useScreenCapture, isTextFormattingEnabled: true,
-            outputMode: template.outputMode, isDefault: true)
+            outputMode: template.outputMode, isDefault: template.isDefault)
     }
 
     private func configuration(
