@@ -8,6 +8,7 @@ struct MeetingsView: View {
     @AppStorage(MeetingSettings.detectsCallsKey) private var detectsCalls = true
     @AppStorage(MeetingAudioRetention.key) private var retentionDays = MeetingAudioRetention.default.rawValue
     @AppStorage(MeetingSettings.summarizesKey) private var summarizes = false
+    @EnvironmentObject private var aiService: AIService
     @State private var policies: [MeetingProvider: MeetingProviderPolicy] = [:]
 
     var body: some View {
@@ -18,7 +19,7 @@ struct MeetingsView: View {
             } header: {
                 Text("Recording")
             } footer: {
-                Text("VoiceInk records your microphone as You and the other participants' audio as Them, as two separate tracks. Audio and transcripts stay on this Mac. Dictation keeps working during a meeting and leaves the call's volume alone.")
+                Text("VoiceInk records your microphone as You and the other participants' audio as Them, as two separate tracks. Audio is recorded and transcribed on this Mac. Dictation keeps working during a meeting and leaves the call's volume alone.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -40,11 +41,15 @@ struct MeetingsView: View {
                 }
                 .onChange(of: retentionDays) { recorder.applyRetention() }
                 Toggle("Add a short summary", isOn: $summarizes)
+                if summarizes, !MeetingSummary.canSummarize(with: aiService.selectedProvider) {
+                    Text("VoiceInk Refine only cleans up text and cannot summarize. Choose another enhancement provider to add summaries.")
+                        .settingsDescription()
+                }
                 Toggle("Show recording indicator", isOn: $showsRecordingIndicator)
             } header: {
                 Text("Transcripts")
             } footer: {
-                Text("Audio of transcribed meetings moves to the Trash after this period. Transcripts stay in their folder. A summary uses the AI provider selected for enhancement: VoiceInk Refine runs on this Mac, while other providers and commands can send the transcript elsewhere.")
+                Text("Audio of transcribed meetings moves to the Trash after this period. Transcripts stay in their folder. A summary sends the transcript to the AI provider selected for enhancement, or to its Local CLI command, which can run elsewhere.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 

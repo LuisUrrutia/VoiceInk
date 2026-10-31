@@ -14,6 +14,7 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
         var isDictating: @MainActor () -> Bool
         /// The summarizer when summaries are on; nil skips the summary.
         var summarizer: @MainActor () -> (any MeetingSummarizing)? = { nil }
+        var summaryDeadline: Duration = MeetingSummary.deadline
         var outputFolder: () -> URL = { MeetingSettings.outputFolder() }
         var idleSleep: IdleSleepPrevention = .shared
         var dictationPollInterval: Duration = .milliseconds(250)
@@ -57,7 +58,7 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
                 isDictating: { [weak engine] in engine.map { $0.recordingState != .idle } ?? false },
                 summarizer: { [weak engine] in
                     guard MeetingSettings.summarizes(), let aiService = engine?.enhancementService?.getAIService() else { return nil }
-                    return EnhancementProviderSummarizer(aiService: aiService)
+                    return EnhancementProviderSummarizer.make(aiService: aiService)
                 }
             ),
             recorder: recorder
@@ -121,7 +122,7 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
             let result = try await meetingTranscriber.transcribe(manifest, store: recorder.store)
             let turns = result.turns
             manifest.echoSuppressedUtterances = result.echoSuppressedUtterances
-            manifest.summary = await summary(of: turns, using: environment.summarizer())
+            manifest.summary = await summary(of: turns, using: environment.summarizer(), deadline: environment.summaryDeadline)
             let markdown = MeetingMarkdown.render(manifest, turns: turns, summary: manifest.summary)
             let url = try MeetingMarkdown.write(markdown, named: MeetingMarkdown.fileName(for: manifest), in: environment.outputFolder())
             if let previous = manifest.transcriptPath, previous != url.path { logger.notice("Meeting transcribed again into a new file") }
@@ -136,15 +137,16 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
     }
 
     /// A failed or empty summary leaves the transcript without one; it never fails the transcription.
-    private func summary(of turns: [MeetingTranscriptEntry], using summarizer: (any MeetingSummarizing)?) async -> String? {
+    private func summary(
+        of turns: [MeetingTranscriptEntry], using summarizer: (any MeetingSummarizing)?, deadline: Duration
+    ) async -> String? {
         guard let summarizer, !turns.isEmpty else { return nil }
         let excerpt = MeetingSummary.excerpt(MeetingSummary.lines(turns))
-        do {
-            return MeetingSummary.cleaned(try await summarizer.reply(to: excerpt, instructions: MeetingSummary.instructions))
-        } catch {
-            logger.error("Meeting summary failed: \(error, privacy: .public)")
+        guard let reply = await MeetingSummary.reply(from: summarizer, to: excerpt, deadline: deadline) else {
+            logger.error("Meeting summary failed or missed its deadline")
             return nil
         }
+        return MeetingSummary.cleaned(reply)
     }
 
     private func finish(_ manifest: inout MeetingManifest, failure: String?, recorder: MeetingRecorder) {

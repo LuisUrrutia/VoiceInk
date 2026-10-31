@@ -65,6 +65,32 @@ import XCTest
         XCTAssertTrue(long?.hasSuffix("…") == true)
     }
 
+    func testReasoningBlocksNeverReachTheSummary() {
+        XCTAssertEqual(
+            MeetingSummary.cleaned("<think>The user wants two sentences. Let me see.</think>They agreed on Friday."),
+            "They agreed on Friday."
+        )
+        XCTAssertNil(MeetingSummary.cleaned("<reasoning>Only reasoning.</reasoning>"))
+    }
+
+    func testVoiceInkRefineCannotSummarizeButOtherProvidersCan() {
+        XCTAssertFalse(MeetingSummary.canSummarize(with: .voiceInkRefine))
+        for provider in AIProvider.allCases where provider.supportsEnhancement && provider != .voiceInkRefine {
+            XCTAssertTrue(MeetingSummary.canSummarize(with: provider), provider.rawValue)
+        }
+    }
+
+    func testASlowSummaryIsCancelledAtTheDeadline() async {
+        let slow = SlowSummarizer()
+        let started = ContinuousClock.now
+
+        let reply = await MeetingSummary.reply(from: slow, to: "transcript", deadline: .milliseconds(50))
+
+        XCTAssertNil(reply)
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(2))
+        XCTAssertTrue(slow.wasCancelled)
+    }
+
     func testTheSummaryAppearsAboveTheTranscript() {
         let markdown = MeetingMarkdown.render(
             MeetingManifest(title: "Sync"), turns: [MeetingTranscriptEntry(speaker: .you, start: 0, end: 1, text: "Hi.")],
@@ -95,11 +121,17 @@ import XCTest
         XCTAssertNil(failed.summary)
         XCTAssertFalse(try String(contentsOfFile: failed.transcriptPath!, encoding: .utf8).contains("## Summary"))
 
-        fixture.summaries.isOn = false
         summarizer.failure = nil
+        summarizer.delay = .seconds(30)
+        let late = try await recordAndTranscribe(fixture)
+        XCTAssertEqual(late.status, .transcribed)
+        XCTAssertNil(late.summary, "a summary past the deadline is dropped")
+        summarizer.delay = nil
+
+        fixture.summaries.isOn = false
         let off = try await recordAndTranscribe(fixture)
         XCTAssertNil(off.summary)
-        XCTAssertEqual(summarizer.transcripts.count, 2)
+        XCTAssertEqual(summarizer.transcripts.count, 3)
     }
 
     func testTheSummarySwitchIsOffByDefaultAndPersists() throws {
@@ -144,7 +176,8 @@ import XCTest
             environment: .init(
                 chooseModel: { model }, makeTranscriber: { _ in SpeechTranscriber() },
                 requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, isDictating: { false },
-                summarizer: { summaries.isOn ? summarizer : nil }, outputFolder: { folder }
+                summarizer: { summaries.isOn ? summarizer : nil }, summaryDeadline: .milliseconds(100),
+                outputFolder: { folder }
             ),
             recorder: recorder
         )
@@ -180,6 +213,7 @@ private final class SummarySwitch {
 private final class FakeSummarizer: MeetingSummarizing {
     let reply: String
     var failure: Error?
+    var delay: Duration?
     var transcripts: [String] = []
     var instructions: [String] = []
 
@@ -191,6 +225,7 @@ private final class FakeSummarizer: MeetingSummarizing {
         transcripts.append(transcript)
         self.instructions.append(instructions)
         if let failure { throw failure }
+        if let delay { try await Task.sleep(for: delay) }
         return reply
     }
 }
@@ -216,4 +251,18 @@ private final class SummaryQuietSystemAudio: SystemAudioCapturing, @unchecked Se
     func start(writingTo url: URL, meetingStartNanoseconds: UInt64) throws {}
     func restart() throws {}
     func stop() -> MeetingTrackCaptureResult { MeetingTrackCaptureResult() }
+}
+
+private final class SlowSummarizer: MeetingSummarizing, @unchecked Sendable {
+    private(set) var wasCancelled = false
+
+    func reply(to transcript: String, instructions: String) async throws -> String {
+        do {
+            try await Task.sleep(for: .seconds(30))
+        } catch {
+            wasCancelled = true
+            throw error
+        }
+        return "too late"
+    }
 }

@@ -10,7 +10,16 @@ enum MeetingSummary {
     static let gapMarker = "[…]"
     static let maximumSentences = 2
     static let maximumCharacters = 400
+    /// Per request, for providers that honor it.
     static let timeout: TimeInterval = 60
+    /// The whole summary step, across a provider's retries and commands with longer timeouts, as Hex's
+    /// `TOTAL_DEADLINE`.
+    static let deadline: Duration = .seconds(90)
+
+    /// VoiceInk Refine only cleans up text; every other enhancement provider can summarize.
+    static func canSummarize(with provider: AIProvider) -> Bool {
+        provider != .voiceInkRefine
+    }
 
     static let instructions = """
         You summarize meeting transcripts. Each line starts with a timestamp and a speaker label: You is the person \
@@ -87,7 +96,8 @@ enum MeetingSummary {
 
     /// At most two sentences and 400 characters of the model's reply, or nil when it says nothing.
     static func cleaned(_ reply: String) -> String? {
-        var text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Reasoning blocks would use up the two sentences; the enhancement filter removes them.
+        var text = AIEnhancementOutputFilter.filter(reply).trimmingCharacters(in: .whitespacesAndNewlines)
         if text.lowercased().hasPrefix("summary:") { text = String(text.dropFirst(8)).trimmingCharacters(in: .whitespaces) }
         text = text.split(whereSeparator: \.isNewline).joined(separator: " ")
         var sentences: [String] = []
@@ -113,11 +123,34 @@ protocol MeetingSummarizing {
 struct EnhancementProviderSummarizer: MeetingSummarizing {
     let aiService: AIService
 
+    /// Nil when the selected provider cannot summarize.
+    static func make(aiService: AIService) -> EnhancementProviderSummarizer? {
+        MeetingSummary.canSummarize(with: aiService.selectedProvider) ? EnhancementProviderSummarizer(aiService: aiService) : nil
+    }
+
     func reply(to transcript: String, instructions: String) async throws -> String {
         try await aiService.performChatCompletion(
             provider: aiService.selectedProvider, modelName: aiService.currentModel,
             messages: [ChatMessage.user(transcript)], systemPrompt: instructions, localUserPrompt: transcript,
             timeout: MeetingSummary.timeout
         ).text
+    }
+}
+
+extension MeetingSummary {
+    /// The reply, or nil when the summarizer fails or misses `deadline`; an unfinished request is cancelled first.
+    static func reply(
+        from summarizer: any MeetingSummarizing, to transcript: String, deadline: Duration = deadline
+    ) async -> String? {
+        await withTaskGroup(of: String?.self) { group in
+            group.addTask { try? await summarizer.reply(to: transcript, instructions: instructions) }
+            group.addTask {
+                try? await Task.sleep(for: deadline)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
     }
 }
