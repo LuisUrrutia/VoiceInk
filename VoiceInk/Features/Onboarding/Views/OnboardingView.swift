@@ -3,6 +3,9 @@ import SwiftUI
 
 struct OnboardingView: View {
     @Binding var hasCompletedOnboardingV2: Bool
+    // Passed unobserved so engine and shortcut updates do not redraw every onboarding step.
+    let engine: VoiceInkEngine
+    let shortcuts: RecordingShortcutManager
     @EnvironmentObject var fluidAudioModelManager: FluidAudioModelManager
     @EnvironmentObject var transcriptionModelManager: TranscriptionModelManager
     @EnvironmentObject var aiService: AIService
@@ -37,12 +40,12 @@ struct OnboardingView: View {
                         actionTitle: { coordinator.permissions.actionTitle(for: $0) },
                         onSelect: coordinator.permissions.setActivePermission,
                         onAction: coordinator.permissions.performAction,
-                        onQuit: {
-                            NSApplication.shared.terminate(nil)
-                        },
                         onRecheck: coordinator.permissions.refreshPermissionStatuses,
-                        onContinue: coordinator.flow.goToMicrophoneStep
+                        onContinue: coordinator.flow.goToMicrophoneStep,
+                        engine: engine,
+                        shortcuts: shortcuts
                     )
+                    .livePermissionRefresh(monitor: coordinator.permissionMonitor)
                     .transition(.opacity)
                 case .microphone:
                     OnboardingMicrophoneScreen(
@@ -221,8 +224,8 @@ struct OnboardingView: View {
                 enhancementService: enhancementService
             )
         }
-        .onDisappear {
-            coordinator.permissions.cancelRefreshTask()
+        .onReceive(coordinator.permissionMonitor.$snapshot.dropFirst()) { snapshot in
+            coordinator.permissions.apply(snapshot)
         }
         .onReceive(LifecycleObserver.shared.publisher(for: .applicationDidBecomeActive)) { _ in
             coordinator.permissions.refreshPermissionStatuses()
@@ -268,6 +271,3 @@ struct OnboardingView: View {
 
 }
 
-#Preview {
-    OnboardingView(hasCompletedOnboardingV2: .constant(false))
-}

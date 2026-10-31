@@ -27,9 +27,14 @@ final class OnboardingPermissionController {
     }
 
     func refreshPermissionStatuses() {
+        coordinator.permissionMonitor.refresh()
+        apply(coordinator.permissionMonitor.snapshot)
+    }
+
+    func apply(_ snapshot: PermissionSnapshot) {
         let diagnosedStatuses = Dictionary(
             uniqueKeysWithValues: OnboardingPermissionKind.allCases.map { permission in
-                (permission, diagnose(permission))
+                (permission, Self.status(for: permission, in: snapshot))
             }
         )
 
@@ -108,46 +113,37 @@ final class OnboardingPermissionController {
         }
     }
 
-    func cancelRefreshTask() {
-        coordinator.refreshTask?.cancel()
-        coordinator.refreshTask = nil
+    private func diagnose(_ permission: OnboardingPermissionKind) -> OnboardingPermissionStatus {
+        Self.status(for: permission, in: coordinator.permissionMonitor.snapshot)
     }
 
-    private func diagnose(_ permission: OnboardingPermissionKind) -> OnboardingPermissionStatus {
+    static func status(
+        for permission: OnboardingPermissionKind, in snapshot: PermissionSnapshot
+    ) -> OnboardingPermissionStatus {
         switch permission {
         case .microphone:
-            switch AVCaptureDevice.authorizationStatus(for: .audio) {
-            case .authorized:
-                return .granted
-            case .denied:
-                return .denied
-            case .restricted:
-                return .restricted
-            case .notDetermined:
-                return .needsAccess
-            @unknown default:
-                return .unknown
+            switch snapshot.microphone {
+            case .granted: .granted
+            case .denied: .denied
+            case .restricted: .restricted
+            case .notDetermined: .needsAccess
             }
-
         case .accessibility:
-            return AXIsProcessTrusted() ? .granted : .needsAccess
-
+            snapshot.accessibility ? .granted : .needsAccess
         case .screenRecording:
-            return CGPreflightScreenCaptureAccess() ? .granted : .needsAccess
+            snapshot.screenRecording ? .granted : .needsAccess
         }
     }
 
     private func handleMicrophoneAction() {
         if status(for: .microphone).requiresSettings {
             openPrivacySettings(.microphone)
-            startPollingPermissionStatus()
             return
         }
 
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
             DispatchQueue.main.async {
                 self?.refreshPermissionStatuses()
-                self?.startPollingPermissionStatus()
             }
         }
     }
@@ -158,12 +154,10 @@ final class OnboardingPermissionController {
         ]
         AXIsProcessTrustedWithOptions(options)
         openPrivacySettings(.accessibility)
-        startPollingPermissionStatus()
     }
 
     private func requestScreenRecording() {
         coordinator.hasRequestedScreenRecording = true
-        startPollingPermissionStatus()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -190,24 +184,6 @@ final class OnboardingPermissionController {
         }
 
         refreshPermissionStatuses()
-    }
-
-    private func startPollingPermissionStatus() {
-        cancelRefreshTask()
-        coordinator.refreshTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-
-            for _ in 0..<60 {
-                guard !Task.isCancelled else { return }
-                refreshPermissionStatuses()
-
-                if coordinator.requiredPermissionsGranted {
-                    return
-                }
-
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-        }
     }
 
     private func openPrivacySettings(_ pane: PrivacySettingsPane) {

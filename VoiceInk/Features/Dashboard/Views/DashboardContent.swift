@@ -22,7 +22,7 @@ struct DashboardContent: View {
     @State private var isModelUsagePanelPresented = false
     @State private var isInsightsViewPresented = false
     @State private var selectedInsightPeriod: DashboardInsightPeriod = .allTime
-    @State private var isAccessibilityEnabled = AXIsProcessTrusted()
+    @ObservedObject private var permissions = PermissionMonitor.shared
     @EnvironmentObject private var navigation: MainWindowNavigation
     @EnvironmentObject private var updaterViewModel: UpdaterViewModel
     @EnvironmentObject private var engine: VoiceInkEngine
@@ -98,12 +98,10 @@ struct DashboardContent: View {
             scheduleDashboardStatsRefresh(allowSkipWhenFresh: hasLoadedStatsSnapshot)
         }
         .onAppear {
-            refreshAccessibilityStatus()
+            permissions.refresh()
             updaterViewModel.checkForUpdatesIfDue()
         }
-        .onReceive(LifecycleObserver.shared.publisher(for: .applicationDidBecomeActive)) { _ in
-            refreshAccessibilityStatus()
-        }
+        .livePermissionRefresh(isActive: !isAccessibilityEnabled)
         .onReceive(NotificationCenter.default.publisher(for: .sessionMetricsDidChange)) { _ in
             DashboardStatsCache.shared.markStale()
 
@@ -339,9 +337,7 @@ struct DashboardContent: View {
         DashboardAccessibilityReminder(onOpenSettings: openAccessibilitySettings)
     }
 
-    private func refreshAccessibilityStatus() {
-        isAccessibilityEnabled = AXIsProcessTrusted()
-    }
+    private var isAccessibilityEnabled: Bool { permissions.snapshot.accessibility }
 
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {

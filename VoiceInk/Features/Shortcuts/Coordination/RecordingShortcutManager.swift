@@ -6,8 +6,9 @@ import os
 @MainActor
 class RecordingShortcutManager: ObservableObject {
     @Published private(set) var hotkeyAvailability: RecordingHotkeyAvailability = .unconfigured
-    private var activationSubscription: AnyCancellable?
-    private var accessibilityGranted = AXIsProcessTrusted()
+    private var accessibilitySubscription: AnyCancellable?
+    private var captureAvailabilitySubscription: AnyCancellable?
+    private let permissionMonitor: PermissionMonitor
     @Published var primaryRecordingShortcut: ShortcutSelection {
         didSet {
             UserDefaults.standard.set(primaryRecordingShortcut.rawValue, forKey: "primaryRecordingShortcut")
@@ -100,7 +101,11 @@ class RecordingShortcutManager: ObservableObject {
         recordingState != .transcribing && recordingState != .enhancing && recordingState != .busy
     }
 
-    init(engine: VoiceInkEngine, recorderUIManager: RecorderUIManager) {
+    init(
+        engine: VoiceInkEngine, recorderUIManager: RecorderUIManager, permissionMonitor: PermissionMonitor? = nil
+    ) {
+        let permissionMonitor = permissionMonitor ?? .shared
+        self.permissionMonitor = permissionMonitor
         ShortcutMigration.migrateLegacyShortcutsIfNeeded()
 
         self.primaryRecordingShortcut = ShortcutMigration.migrateShortcutSelection(
@@ -175,7 +180,8 @@ class RecordingShortcutManager: ObservableObject {
                 primaryRecordingShortcutModeSource.primaryMode
             },
             shortcutModeHandler: shortcutModeHandler,
-            preRollPress: engine.recorder.preRollPress
+            preRollPress: engine.recorder.preRollPress,
+            permissionMonitor: permissionMonitor
         )
         engine.recorder.setPreRollObserverProvider { [weak self] in
             guard let self else { return false }
@@ -209,16 +215,16 @@ class RecordingShortcutManager: ObservableObject {
         ShortcutDiagnostics.observeEnvironment(reason: "startup", force: true)
 
         refreshShortcutMonitoring(reason: "startup")
-        activationSubscription = LifecycleObserver.shared.publisher(for: .applicationDidBecomeActive).sink { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                let granted = AXIsProcessTrusted()
-                if self.accessibilityGranted != granted {
-                    self.accessibilityGranted = granted
-                    self.refreshShortcutMonitoring(reason: "accessibility-change")
-                }
+        // The monitor refreshes on activation and, while setup is visible, live; a grant starts the taps without waiting for the health check.
+        accessibilitySubscription = permissionMonitor.$snapshot.map(\.accessibility).removeDuplicates().dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshShortcutMonitoring(reason: "accessibility-change")
             }
-        }
+        captureAvailabilitySubscription = NotificationCenter.default
+            .publisher(for: ShortcutMonitor.captureAvailabilityDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateHotkeyAvailability() }
     }
 
     private func refreshShortcutMonitoring(reason: String) {
@@ -295,13 +301,20 @@ class RecordingShortcutManager: ObservableObject {
             },
             reason: reason
         )
-        if [ShortcutAction.primaryRecording, .secondaryRecording].contains(where: shortcutMonitor.isMonitoring) {
-            hotkeyAvailability = .available
-        } else if primaryShortcut == nil && secondaryShortcut == nil {
-            hotkeyAvailability = .unconfigured
-        } else {
-            hotkeyAvailability = AXIsProcessTrusted() ? .unavailable : .needsAccessibility
-        }
+        updateHotkeyAvailability()
+    }
+
+    private func updateHotkeyAvailability() {
+        let hasShortcut =
+            (primaryRecordingShortcut == .custom && ShortcutStore.shortcut(for: .primaryRecording) != nil)
+            || (secondaryRecordingShortcut == .custom && ShortcutStore.shortcut(for: .secondaryRecording) != nil)
+        let availability = RecordingHotkeyAvailability.resolve(
+            isMonitoring: [ShortcutAction.primaryRecording, .secondaryRecording].contains(where: shortcutMonitor.isMonitoring),
+            hasShortcut: hasShortcut,
+            accessibilityTrusted: AXIsProcessTrusted(),
+            accessibilityGrantedSinceLaunch: permissionMonitor.hasObservedUntrustedAccessibility
+        )
+        if availability != hotkeyAvailability { hotkeyAvailability = availability }
     }
 
     private var standaloneModifierActions: Set<ShortcutAction> {

@@ -31,7 +31,8 @@ final class CaptureReadinessController: ObservableObject {
 
     init(
         models: TranscriptionModelManager, devices: AudioDeviceManager,
-        permissionReader: @escaping @Sendable () -> Permissions = { CaptureReadinessController.readPermissions() }
+        permissionReader: @escaping @Sendable () -> Permissions = { CaptureReadinessController.readPermissions() },
+        permissionMonitor: PermissionMonitor? = nil
     ) {
         self.models = models
         self.devices = devices
@@ -51,6 +52,9 @@ final class CaptureReadinessController: ObservableObject {
             Task { @MainActor in self?.refreshSnapshot() }
         }.store(in: &subscriptions)
         LifecycleObserver.shared.publisher(for: .audioDeviceChanged).sink { [weak self] _ in
+            Task { @MainActor in self?.refreshSnapshot() }
+        }.store(in: &subscriptions)
+        (permissionMonitor ?? .shared).$snapshot.dropFirst().sink { [weak self] _ in
             Task { @MainActor in self?.refreshSnapshot() }
         }.store(in: &subscriptions)
         publishSnapshot()

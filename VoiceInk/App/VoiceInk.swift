@@ -378,7 +378,10 @@ struct VoiceInkApp: App {
                             audioCleanupManager.stopAutomaticCleanup()
                         }
                 } else {
-                    OnboardingView(hasCompletedOnboardingV2: $hasCompletedOnboardingV2)
+                    OnboardingView(
+                        hasCompletedOnboardingV2: $hasCompletedOnboardingV2,
+                        engine: engine, shortcuts: recordingShortcutManager
+                    )
                         .environmentObject(fluidAudioModelManager)
                         .environmentObject(transcriptionModelManager)
                         .environmentObject(aiService)
