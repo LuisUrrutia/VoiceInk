@@ -32,16 +32,7 @@ final class DictationModeSnapshotTests: XCTestCase {
         let manager = ModeManager.shared
         manager.configurations = [dictationMode, laterMode]
         manager.activeConfiguration = dictationMode
-        let resolved = DictationModeSnapshot.resolve(modeID: dictationMode.id, enhancementService: nil)
-        // A production enhancement configuration needs a live AIEnhancementService, which repairs persisted modes.
-        let snapshot = DictationModeSnapshot(
-            mode: resolved.mode, formatting: resolved.formatting,
-            enhancement: EnhancementRuntimeConfiguration(
-                mode: dictationMode, isEnabled: true, prompt: nil, provider: .ollama, modelName: "fixture",
-                useClipboardContext: false, useSelectedTextContext: false, useScreenCaptureContext: false
-            ),
-            output: resolved.output
-        )
+        let snapshot = DictationModeSnapshot.resolve(modeID: dictationMode.id, resolveEnhancement: Self.enhancement)
         let fixture = try PipelineFixture(transcript: Self.multiSentenceTranscript)
         XCTAssertNotEqual(ParagraphFormatter.format(Self.multiSentenceTranscript), Self.multiSentenceTranscript)
 
@@ -57,6 +48,7 @@ final class DictationModeSnapshotTests: XCTestCase {
         let transcription = await run.value
 
         XCTAssertEqual(fixture.enhancer.configurations.map { $0.mode?.id }, [dictationMode.id])
+        XCTAssertEqual(fixture.enhancer.configurations.map(\.modelName), ["Dictation model"])
         XCTAssertEqual(fixture.enhancer.inputs, [ParagraphFormatter.format(Self.multiSentenceTranscript)])
         XCTAssertEqual(fixture.pastes.map(\.text), ["Enhanced dictation text"])
         XCTAssertEqual(fixture.pastes.map(\.sendKey), [.none])
@@ -78,8 +70,8 @@ final class DictationModeSnapshotTests: XCTestCase {
 
         let transcription = await fixture.run(
             mode: speakingMode,
-            snapshot: DictationModeSnapshot.resolve(mode: speakingMode, enhancementService: nil),
-            triggerWordModeSelection: { DictationModeSnapshot.triggerWordSelection(in: $0, enhancementService: nil) }
+            snapshot: DictationModeSnapshot.resolve(mode: speakingMode, resolveEnhancement: { _ in nil }),
+            triggerWordModeSelection: { DictationModeSnapshot.triggerWordSelection(in: $0, resolveEnhancement: { _ in nil }) }
         )
         capture.freezeModeSelection()
 
@@ -103,9 +95,9 @@ final class DictationModeSnapshotTests: XCTestCase {
         let websiteID = website.id
         capture.ownModeResolution(Task { await lookup.wait(); return websiteID })
         capture.start(
-            resolveModeSnapshot: { DictationModeSnapshot.resolve(modeID: $0 ?? fallback.id, enhancementService: nil) },
+            resolveModeSnapshot: { DictationModeSnapshot.resolve(modeID: $0 ?? fallback.id, resolveEnhancement: { _ in nil }) },
             freezeModeSnapshots: {
-                DictationModeSnapshot.frozenResolver(fallbackModeID: fallback.id, enhancementService: nil)
+                DictationModeSnapshot.frozenResolver(fallbackModeID: fallback.id, resolveEnhancement: { _ in nil })
             },
             resolveConfiguration: { resolvedConfigurationModes.append($0?.mode); return nil },
             retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
@@ -124,6 +116,52 @@ final class DictationModeSnapshotTests: XCTestCase {
         XCTAssertEqual(capture.modeSnapshot?.output.autoSendKey, .enter)
         XCTAssertEqual(capture.modeSnapshot?.formatting.isTextFormattingEnabled, false)
         XCTAssertEqual(resolvedConfigurationModes.map { $0?.autoSendKey }, [.enter])
+    }
+
+    func testSnapshotBuildersKeepTheEnhancementResolvedForTheirOwnMode() {
+        var ownMode = ModeConfig(name: "Own", isAIEnhancementEnabled: true, useClipboardContext: true)
+        let otherMode = ModeConfig(name: "Other", isAIEnhancementEnabled: false, isDefault: true)
+        let triggeredMode = ModeConfig(name: "Triggered", triggerWords: ["gamma"], isAIEnhancementEnabled: true)
+        let manager = ModeManager.shared
+        manager.configurations = [ownMode, otherMode, triggeredMode]
+        manager.activeConfiguration = otherMode
+        var resolvedModes: [String?] = []
+        let resolveEnhancement: DictationModeSnapshot.EnhancementResolver = {
+            resolvedModes.append($0?.name)
+            return Self.enhancement($0)
+        }
+
+        let live = DictationModeSnapshot.resolve(modeID: ownMode.id, resolveEnhancement: resolveEnhancement)
+        let frozen = DictationModeSnapshot.frozenResolver(
+            fallbackModeID: otherMode.id, resolveEnhancement: resolveEnhancement
+        )
+        ownMode.isAIEnhancementEnabled = false
+        ownMode.useClipboardContext = false
+        manager.configurations = [ownMode, otherMode, triggeredMode]
+        let frozenOwn = frozen(ownMode.id)
+        let triggered = DictationModeSnapshot.triggerWordSelection(
+            in: "Gamma draft a reply", resolveEnhancement: resolveEnhancement
+        )
+
+        for snapshot in [live, frozenOwn] {
+            XCTAssertEqual(snapshot.enhancement?.mode?.id, ownMode.id)
+            XCTAssertEqual(snapshot.enhancement?.isEnabled, true)
+            XCTAssertEqual(snapshot.enhancement?.modelName, "Own model")
+            XCTAssertEqual(snapshot.enhancement?.useClipboardContext, true)
+        }
+        XCTAssertEqual(frozen(nil).enhancement?.mode?.id, otherMode.id)
+        XCTAssertEqual(triggered?.modeSnapshot.enhancement?.mode?.id, triggeredMode.id)
+        XCTAssertEqual(resolvedModes.sorted { ($0 ?? "") < ($1 ?? "") }, ["Other", "Other", "Own", "Own", "Triggered", "Triggered"])
+    }
+
+    /// Stands in for the live service: derives each setting from the mode it receives.
+    private static func enhancement(_ mode: ModeConfig?) -> EnhancementRuntimeConfiguration? {
+        guard let mode else { return nil }
+        return EnhancementRuntimeConfiguration(
+            mode: mode, isEnabled: mode.isAIEnhancementEnabled, prompt: nil, provider: .ollama,
+            modelName: "\(mode.name) model", useClipboardContext: mode.useClipboardContext,
+            useSelectedTextContext: mode.useSelectedTextContext, useScreenCaptureContext: mode.useScreenCapture
+        )
     }
 
     private static let multiSentenceTranscript = """
@@ -160,7 +198,7 @@ final class DictationModeSnapshotTests: XCTestCase {
         let capture = try await startCapture(lookupModeID: captureMode.id)
 
         let selection = DictationModeSnapshot.triggerWordSelection(
-            in: "Beta hello there", enhancementService: nil
+            in: "Beta hello there", resolveEnhancement: { _ in nil }
         )
         capture.freezeModeSelection()
 
@@ -197,7 +235,7 @@ final class DictationModeSnapshotTests: XCTestCase {
         let capture = RecordingTranscriptionPreparation(timing: RecordingTimingTrace())
         capture.ownModeResolution(Task { lookupModeID })
         capture.start(
-            resolveModeSnapshot: { DictationModeSnapshot.resolve(modeID: $0, enhancementService: nil) },
+            resolveModeSnapshot: { DictationModeSnapshot.resolve(modeID: $0, resolveEnhancement: { _ in nil }) },
             userModeSelection: { manager.selectedConfigurationID(since: generation) },
             resolveConfiguration: { _ in nil }, retireAutoLearn: {}, prepareModel: { _ in },
             prepareSession: { _ in nil }

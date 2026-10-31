@@ -56,6 +56,8 @@ struct OutputRuntimeConfiguration {
 
 /// One dictation's mode and the settings resolved from it, so later global mode changes cannot reach it.
 struct DictationModeSnapshot {
+    typealias EnhancementResolver = @MainActor (ModeConfig?) -> EnhancementRuntimeConfiguration?
+
     let mode: ModeConfig?
     let formatting: TranscriptionFormattingConfiguration
     let enhancement: EnhancementRuntimeConfiguration?
@@ -69,48 +71,52 @@ struct DictationModeSnapshot {
     /// Resolves the latest settings of `modeID`, or of the current mode when it is absent or no longer enabled.
     @MainActor
     static func resolve(
-        modeID: UUID?, enhancementService: AIEnhancementService?, modeManager: ModeManager = .shared
+        modeID: UUID?, resolveEnhancement: @escaping EnhancementResolver, modeManager: ModeManager = .shared
     ) -> DictationModeSnapshot {
-        resolve(mode: modeManager.resolvedEnabledConfiguration(preferredId: modeID), enhancementService: enhancementService)
+        resolve(mode: modeManager.resolvedEnabledConfiguration(preferredId: modeID), resolveEnhancement: resolveEnhancement)
     }
 
     /// Resolves every enabled mode now, so a later choice among them sees only these settings.
     @MainActor
     static func frozenResolver(
-        fallbackModeID: UUID?, enhancementService: AIEnhancementService?, modeManager: ModeManager = .shared
+        fallbackModeID: UUID?, resolveEnhancement: @escaping EnhancementResolver, modeManager: ModeManager = .shared
     ) -> @MainActor (UUID?) -> DictationModeSnapshot {
         let snapshots = Dictionary(uniqueKeysWithValues: modeManager.enabledConfigurations.map {
-            ($0.id, resolve(mode: $0, enhancementService: enhancementService))
+            ($0.id, resolve(mode: $0, resolveEnhancement: resolveEnhancement))
         })
-        let fallback = resolve(modeID: fallbackModeID, enhancementService: enhancementService, modeManager: modeManager)
+        let fallback = resolve(modeID: fallbackModeID, resolveEnhancement: resolveEnhancement, modeManager: modeManager)
         return { modeID in modeID.flatMap { snapshots[$0] } ?? fallback }
     }
 
     /// A trigger word changes only the dictation that spoke it, plus the global mode for later dictations.
     @MainActor
     static func triggerWordSelection(
-        in text: String, enhancementService: AIEnhancementService?, modeManager: ModeManager = .shared
+        in text: String, resolveEnhancement: @escaping EnhancementResolver, modeManager: ModeManager = .shared
     ) -> (text: String, modeSnapshot: DictationModeSnapshot)? {
         guard let (mode, processedText) = modeManager.getConfigurationForTriggerWord(text) else { return nil }
         modeManager.setActiveConfiguration(mode, isTriggerWord: true)
-        return (processedText, resolve(mode: mode, enhancementService: enhancementService))
+        return (processedText, resolve(mode: mode, resolveEnhancement: resolveEnhancement))
     }
 
     @MainActor
-    static func resolve(mode: ModeConfig?, enhancementService: AIEnhancementService?) -> DictationModeSnapshot {
-        let enhancement = enhancementService.flatMap { enhancementService in
-            enhancementService.getAIService().map {
-                ModeRuntimeResolver.currentEnhancementConfiguration(
-                    mode: mode, enhancementService: enhancementService, aiService: $0
-                )
-            }
-        }
-        return DictationModeSnapshot(
+    static func resolve(mode: ModeConfig?, resolveEnhancement: EnhancementResolver) -> DictationModeSnapshot {
+        DictationModeSnapshot(
             mode: mode,
             formatting: ModeRuntimeResolver.transcriptionFormattingConfiguration(mode: mode),
-            enhancement: enhancement,
+            enhancement: resolveEnhancement(mode),
             output: ModeRuntimeResolver.outputConfiguration(mode: mode)
         )
+    }
+
+    /// Resolves a mode's enhancement settings from the live service; nil without one.
+    @MainActor
+    static func enhancementResolver(for enhancementService: AIEnhancementService?) -> EnhancementResolver {
+        { mode in
+            guard let enhancementService, let aiService = enhancementService.getAIService() else { return nil }
+            return ModeRuntimeResolver.currentEnhancementConfiguration(
+                mode: mode, enhancementService: enhancementService, aiService: aiService
+            )
+        }
     }
 }
 

@@ -440,16 +440,16 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 let registry = self.serviceRegistry
                 let models = self.transcriptionModelManager
                 let whisper = self.whisperModelManager
-                let enhancementService = self.enhancementService
+                let resolveEnhancement = DictationModeSnapshot.enhancementResolver(for: self.enhancementService)
                 preparation.start(
                     resolveModeSnapshot: { modeID in
                         DictationModeSnapshot.resolve(
-                            modeID: modeID ?? initialModeID, enhancementService: enhancementService
+                            modeID: modeID ?? initialModeID, resolveEnhancement: resolveEnhancement
                         )
                     },
                     freezeModeSnapshots: {
                         DictationModeSnapshot.frozenResolver(
-                            fallbackModeID: initialModeID, enhancementService: enhancementService
+                            fallbackModeID: initialModeID, resolveEnhancement: resolveEnhancement
                         )
                     },
                     userModeSelection: { modeManager.selectedConfigurationID(since: initialSelectionGeneration) },
@@ -769,8 +769,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             transcriptionConfiguration: transcriptionConfiguration,
             modeSnapshot: modeSnapshot,
             session: session,
-            triggerWordModeSelection: { [enhancementService] text in
-                DictationModeSnapshot.triggerWordSelection(in: text, enhancementService: enhancementService)
+            triggerWordModeSelection: { [resolveEnhancement] text in
+                DictationModeSnapshot.triggerWordSelection(in: text, resolveEnhancement: resolveEnhancement)
             },
             vocabularyPreparation: vocabularyPreparation,
             recordingContextSnapshot: {
@@ -977,9 +977,13 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     /// Before a recording starts resolving its mode, the current mode applies.
+    private var resolveEnhancement: DictationModeSnapshot.EnhancementResolver {
+        DictationModeSnapshot.enhancementResolver(for: enhancementService)
+    }
+
     private func modeSnapshot(for preparation: RecordingTranscriptionPreparation?) -> DictationModeSnapshot {
         preparation?.currentModeSnapshot
-            ?? DictationModeSnapshot.resolve(modeID: nil, enhancementService: enhancementService)
+            ?? DictationModeSnapshot.resolve(modeID: nil, resolveEnhancement: resolveEnhancement)
     }
 
     // MARK: - Cancellation
