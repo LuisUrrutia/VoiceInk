@@ -226,18 +226,23 @@ final class HistoryAccessTests: XCTestCase {
 
     func testStoppingRevokesAcceptedConnectionsAndPendingResults() async throws {
         let socketURL = socketDirectory.appendingPathComponent("r.sock")
+        let (received, receivedContinuation) = AsyncStream<Void>.makeStream()
+        let (released, releaseContinuation) = AsyncStream<Void>.makeStream()
         let server = HistoryAccessServer(socketURL: socketURL) { _ in
-            try? await Task.sleep(for: .milliseconds(400))
+            receivedContinuation.yield()
+            for await _ in released {}
             return Data("retained text".utf8)
         }
         try server.start()
-        let inFlight = try Self.openConnection(socketURL.path)
+        // accept() is FIFO, so a handled in-flight request proves the earlier partial connection was accepted.
         let partial = try Self.openConnection(socketURL.path)
-        Self.write(Data("{\"version\":1,\"command\":\"list\"}\n".utf8), to: inFlight)
         Self.write(Data("{\"version\":1,".utf8), to: partial)
-        try await Task.sleep(for: .milliseconds(150))
+        let inFlight = try Self.openConnection(socketURL.path)
+        Self.write(Data("{\"version\":1,\"command\":\"list\"}\n".utf8), to: inFlight)
+        for await _ in received { break }
 
         server.stop()
+        releaseContinuation.finish()
         Self.write(Data("\"command\":\"list\"}\n".utf8), to: partial)
 
         let afterStop = await Self.readAll(partial)

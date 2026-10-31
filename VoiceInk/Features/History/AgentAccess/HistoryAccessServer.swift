@@ -128,10 +128,16 @@ final class HistoryAccessServer: @unchecked Sendable {
                 close(client)
                 continue
             }
-            let admitted = lock.withLock {
-                guard isServing, clients.count < Self.maximumConnections else { return false }
+            let (serving, admitted) = lock.withLock {
+                guard isServing else { return (false, false) }
+                guard clients.count < Self.maximumConnections else { return (true, false) }
                 clients.insert(client)
-                return true
+                return (true, true)
+            }
+            // An accept loop already running when `stop` cancels the listener must not answer.
+            guard serving else {
+                close(client)
+                return
             }
             guard admitted else {
                 Self.write(
