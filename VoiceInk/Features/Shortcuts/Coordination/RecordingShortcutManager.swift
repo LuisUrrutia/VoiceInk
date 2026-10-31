@@ -123,7 +123,8 @@ class RecordingShortcutManager: ObservableObject {
                 recorderUIManager.finishHeldShortcutRecording()
             },
             toggleRecorderPanel: { modeId in
-                await recorderUIManager.toggleRecorderPanel(modeId: modeId)
+                // Every handler stop is a release or finishing press that transcribes.
+                await recorderUIManager.toggleRecorderPanel(modeId: modeId, keepsReleaseTail: true)
             },
             cancelRecording: {
                 await recorderUIManager.cancelRecording()

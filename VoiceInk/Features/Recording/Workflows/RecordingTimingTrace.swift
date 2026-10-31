@@ -5,7 +5,7 @@ final class RecordingTimingTrace: @unchecked Sendable {
     enum Phase: String, CaseIterable, Sendable {
         case requestReceived, engineStart, audioStartRequested, audioStarted, firstAudio
         case contextStarted, modeResolutionStarted, modeResolved
-        case preparationStarted, preparationFinished, stopReceived, wavClosed
+        case preparationStarted, preparationFinished, stopReceived, shortcutReleased, releaseTailEnded, wavClosed
         case asrStarted, asrFinished, enhancementStarted, enhancementFinished
         case deliveryStarted, destinationReady, clipboardSettled, pasteCommandPosted, deliveryFinished
         case cancelReceived, idle

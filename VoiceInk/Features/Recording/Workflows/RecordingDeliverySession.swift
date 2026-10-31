@@ -51,6 +51,7 @@ final class RecordingDeliverySession {
     let destination: PasteDestination
     let timing: RecordingTimingTrace
     private(set) var isCancelled = false
+    var playedStopToneAtRelease = false
     private var cancelPendingTask: (() -> Void)?
 
     init(destination: PasteDestination, timing: RecordingTimingTrace = RecordingTimingTrace()) {

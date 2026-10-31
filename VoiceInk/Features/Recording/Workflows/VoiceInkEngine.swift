@@ -211,7 +211,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     func toggleRecord(
         modeId: UUID? = nil, isAssistantFollowUp: Bool = false, sendAfterPaste: Bool = false,
-        deliverySession: RecordingDeliverySession? = nil
+        deliverySession: RecordingDeliverySession? = nil, releaseTail: RecordingReleaseTail? = nil
     ) async {
         let capturedDelivery = deliverySession ?? RecordingDeliverySession.capture()
         await recordingFinalization.waitUntilFinished()
@@ -251,8 +251,20 @@ class VoiceInkEngine: NSObject, ObservableObject {
             activeRecordingUseCase = .newSession
             activeRecordingStartID = nil
             partialTranscript = ""
+            // The release is the user-visible boundary; the tail stays invisible capture.
             recordingState = .transcribing
-            await recorder.stopRecording()
+            if let releaseTail {
+                preparation?.timing.mark(.shortcutReleased, at: releaseTail.releasedAtNanoseconds)
+                delivery?.playedStopToneAtRelease = true
+                let outcome = await recorder.stopRecording(
+                    after: releaseTail,
+                    playReleaseTone: { SoundManager.shared.playStopSound() },
+                    shouldEndTailEarly: { [weak self] in self?.shouldCancelRecording ?? true }
+                )
+                recordReleaseTailTiming(outcome, timing: preparation?.timing)
+            } else {
+                await recorder.stopRecording()
+            }
             recordClosedAudioTiming(preparation?.timing)
 
             if let recordedFile = fileBeingStopped {
@@ -1053,6 +1065,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
             .getAIService()?
             .voiceInkRefineService
             .unloadPreparedModelIfNeeded()
+    }
+
+    private func recordReleaseTailTiming(_ outcome: RecordingReleaseTail.Outcome?, timing: RecordingTimingTrace?) {
+        guard let outcome else { return }
+        let traceOutcome: RecordingTimingTrace.Outcome
+        switch outcome.reason {
+        case .captured: traceOutcome = .completed
+        case .stalled: traceOutcome = .failed
+        case .endedEarly: traceOutcome = .canceled
+        }
+        timing?.mark(.releaseTailEnded, outcome: traceOutcome, at: outcome.endedAtNanoseconds)
     }
 
     private func recordClosedAudioTiming(_ timing: RecordingTimingTrace?) {
