@@ -13,6 +13,12 @@ enum MeetingSettings {
     static let showsRecordingIndicatorKey = "MeetingsShowsRecordingIndicator"
     static let detectsCallsKey = "MeetingsDetectsCalls"
     static let providerPoliciesKey = "MeetingsProviderPolicies"
+    /// Off by default: a summary sends the transcript to the user's enhancement provider.
+    static let summarizesKey = "MeetingsSummarizes"
+
+    static func summarizes(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: summarizesKey)
+    }
 
     static func detectsCalls(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: detectsCallsKey) as? Bool ?? true
@@ -70,6 +76,7 @@ enum MeetingSettings {
         var showsRecordingIndicator: Bool?
         var detectsCalls: Bool?
         var audioRetentionDays: Int?
+        var summarizes: Bool?
         /// Keyed by `MeetingProvider` identifier; unknown providers and policies are ignored.
         var providerPolicies: [String: String]?
 
@@ -79,6 +86,7 @@ enum MeetingSettings {
                 showsRecordingIndicator: MeetingSettings.showsRecordingIndicator(in: defaults),
                 detectsCalls: MeetingSettings.detectsCalls(in: defaults),
                 audioRetentionDays: MeetingAudioRetention.current(in: defaults).rawValue,
+                summarizes: MeetingSettings.summarizes(in: defaults),
                 providerPolicies: Dictionary(uniqueKeysWithValues: MeetingProvider.allCases.map {
                     ($0.rawValue, MeetingSettings.policy(for: $0, in: defaults).rawValue)
                 })
@@ -89,6 +97,7 @@ enum MeetingSettings {
             if let outputFolder, outputFolder.hasPrefix("/") { defaults.set(outputFolder, forKey: outputFolderKey) }
             if let showsRecordingIndicator { defaults.set(showsRecordingIndicator, forKey: showsRecordingIndicatorKey) }
             if let detectsCalls { defaults.set(detectsCalls, forKey: detectsCallsKey) }
+            if let summarizes { defaults.set(summarizes, forKey: summarizesKey) }
             if let audioRetentionDays, MeetingAudioRetention(rawValue: audioRetentionDays) != nil {
                 defaults.set(audioRetentionDays, forKey: MeetingAudioRetention.key)
             }
