@@ -105,7 +105,7 @@ import os
 
         let turns = try await MeetingTranscriber(
             transcriber: fake, model: try parakeet(), context: TranscriptionRequestContext(languages: ["en"])
-        ).transcribe(manifest, store: store)
+        ).transcribe(manifest, store: store).turns
 
         // Them is transcribed first; You's 2 s of speech lose the dictated 0.5 s.
         XCTAssertEqual(fake.loudSeconds.count, 2)
@@ -205,7 +205,7 @@ import os
         let turns = try await MeetingTranscriber(
             transcriber: fake, model: try parakeet(), context: TranscriptionRequestContext(languages: ["en"]),
             waitForDictation: { waits += 1 }
-        ).transcribe(manifest, store: store)
+        ).transcribe(manifest, store: store).turns
 
         XCTAssertEqual(turns.map(\.speaker), [.you, .them])
         XCTAssertEqual(turns[0].start, 0.5, accuracy: 0.25)

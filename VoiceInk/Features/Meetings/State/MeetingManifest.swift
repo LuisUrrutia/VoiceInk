@@ -44,6 +44,8 @@ struct MeetingManifest: Codable, Equatable, Identifiable, Sendable {
     var dictationIntervals: [Interval] = []
     /// Markdown file written for this meeting.
     var transcriptPath: String?
+    /// Microphone utterances the last transcription dropped as speaker echo.
+    var echoSuppressedUtterances: Int?
     var failure: String?
 
     init(id: UUID = UUID(), createdAt: Date = Date(), title: String, provider: String? = nil) {
