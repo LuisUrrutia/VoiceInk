@@ -47,7 +47,33 @@ actor WhisperContext {
         return promptEcho.removingEcho(from: segmentTexts()).joined()
     }
 
-    func fullTranscribe(samples: [Float]) -> Bool {
+    /// Segments with whisper.cpp's times. The caller has already cut the audio to speech, so whisper.cpp's own
+    /// voice detection stays off and its times stay on the given samples.
+    func transcribeTimed(samples: [Float], request: TranscriptionRequestContext) throws -> [TimedTranscriptSegment] {
+        try Task.checkCancellation()
+        let previousLanguage = language
+        let previousPrompt = prompt
+        defer {
+            language = previousLanguage
+            prompt = previousPrompt
+        }
+        language = request.language
+        let promptEcho = WhisperPromptEcho(languagePrompt: request.prompt, hints: request.vocabulary?.terms ?? [])
+        prompt = promptEcho.prompt
+        guard fullTranscribe(samples: samples, allowsVAD: false), let context else { throw VoiceInkEngineError.whisperCoreFailed }
+        try Task.checkCancellation()
+        let segments = (0..<whisper_full_n_segments(context)).map { index in
+            TimedTranscriptSegment(
+                text: String(cString: whisper_full_get_segment_text(context, index)).trimmingCharacters(in: .whitespaces),
+                start: Double(whisper_full_get_segment_t0(context, index)) / 100,
+                end: Double(whisper_full_get_segment_t1(context, index)) / 100
+            )
+        }
+        guard !promptEcho.removingEcho(from: segments.map(\.text)).isEmpty else { return [] }
+        return segments.filter { !$0.text.isEmpty && !promptEcho.removingEcho(from: [$0.text]).isEmpty }
+    }
+
+    func fullTranscribe(samples: [Float], allowsVAD: Bool = true) -> Bool {
         guard let context = context else { return false }
 
         let maxThreads = max(1, min(8, cpuCount() - 2))
@@ -89,7 +115,7 @@ actor WhisperContext {
 
         // Configure VAD if enabled by user and model is available
         let isVADEnabled = UserDefaults.standard.bool(forKey: "IsVADEnabled")
-        if isVADEnabled, let vadModelPath = self.vadModelPath {
+        if allowsVAD, isVADEnabled, let vadModelPath = self.vadModelPath {
             params.vad = true
             params.vad_model_path = (vadModelPath as NSString).utf8String
 
