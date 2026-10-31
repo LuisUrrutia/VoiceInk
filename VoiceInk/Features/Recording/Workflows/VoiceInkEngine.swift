@@ -160,7 +160,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     // MARK: - Toggle Record
 
     func toggleRecord(
-        modeId: UUID? = nil, isAssistantFollowUp: Bool = false, sendAfterPaste: Bool = false,
+        modeId: UUID? = nil, processing: DictationProcessing = .standard, isAssistantFollowUp: Bool = false,
+        sendAfterPaste: Bool = false,
         deliverySession: RecordingDeliverySession? = nil, releaseTail: RecordingReleaseTail? = nil,
         preRollPressNanoseconds: UInt64? = nil
     ) async {
@@ -214,7 +215,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         text: "",
                         duration: 0,
                         transcriptionStatus: .pending,
-                        modeSnapshot: modeSnapshot(for: preparation)
+                        modeSnapshot: modeSnapshot(for: preparation),
+                        processing: job.processing
                     )
                     modelContext.insert(transcription)
                     try? modelContext.save()
@@ -319,7 +321,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let realtimeAudioGate = RealtimeAudioChunkGate()
             let capture = DictationCapture(
                 startID: startID, delivery: capturedDelivery, preparation: preparation,
-                audioGate: realtimeAudioGate, useCase: recordingUseCase,
+                audioGate: realtimeAudioGate, useCase: recordingUseCase, processing: processing,
                 didChangePhase: { [weak self] in self?.refreshRecordingState() }
             )
             self.capture = capture
@@ -1132,7 +1134,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
         preparation?.freezeModeSelection()
         await recorder.stopRecording()
         recordClosedAudioTiming(preparation?.timing)
-        await saveCanceledRecording(at: fileBeingCancelled, modeSnapshot: modeSnapshot(for: preparation))
+        await saveCanceledRecording(
+            at: fileBeingCancelled, modeSnapshot: modeSnapshot(for: preparation),
+            processing: capture?.processing ?? job?.processing ?? .standard
+        )
         capture?.fileURL = nil
         job?.audioURL = nil
         partialTranscript = ""
@@ -1141,7 +1146,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         await cleanupResources()
     }
 
-    private func saveCanceledRecording(at recordedFile: URL?, modeSnapshot: DictationModeSnapshot) async {
+    private func saveCanceledRecording(
+        at recordedFile: URL?, modeSnapshot: DictationModeSnapshot, processing: DictationProcessing
+    ) async {
         guard let recordedFile,
             FileManager.default.fileExists(atPath: recordedFile.path)
         else { return }
@@ -1152,7 +1159,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             text: Transcription.canceledTranscriptionText,
             duration: duration,
             transcriptionStatus: .canceled,
-            modeSnapshot: modeSnapshot
+            modeSnapshot: modeSnapshot,
+            processing: processing
         )
 
         modelContext.insert(transcription)
@@ -1170,7 +1178,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         text: String,
         duration: TimeInterval,
         transcriptionStatus: TranscriptionStatus,
-        modeSnapshot: DictationModeSnapshot
+        modeSnapshot: DictationModeSnapshot,
+        processing: DictationProcessing
     ) -> Transcription {
         let modeMetadata = modeSnapshot.metadata
 
@@ -1183,7 +1192,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             )?.model.displayName,
             modeName: modeMetadata.name,
             modeEmoji: modeMetadata.emoji,
-            transcriptionStatus: transcriptionStatus
+            transcriptionStatus: transcriptionStatus,
+            isRawDictation: processing == .raw
         )
     }
 

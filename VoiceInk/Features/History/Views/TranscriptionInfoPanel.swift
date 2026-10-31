@@ -115,6 +115,14 @@ struct TranscriptionInfoPanel: View {
                         value: modeName
                     )
                 }
+
+                if transcription.isRawDictation {
+                    TranscriptionMetadataRow(
+                        icon: "text.alignleft",
+                        label: "Processing",
+                        value: String(localized: "None (raw)")
+                    )
+                }
             }
         }
     }

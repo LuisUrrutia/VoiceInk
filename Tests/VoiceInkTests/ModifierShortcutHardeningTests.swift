@@ -335,7 +335,7 @@ final class ModifierShortcutHardeningTests: XCTestCase {
             isRecorderVisible: { self.visible },
             recordingState: { self.state ?? (self.visible ? .recording : .idle) },
             isShortcutHeld: { _ in self.held }, finishHeldRecording: {},
-            toggleRecorderPanel: { _, _ in self.visible.toggle(); self.toggles += 1 },
+            toggleRecorderPanel: { _, _, _ in self.visible.toggle(); self.toggles += 1 },
             cancelRecording: { self.visible = false; self.cancels += 1 },
             now: { self.now }
         )

@@ -4,6 +4,7 @@ import os
 
 /// Handles the full post-recording pipeline:
 /// transcribe → filter → vocabulary-correct → format → word-replace → AI enhance → deliver → save
+/// Raw dictations (`Transcription.isRawDictation`) skip every step between transcribe and a plain paste.
 @MainActor
 class TranscriptionPipeline {
     struct AssistantHooks {
@@ -85,7 +86,8 @@ class TranscriptionPipeline {
             vocabularyPreparation.finish()
         }
         let model = transcriptionConfiguration.model
-        var modeSnapshot = initialModeSnapshot
+        let isRaw = transcription.isRawDictation
+        var modeSnapshot = isRaw ? initialModeSnapshot.withoutProcessing : initialModeSnapshot
         var finalText: String?
         var responseError: String?
         var outputForDelivery: OutputRuntimeConfiguration?
@@ -145,7 +147,9 @@ class TranscriptionPipeline {
                 text = try await transcribe()
             }
             let vocabulary = vocabularyPreparation.finish()
-            text = TranscriptionOutputFilter.filter(text)
+            if !isRaw {
+                text = TranscriptionOutputFilter.filter(text)
+            }
             deliverySession?.timing.mark(.asrFinished)
             let transcriptionDuration = Date().timeIntervalSince(transcriptionStart)
 
@@ -156,17 +160,19 @@ class TranscriptionPipeline {
 
             text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            if !assistant.isFollowUp,
-                let selection = triggerWordModeSelection(text)
-            {
-                text = selection.text
-                modeSnapshot = selection.modeSnapshot
-            }
+            if !isRaw {
+                if !assistant.isFollowUp,
+                    let selection = triggerWordModeSelection(text)
+                {
+                    text = selection.text
+                    modeSnapshot = selection.modeSnapshot
+                }
 
-            text = try await vocabulary.correctTranscription(text)
-            if shouldCancel() {
-                await finishCanceledTranscription()
-                return
+                text = try await vocabulary.correctTranscription(text)
+                if shouldCancel() {
+                    await finishCanceledTranscription()
+                    return
+                }
             }
 
             let formattingConfiguration = modeSnapshot.formatting
@@ -178,7 +184,9 @@ class TranscriptionPipeline {
                 text = ParagraphFormatter.format(text)
             }
 
-            text = WordReplacementService.shared.applyReplacements(to: text, using: modelContext)
+            if !isRaw {
+                text = WordReplacementService.shared.applyReplacements(to: text, using: modelContext)
+            }
             let cleanedText = text
 
             let actualDuration = await AudioFileMetadata.duration(for: audioURL)

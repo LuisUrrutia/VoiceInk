@@ -184,7 +184,7 @@ final class DictationShortcutTests: XCTestCase {
             canHandleShortcutAction: { true }, isRecorderVisible: { self.visible },
             recordingState: { self.visible ? .recording : .idle },
             isShortcutHeld: { _ in self.held }, finishHeldRecording: {},
-            toggleRecorderPanel: { _, eventTime in self.visible.toggle(); self.toggles += 1; self.eventTimes.append(eventTime) },
+            toggleRecorderPanel: { _, eventTime, _ in self.visible.toggle(); self.toggles += 1; self.eventTimes.append(eventTime) },
             cancelRecording: { self.visible = false; self.cancels += 1 },
             retractStartSound: { self.retractions += 1 }, now: { self.now }
         )

@@ -116,6 +116,34 @@ struct SettingsView: View {
                         }
                     }
 
+                    LabeledContent {
+                        HStack(spacing: 8) {
+                            ShortcutRecorder(action: .rawRecording) {
+                                recordingShortcutManager.updateShortcutStatus()
+                            }
+                            .controlSize(.small)
+
+                            if recordingShortcutManager.rawRecordingShortcut != nil {
+                                Button {
+                                    ShortcutStore.setShortcut(nil, for: .rawRecording)
+                                } label: {
+                                    Image(appSymbol: "minus.circle.fill")
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Clear shortcut")
+                                .accessibilityLabel("Clear Dictate Without Processing shortcut")
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text("Dictate Without Processing")
+                            InfoTip(
+                                "Records like the primary shortcut, in its mode, and pastes the transcript as heard: no filler-word or tag cleanup, vocabulary correction, formatting, word replacements, trigger words or AI enhancement."
+                            )
+                        }
+                    }
+
                     shortcutAvailabilityIssue
 
                 } header: {

@@ -209,7 +209,9 @@ class ImportExportService {
             keepMicrophoneReady: UserDefaults.standard.keepMicrophoneReady,
             labsFeatures: Labs.backup(),
             unloadsModelWhenIdle: IdleModelUnloadSettings.isEnabled(),
-            modelIdleUnloadMinutes: IdleModelUnloadSettings.minutes()
+            modelIdleUnloadMinutes: IdleModelUnloadSettings.minutes(),
+            rawRecordingShortcut: ShortcutStore.shortcut(for: .rawRecording).map(ShortcutBackup.init),
+            isRawRecordingShortcutUnbound: ShortcutStore.shortcut(for: .rawRecording) == nil
         )
 
         let exportedSettings = BackupFile(

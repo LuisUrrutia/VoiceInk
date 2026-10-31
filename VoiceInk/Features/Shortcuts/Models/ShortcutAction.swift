@@ -3,6 +3,7 @@ import Foundation
 enum ShortcutAction: Hashable, Sendable {
     case primaryRecording
     case secondaryRecording
+    case rawRecording
     case pasteLastTranscription
     case pasteLastEnhancement
     case retryLastTranscription
@@ -33,6 +34,8 @@ enum ShortcutAction: Hashable, Sendable {
             return "primaryRecording"
         case .secondaryRecording:
             return "secondaryRecording"
+        case .rawRecording:
+            return "rawRecording"
         case .pasteLastTranscription:
             return "pasteLastTranscription"
         case .pasteLastEnhancement:
@@ -62,6 +65,8 @@ enum ShortcutAction: Hashable, Sendable {
             return String(localized: "Primary Shortcut")
         case .secondaryRecording:
             return String(localized: "Secondary Shortcut")
+        case .rawRecording:
+            return String(localized: "Dictate Without Processing")
         case .pasteLastTranscription:
             return String(localized: "Paste Last Transcription")
         case .pasteLastEnhancement:
@@ -115,6 +120,13 @@ enum ShortcutAction: Hashable, Sendable {
         .openQuickHistory,
         .quickAddToDictionary,
     ]
+
+    /// Stored actions outside modes; `rawRecording` postdates the legacy KeyboardShortcuts names.
+    static let storedGlobalActions: [Self] = legacyKeyboardShortcutActions + [.rawRecording]
+
+    var dictationProcessing: DictationProcessing {
+        self == .rawRecording ? .raw : .standard
+    }
 
     private static func displayNumber(forRecorderPanelIndex index: Int) -> String {
         index == 9 ? "10" : "\(index + 1)"

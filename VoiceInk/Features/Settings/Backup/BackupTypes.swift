@@ -125,6 +125,18 @@ struct GeneralBackup: Codable {
         }
     }
 
+    var rawRecordingShortcut: ShortcutBackup? = nil
+    /// Distinguishes an unbound Dictate Without Processing shortcut from an older backup without the field.
+    var isRawRecordingShortcutUnbound: Bool? = nil
+
+    func restoreRawRecordingShortcut() {
+        if let rawRecordingShortcut {
+            ShortcutStore.setShortcut(rawRecordingShortcut.shortcut, for: .rawRecording)
+        } else if isRawRecordingShortcutUnbound == true {
+            ShortcutStore.setShortcut(nil, for: .rawRecording)
+        }
+    }
+
     func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {
         if let keepMicrophoneReady {
             defaults.keepMicrophoneReady = keepMicrophoneReady

@@ -100,6 +100,7 @@ final class DictationCapture {
     let audioGate: RealtimeAudioChunkGate?
     var context: RecordingContextCapture.Session?
     let useCase: DictationUseCase
+    let processing: DictationProcessing
     var session: TranscriptionSession?
     var sessionConfiguration: TranscriptionRuntimeConfiguration?
     var cancelRequested = false
@@ -110,10 +111,11 @@ final class DictationCapture {
 
     init(
         startID: UUID?, delivery: RecordingDeliverySession?, preparation: RecordingTranscriptionPreparation?,
-        audioGate: RealtimeAudioChunkGate?, useCase: DictationUseCase,
+        audioGate: RealtimeAudioChunkGate?, useCase: DictationUseCase, processing: DictationProcessing = .standard,
         didChangePhase: @escaping @MainActor () -> Void
     ) {
         self.startID = startID
+        self.processing = processing
         dictationID = startID ?? UUID()
         self.delivery = delivery
         self.preparation = preparation
@@ -135,6 +137,7 @@ final class DictationJob {
     var session: TranscriptionSession?
     var sessionConfiguration: TranscriptionRuntimeConfiguration?
     let useCase: DictationUseCase
+    let processing: DictationProcessing
     /// From the Stop request (Finish and Send), not the start.
     let sendAfterPaste: Bool
     /// Set when the pending History row exists; nil once the job no longer owns the engine's resources.
@@ -161,6 +164,7 @@ final class DictationJob {
         session = capture.session
         sessionConfiguration = capture.sessionConfiguration
         useCase = capture.useCase
+        processing = capture.processing
         self.sendAfterPaste = sendAfterPaste
         cancelRequested = capture.cancelRequested
         self.didChangePhase = didChangePhase

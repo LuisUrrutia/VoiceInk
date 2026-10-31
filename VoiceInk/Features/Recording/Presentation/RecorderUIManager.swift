@@ -54,9 +54,17 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             if isRecorderPanelVisible {
                 showRecorderPanel()
             } else {
+                presentationProcessing = .standard
                 hideRecorderPanel()
             }
         }
+    }
+
+    private var presentationProcessing: DictationProcessing = .standard
+
+    /// The processing of the capture that opened the visible recorder; nil while hidden.
+    var captureProcessing: DictationProcessing? {
+        isRecorderPanelVisible ? presentationProcessing : nil
     }
 
     private var notchWindowManager: NotchWindowManager?
@@ -223,7 +231,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     /// `keepsReleaseTail` marks a shortcut gesture whose stop transcribes; other stops end immediately.
     func toggleRecorderPanel(
-        modeId: UUID? = nil, keepsReleaseTail: Bool = false, preRollPressNanoseconds: UInt64? = nil
+        modeId: UUID? = nil, processing: DictationProcessing = .standard, keepsReleaseTail: Bool = false,
+        preRollPressNanoseconds: UInt64? = nil
     ) async {
         let releaseTail = keepsReleaseTail ? RecordingReleaseTail.now() : nil
         guard let engine = engine else {
@@ -231,7 +240,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             return
         }
         let deliverySession = RecordingDeliverySession.capture(shortcutPressNanoseconds: preRollPressNanoseconds)
-        ShortcutDiagnostics.notice("recorder-toggle state=\(engine.recordingState) visible=\(isRecorderPanelVisible) modeID=\(modeId?.uuidString ?? "none") followUpAvailable=\(engine.assistantSession.canSendFollowUp)")
+        ShortcutDiagnostics.notice("recorder-toggle state=\(engine.recordingState) visible=\(isRecorderPanelVisible) processing=\(processing) modeID=\(modeId?.uuidString ?? "none") followUpAvailable=\(engine.assistantSession.canSendFollowUp)")
 
         if isRecorderPanelVisible {
             switch engine.recordingState {
@@ -255,9 +264,11 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             }
         } else {
             SoundManager.shared.scheduleStartSound()
+            presentationProcessing = processing
             isRecorderPanelVisible = true
             await engine.toggleRecord(
-                modeId: modeId, deliverySession: deliverySession, preRollPressNanoseconds: preRollPressNanoseconds
+                modeId: modeId, processing: processing, deliverySession: deliverySession,
+                preRollPressNanoseconds: preRollPressNanoseconds
             )
         }
     }
