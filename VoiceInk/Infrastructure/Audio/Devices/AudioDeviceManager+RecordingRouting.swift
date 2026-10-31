@@ -115,6 +115,13 @@ extension AudioDeviceManager {
         }
     }
 
+    /// The inputs the saved mode names. Bluetooth stand-ins are excluded, so their arrival is an unrelated change
+    /// that keeps a temporary selection.
+    func preferredMicrophoneIDs() -> [AudioDeviceID] {
+        guard inputMode == .systemDefault else { return automaticRecordingDeviceIDs() }
+        return getSystemDefaultDevice().map { [$0] } ?? []
+    }
+
     var bluetoothDefaultSubstitution: BluetoothMicrophoneSubstitution? {
         guard inputMode == .systemDefault, temporaryMicrophone == nil,
             let defaultDeviceID = getSystemDefaultDevice(),
@@ -134,9 +141,9 @@ extension AudioDeviceManager {
         guard avoidsBluetoothDefaultMicrophone, isOperationalInputDevice(defaultDeviceID),
             inputTransport(defaultDeviceID) == .bluetooth
         else { return [] }
-        return fallbackRecordingDeviceIDs().filter {
-            fallbackRank($0) <= .otherInput && isDeviceUsableForRecording($0)
-        }
+        return rankedFallbackDevices().filter {
+            $0.rank <= .otherInput && isDeviceUsableForRecording($0.id)
+        }.map(\.id)
     }
 
     private enum FallbackRank: Int, Comparable {
@@ -157,11 +164,15 @@ extension AudioDeviceManager {
         }
     }
 
-    private func fallbackRecordingDeviceIDs() -> [AudioDeviceID] {
+    private func rankedFallbackDevices() -> [(id: AudioDeviceID, rank: FallbackRank)] {
         let ranked = availableDevices.map { (id: $0.id, rank: fallbackRank($0.id)) }
         return ranked.enumerated().sorted {
             ($0.element.rank, $0.offset) < ($1.element.rank, $1.offset)
-        }.map(\.element.id)
+        }.map(\.element)
+    }
+
+    private func fallbackRecordingDeviceIDs() -> [AudioDeviceID] {
+        rankedFallbackDevices().map(\.id)
     }
 
     func isOperationalInputDevice(_ deviceID: AudioDeviceID) -> Bool {

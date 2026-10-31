@@ -379,7 +379,7 @@ class AudioDeviceManager: ObservableObject {
         temporaryMicrophone = MicrophoneReference(
             uid: device.uid, name: device.name, modelUID: getDeviceModelUID(deviceID: id)
         )
-        eligiblePreferredMicrophones = eligibleAutomaticMicrophones()
+        eligiblePreferredMicrophones = eligiblePreferredMicrophoneUIDs()
         reconcileInputAvailability()
     }
 
@@ -434,14 +434,14 @@ class AudioDeviceManager: ObservableObject {
     }
 
     func reconcileInputAvailability(reason: RecordingDeviceChangeReason = .deviceUnavailable) {
-        let eligible = eligibleAutomaticMicrophones()
+        let eligible = eligiblePreferredMicrophoneUIDs()
         if let temporary = temporaryMicrophone {
             let selected = findAvailableDevice(uid: temporary.uid, modelUID: temporary.modelUID)
-            let automaticDevices = automaticRecordingDeviceIDs()
-            let temporaryIndex = selected.flatMap { automaticDevices.firstIndex(of: $0.id) }
-                ?? automaticDevices.endIndex
+            let preferredDevices = preferredMicrophoneIDs()
+            let temporaryIndex = selected.flatMap { preferredDevices.firstIndex(of: $0.id) }
+                ?? preferredDevices.endIndex
             let newlyEligible = eligible.subtracting(eligiblePreferredMicrophones)
-            let preferredReturned = automaticDevices.prefix(temporaryIndex).contains { id in
+            let preferredReturned = preferredDevices.prefix(temporaryIndex).contains { id in
                 availableDevices.first(where: { $0.id == id }).map { newlyEligible.contains($0.uid) } == true
             }
             if selected.map({ isDeviceUsableForRecording($0.id) }) != true || preferredReturned {
@@ -469,8 +469,8 @@ class AudioDeviceManager: ObservableObject {
         reconcileInputAvailability()
     }
 
-    private func eligibleAutomaticMicrophones() -> Set<String> {
-        Set(automaticRecordingDeviceIDs().filter(isDeviceUsableForRecording).compactMap { id in
+    private func eligiblePreferredMicrophoneUIDs() -> Set<String> {
+        Set(preferredMicrophoneIDs().filter(isDeviceUsableForRecording).compactMap { id in
             availableDevices.first(where: { $0.id == id })?.uid
         })
     }

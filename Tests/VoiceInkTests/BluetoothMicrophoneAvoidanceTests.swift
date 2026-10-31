@@ -102,6 +102,28 @@ import XCTest
         XCTAssertNil(manager.bluetoothDefaultSubstitution)
     }
 
+    func testArrivingStandInsDoNotEndTemporaryBluetoothSelection() {
+        let manager = BluetoothDeviceManager(userDefaults: defaults)
+        manager.availableDevices.removeAll { $0.id == BluetoothDeviceManager.usbID }
+        manager.lidClosed = true
+        manager.handleClamshellChange(isClosed: true)
+        manager.selectTemporaryMicrophone(id: BluetoothDeviceManager.airPodsID)
+
+        manager.availableDevices.append((BluetoothDeviceManager.usbID, "usb", "USB Microphone"))
+        manager.reconcileInputAvailability()
+        manager.lidClosed = false
+        manager.handleClamshellChange(isClosed: false)
+
+        XCTAssertEqual(manager.temporaryMicrophone?.uid, "airpods")
+        XCTAssertEqual(manager.getCurrentDevice(), BluetoothDeviceManager.airPodsID)
+
+        manager.systemDefaultDeviceID = BluetoothDeviceManager.beatsID
+        manager.reconcileInputAvailability()
+
+        XCTAssertNil(manager.temporaryMicrophone)
+        XCTAssertEqual(manager.getCurrentDevice(), BluetoothDeviceManager.internalID)
+    }
+
     func testImplicitFallbackPrefersRealInputsBeforeBluetoothAndUnconfiguredVirtualInputs() {
         defaults.audioInputModeRawValue = AudioInputMode.custom.rawValue
         defaults.selectedAudioDeviceUID = "missing"
