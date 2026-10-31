@@ -4,6 +4,8 @@ struct ModelCatalogRow: View {
     let model: any TranscriptionModel
     let isInstalled: Bool
     let isExpanded: Bool
+    var recommendation: ModelRecommendationRole? = nil
+    var recommendationLanguage = ""
     let onToggle: () -> Void
 
     var body: some View {
@@ -17,6 +19,13 @@ struct ModelCatalogRow: View {
                         Text("EN").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
                             .padding(.horizontal, 4).padding(.vertical, 2)
                             .background(AppTheme.Surface.subtle, in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    if let recommendation {
+                        Text(recommendation.title).font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AppTheme.Accent.primary).lineLimit(1)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(AppTheme.Accent.fill, in: RoundedRectangle(cornerRadius: 4))
+                            .help(recommendation.title(for: recommendationLanguage))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -45,7 +54,10 @@ struct ModelCatalogRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
-            "\(model.displayName), \(isInstalled ? String(localized: "Installed") : storageSize)"
+            [
+                model.displayName, recommendation?.title(for: recommendationLanguage),
+                isInstalled ? String(localized: "Installed") : storageSize,
+            ].compactMap { $0 }.joined(separator: ", ")
         )
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint(

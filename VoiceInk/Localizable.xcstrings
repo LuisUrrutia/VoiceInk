@@ -67,6 +67,94 @@
         }
       }
     },
+    "%1$@ (%2$@)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (%2$@)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (%2$@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@（%2$@）"
+          }
+        }
+      }
+    },
+    "%1$@ can't detect the language automatically, so this mode's language changes to %2$@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ kann die Sprache nicht automatisch erkennen, daher ändert sich die Sprache dieses Modus zu %2$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ne peut pas détecter la langue automatiquement : la langue de ce mode devient donc %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 无法自动检测语言，因此此模式的语言将改为 %2$@。"
+          }
+        }
+      }
+    },
+    "%1$@ doesn't support %2$@, so this mode's language changes to %3$@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ unterstützt %2$@ nicht, daher ändert sich die Sprache dieses Modus zu %3$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ne prend pas en charge %2$@ : la langue de ce mode devient donc %3$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 不支持 %2$@，因此此模式的语言将改为 %3$@。"
+          }
+        }
+      }
+    },
+    "%1$@ transcribes one language at a time, so this mode's language changes to %2$@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ transkribiert jeweils nur eine Sprache, daher ändert sich die Sprache dieses Modus zu %2$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ transcrit une seule langue à la fois : la langue de ce mode devient donc %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 一次只能转写一种语言，因此此模式的语言将改为 %2$@。"
+          }
+        }
+      }
+    },
     "%lld current sections" : {
       "localizations" : {
         "de" : {
@@ -2230,6 +2318,50 @@
         }
       }
     },
+    "automatic language detection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "automatische Spracherkennung"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "la détection automatique de la langue"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动语言检测"
+          }
+        }
+      }
+    },
+    "Badges mark models suggested for %@, the default mode's language, by Hex's benchmark comparison." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markierte Modelle schlägt der Benchmark-Vergleich von Hex für %@ vor, die Sprache des Standardmodus."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les badges signalent les modèles suggérés pour %@, la langue du mode par défaut, par la comparaison de benchmarks de Hex."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标记表示 Hex 基准对比为默认模式的语言 %@ 推荐的模型。"
+          }
+        }
+      }
+    },
     "Done Sound" : {
       "localizations" : {
         "de" : {
@@ -2270,6 +2402,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "错误提示音"
+          }
+        }
+      }
+    },
+    "Fastest" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Am schnellsten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le plus rapide"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最快"
+          }
+        }
+      }
+    },
+    "Fastest for %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Am schnellsten für %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le plus rapide pour %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 最快"
           }
         }
       }
@@ -2438,6 +2614,50 @@
         }
       }
     },
+    "Most accurate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Am genauesten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le plus précis"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最准确"
+          }
+        }
+      }
+    },
+    "Most accurate for %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Am genauesten für %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le plus précis pour %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 最准确"
+          }
+        }
+      }
+    },
     "No section" : {
       "localizations" : {
         "de" : {
@@ -2462,6 +2682,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sans section"
+          }
+        }
+      }
+    },
+    "Recommended for %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empfohlen für %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recommandé pour %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推荐用于 %@"
           }
         }
       }
@@ -2540,6 +2782,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "柔和提示音"
+          }
+        }
+      }
+    },
+    "Suggested for %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschläge für %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suggestions pour %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 建议模型"
+          }
+        }
+      }
+    },
+    "Switch Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell wechseln"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changer de modèle"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换模型"
+          }
+        }
+      }
+    },
+    "Switch to %@?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu %@ wechseln?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à %@ ?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换到 %@？"
           }
         }
       }

@@ -169,4 +169,51 @@ struct TranscriptionLanguageTests {
         #expect(context.language == "auto")
         #expect(context.prompt == "¡Hola, ¿cómo estás? Encantado de conocerte. Hello, how are you doing? Nice to meet you.")
     }
+
+    @Test func compatibleModelSwitchesNeedNoConfirmation() {
+        let multilingual = TranscribeCppModel(
+            name: "multilingual", displayName: "Multilingual", description: "", size: "", speed: 0, accuracy: 0,
+            ramUsage: 0, publisher: "", supportedLanguages: ["el": "Greek", "en": "English"]
+        )
+
+        #expect(TranscriptionLanguageChange(selection: ["el"], model: multilingual) == nil)
+        #expect(TranscriptionLanguageChange(selection: ["es", "en"], model: whisper) == nil)
+    }
+
+    @Test func unsupportedLanguageNamesTheFallbackBeforeSwitching() throws {
+        let englishOnly = FluidAudioModel(
+            name: "parakeet-tdt-0.6b-v2", displayName: "Parakeet V2", description: "", size: "", speed: 0,
+            accuracy: 0, ramUsage: 0, supportedLanguages: ["en": "English"]
+        )
+
+        let change = try #require(TranscriptionLanguageChange(selection: ["el"], model: englishOnly))
+
+        #expect(change.unsupportedLanguages == ["el"])
+        #expect(change.resultingLanguages == ["en"])
+        #expect(change.title == "Switch to Parakeet V2?")
+        #expect(change.message == "Parakeet V2 doesn't support Greek, so this mode's language changes to English.")
+    }
+
+    @Test func singleLanguageModelsExplainTheDroppedLanguages() throws {
+        let cohere = TranscribeCppModel(
+            name: "cohere-transcribe", displayName: "Cohere Transcribe", description: "", size: "", speed: 0,
+            accuracy: 0, ramUsage: 0, publisher: "", supportedLanguages: ["es": "Spanish", "en": "English"]
+        )
+        let englishOnly = FluidAudioModel(
+            name: "parakeet-tdt-0.6b-v2", displayName: "Parakeet V2", description: "", size: "", speed: 0,
+            accuracy: 0, ramUsage: 0, supportedLanguages: ["en": "English"]
+        )
+
+        let bilingual = try #require(TranscriptionLanguageChange(selection: ["es", "en"], model: cohere))
+        let automatic = try #require(TranscriptionLanguageChange(selection: ["auto"], model: englishOnly))
+
+        #expect(bilingual.unsupportedLanguages.isEmpty)
+        #expect(bilingual.resultingLanguages == ["es"])
+        #expect(
+            bilingual.message
+                == "Cohere Transcribe transcribes one language at a time, so this mode's language changes to Spanish.")
+        #expect(
+            automatic.message
+                == "Parakeet V2 can't detect the language automatically, so this mode's language changes to English.")
+    }
 }

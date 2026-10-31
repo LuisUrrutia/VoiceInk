@@ -12,6 +12,7 @@ struct ModelManagementView: View {
     @ObservedObject private var warmupCoordinator = WhisperModelWarmupCoordinator.shared
     @ObservedObject private var voiceInkRefineService = VoiceInkRefineService.shared
     @ObservedObject private var transcribeCppModelManager = TranscribeCppModelManager.shared
+    @ObservedObject private var modeManager = ModeManager.shared
 
     @State private var selectedCategory: ModelCatalogCategory = .speech
     @State private var selectedSource: ModelCatalogSource = .local
@@ -325,12 +326,31 @@ struct ModelManagementView: View {
     }
 
     private var localSpeechModelsSection: some View {
-        let models = filteredLocalSpeechModels
+        let recommendations = languageRecommendations
+        let recommendationLanguage = recommendations.languageDescription
+        let models = filteredLocalSpeechModels(recommendations: recommendations)
 
         return VStack(spacing: 8) {
             if models.isEmpty {
                 emptyModelsState
             } else {
+                if models.contains(where: { recommendations.role(for: $0) != nil }) {
+                    Text(
+                        String(
+                            format: String(
+                                localized: "Badges mark models suggested for %@, the default mode's language, by Hex's benchmark comparison."
+                            ),
+                            recommendationLanguage
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+                }
+
                 HStack(spacing: 10) {
                     Text("Model name").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 34)
                     Text("Type").frame(width: 26)
@@ -343,7 +363,9 @@ struct ModelManagementView: View {
                 LazyVStack(spacing: 2) {
                     ForEach(models, id: \.id) { model in
                         ModelCatalogRow(
-                            model: model, isInstalled: isInstalled(model), isExpanded: expandedModelID == model.id
+                            model: model, isInstalled: isInstalled(model), isExpanded: expandedModelID == model.id,
+                            recommendation: recommendations.role(for: model),
+                            recommendationLanguage: recommendationLanguage
                         ) { expandedModelID = expandedModelID == model.id ? nil : model.id }
                         if expandedModelID == model.id {
                             localModelCard(model).padding(.bottom, 14)
@@ -466,13 +488,22 @@ struct ModelManagementView: View {
         .cornerRadius(8)
     }
 
-    private var filteredLocalSpeechModels: [any TranscriptionModel] {
+    /// The default mode's languages, which inherit the global language setting when the mode has none.
+    private var languageRecommendations: ModelRecommendations {
+        ModelRecommendations(
+            languages: modeManager.getDefaultConfiguration()?.transcriptionLanguages
+                ?? UserDefaults.standard.selectedTranscriptionLanguages
+        )
+    }
+
+    private func filteredLocalSpeechModels(recommendations: ModelRecommendations) -> [any TranscriptionModel] {
         ModelCatalog.localSpeechModels(
             from: transcriptionModelManager.allAvailableModels.filter {
                 transcriptionModelManager.isAvailableOnCurrentOS($0)
             },
             installation: installationFilter,
-            sortOrder: sortOrder, searchText: searchText, isInstalled: isInstalled)
+            sortOrder: sortOrder, searchText: searchText, recommendations: recommendations,
+            isInstalled: isInstalled)
     }
 
     private func isInstalled(_ model: any TranscriptionModel) -> Bool {
