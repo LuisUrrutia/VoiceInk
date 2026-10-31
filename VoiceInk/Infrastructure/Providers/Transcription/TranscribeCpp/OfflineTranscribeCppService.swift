@@ -114,7 +114,7 @@ final class OfflineTranscribeCppService: TranscriptionService, @unchecked Sendab
             language: language,
             keepSpecialTags: false
         )
-        let maximumChunkSeconds = effectiveMaximumChunkSeconds(
+        let maximumChunkSeconds = Self.effectiveMaximumChunkSeconds(
             configuredMaximum: artifact.maximumChunkSeconds,
             capabilitiesMaximumMilliseconds: nativeModel.capabilities.maxAudioMs
         )
@@ -315,7 +315,7 @@ final class OfflineTranscribeCppService: TranscriptionService, @unchecked Sendab
         return compatibleLanguage.split(separator: "-").first.map(String.init)?.lowercased()
     }
 
-    private func effectiveMaximumChunkSeconds(
+    static func effectiveMaximumChunkSeconds(
         configuredMaximum: Int,
         capabilitiesMaximumMilliseconds: Int64
     ) -> Int {
@@ -348,7 +348,7 @@ final class OfflineTranscribeCppService: TranscriptionService, @unchecked Sendab
     }
 }
 
-private extension Array where Element == Float {
+extension Array where Element == Float {
     /// Splits long-form audio near low-energy boundaries without overlapping samples.
     func energyAwareChunks(
         maximumCount: Int,
