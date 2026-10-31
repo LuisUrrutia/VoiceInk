@@ -9,6 +9,7 @@ enum ViewType: String, CaseIterable, Identifiable {
     case audio = "Audio"
     case dictionary = "Dictionary"
     case settings = "Settings"
+    case labs = "Labs"
 
     var id: String { rawValue }
 
@@ -21,9 +22,19 @@ enum ViewType: String, CaseIterable, Identifiable {
         }
     }
 
-    static let sidebarGroups: [[ViewType]] = [
-        [.dashboard, .modes, .dictionary], [.settings, .audio, .models], [.history, .transcribeAudio]
-    ]
+    static var sidebarGroups: [[ViewType]] { sidebarGroups(labsFeatures: LabsFeature.all) }
+
+    /// Labs is the last item, and only while it lists a feature.
+    static func sidebarGroups(labsFeatures: [LabsFeature]) -> [[ViewType]] {
+        let groups: [[ViewType]] = [
+            [.dashboard, .modes, .dictionary], [.settings, .audio, .models], [.history, .transcribeAudio],
+        ]
+        return labsFeatures.isEmpty ? groups : groups + [[.labs]]
+    }
+
+    func isAvailable(labsFeatures: [LabsFeature] = LabsFeature.all) -> Bool {
+        self != .labs || !labsFeatures.isEmpty
+    }
 }
 
 final class MainWindowNavigation: ObservableObject {
@@ -43,6 +54,7 @@ final class MainWindowNavigation: ObservableObject {
     }
 
     func navigate(to destination: ViewType) {
+        guard destination.isAvailable() else { return }
         selectedView = destination
     }
 
@@ -103,6 +115,8 @@ struct ContentView: View {
             ModeView()
         case .settings:
             SettingsView()
+        case .labs:
+            LabsView()
         }
     }
 }

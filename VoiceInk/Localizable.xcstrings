@@ -2318,6 +2318,72 @@
         }
       }
     },
+    "Labs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Labs"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Labos"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实验室"
+          }
+        }
+      }
+    },
+    "Try unfinished features. They may change or break. Each one is off until you turn it on, and switches apply immediately." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Probiere unfertige Funktionen aus. Sie können sich ändern oder fehlerhaft sein. Jede bleibt aus, bis du sie einschaltest, und Schalter wirken sofort."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Essayez des fonctionnalités inachevées. Elles peuvent changer ou ne pas fonctionner. Chacune reste désactivée jusqu’à ce que vous l’activiez, et les commutateurs s’appliquent immédiatement."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "试用未完成的功能。它们可能会变化或出错。每项功能在你打开之前都保持关闭，开关会立即生效。"
+          }
+        }
+      }
+    },
+    "Unfinished features" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unfertige Funktionen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fonctionnalités inachevées"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未完成的功能"
+          }
+        }
+      }
+    },
     "automatic language detection" : {
       "localizations" : {
         "de" : {
