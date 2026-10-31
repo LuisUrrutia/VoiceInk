@@ -40,11 +40,11 @@ actor WhisperContext {
         }
         language = request.language
         // whisper.cpp tokenizes the prompt and retains its trailing tokens within its own context limit.
-        prompt = [request.prompt ?? "", request.vocabulary?.terms.joined(separator: ", ") ?? ""]
-            .filter { !$0.isEmpty }.joined(separator: "\n")
+        let promptEcho = WhisperPromptEcho(languagePrompt: request.prompt, hints: request.vocabulary?.terms ?? [])
+        prompt = promptEcho.prompt
         guard fullTranscribe(samples: samples) else { throw VoiceInkEngineError.whisperCoreFailed }
         try Task.checkCancellation()
-        return getTranscription()
+        return promptEcho.removingEcho(from: segmentTexts()).joined()
     }
 
     func fullTranscribe(samples: [Float]) -> Bool {
@@ -119,13 +119,9 @@ actor WhisperContext {
         return success
     }
 
-    func getTranscription() -> String {
-        guard let context = context else { return "" }
-        var transcription = ""
-        for i in 0..<whisper_full_n_segments(context) {
-            transcription += String(cString: whisper_full_get_segment_text(context, i))
-        }
-        return transcription
+    func segmentTexts() -> [String] {
+        guard let context = context else { return [] }
+        return (0..<whisper_full_n_segments(context)).map { String(cString: whisper_full_get_segment_text(context, $0)) }
     }
 
     static func createContext(path: String) async throws -> WhisperContext {
