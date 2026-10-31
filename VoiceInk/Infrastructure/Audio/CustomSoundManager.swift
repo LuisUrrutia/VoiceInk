@@ -13,16 +13,23 @@ class CustomSoundManager: ObservableObject {
         case sound5
         case sound6
         case sound7
+        /// Hex's Classic start sound; see `Resources/Licenses/Hex-LICENSE.txt`.
+        case hexClassicStart
 
         var id: String { rawValue }
 
         var displayName: String {
-            String(localized: "Sound \(number)")
+            switch self {
+            case .hexClassicStart:
+                return "Hex Classic"
+            default:
+                return String(localized: "Sound \(number)")
+            }
         }
 
         var fileExtension: String {
             switch self {
-            case .sound1, .sound2, .sound3, .sound4, .sound7:
+            case .sound1, .sound2, .sound3, .sound4, .sound7, .hexClassicStart:
                 return "wav"
             case .sound5, .sound6:
                 return "mp3"
@@ -50,7 +57,7 @@ class CustomSoundManager: ObservableObject {
         var defaultBuiltInSound: BuiltInSound {
             switch self {
             case .start:
-                return .sound5
+                return .hexClassicStart
             case .stop:
                 return .sound6
             }
@@ -86,6 +93,8 @@ class CustomSoundManager: ObservableObject {
     }
 
     private let maxSoundDuration: TimeInterval = 3.0
+    private let defaults: UserDefaults
+    private let customSoundsDirectory: URL?
 
     @Published private var startSoundSelection: SoundSelection {
         didSet {
@@ -100,11 +109,11 @@ class CustomSoundManager: ObservableObject {
     }
 
     private var startBuiltInSound: BuiltInSound {
-        didSet { UserDefaults.standard.set(startBuiltInSound.rawValue, forKey: SoundType.start.builtInSoundKey) }
+        didSet { defaults.set(startBuiltInSound.rawValue, forKey: SoundType.start.builtInSoundKey) }
     }
 
     private var stopBuiltInSound: BuiltInSound {
-        didSet { UserDefaults.standard.set(stopBuiltInSound.rawValue, forKey: SoundType.stop.builtInSoundKey) }
+        didSet { defaults.set(stopBuiltInSound.rawValue, forKey: SoundType.stop.builtInSoundKey) }
     }
 
     private var customStartSoundFilename: String? {
@@ -117,19 +126,24 @@ class CustomSoundManager: ObservableObject {
 
     private func updateFilenameInUserDefaults(filename: String?, for type: SoundType) {
         if let filename = filename {
-            UserDefaults.standard.set(filename, forKey: type.filenameKey)
+            defaults.set(filename, forKey: type.filenameKey)
         } else {
-            UserDefaults.standard.removeObject(forKey: type.filenameKey)
+            defaults.removeObject(forKey: type.filenameKey)
         }
     }
 
-    private init() {
-        let savedStartBuiltInSound = Self.savedBuiltInSound(for: .start)
-        let savedStopBuiltInSound = Self.savedBuiltInSound(for: .stop)
-        let savedStartFilename = UserDefaults.standard.string(forKey: SoundType.start.filenameKey)
-        let savedStopFilename = UserDefaults.standard.string(forKey: SoundType.stop.filenameKey)
-        let legacySoundFeedbackEnabled = UserDefaults.standard.object(forKey: "isSoundFeedbackEnabled")
-            .map { _ in UserDefaults.standard.bool(forKey: "isSoundFeedbackEnabled") }
+    init(
+        defaults: UserDefaults = .standard,
+        customSoundsDirectory: URL? = CustomSoundManager.applicationSupportSoundsDirectory
+    ) {
+        self.defaults = defaults
+        self.customSoundsDirectory = customSoundsDirectory
+        let savedStartBuiltInSound = Self.savedBuiltInSound(for: .start, in: defaults)
+        let savedStopBuiltInSound = Self.savedBuiltInSound(for: .stop, in: defaults)
+        let savedStartFilename = defaults.string(forKey: SoundType.start.filenameKey)
+        let savedStopFilename = defaults.string(forKey: SoundType.stop.filenameKey)
+        let legacySoundFeedbackEnabled = defaults.object(forKey: "isSoundFeedbackEnabled")
+            .map { _ in defaults.bool(forKey: "isSoundFeedbackEnabled") }
 
         self.startBuiltInSound = savedStartBuiltInSound
         self.stopBuiltInSound = savedStopBuiltInSound
@@ -139,13 +153,15 @@ class CustomSoundManager: ObservableObject {
             for: .start,
             builtInSound: savedStartBuiltInSound,
             customFilename: savedStartFilename,
-            legacySoundFeedbackEnabled: legacySoundFeedbackEnabled
+            legacySoundFeedbackEnabled: legacySoundFeedbackEnabled,
+            in: defaults
         )
         self.stopSoundSelection = Self.savedSoundSelection(
             for: .stop,
             builtInSound: savedStopBuiltInSound,
             customFilename: savedStopFilename,
-            legacySoundFeedbackEnabled: legacySoundFeedbackEnabled
+            legacySoundFeedbackEnabled: legacySoundFeedbackEnabled,
+            in: defaults
         )
 
         createCustomSoundsDirectoryIfNeeded()
@@ -157,9 +173,10 @@ class CustomSoundManager: ObservableObject {
         for type: SoundType,
         builtInSound: BuiltInSound,
         customFilename: String?,
-        legacySoundFeedbackEnabled: Bool?
+        legacySoundFeedbackEnabled: Bool?,
+        in defaults: UserDefaults
     ) -> SoundSelection {
-        switch UserDefaults.standard.string(forKey: type.selectionKey) {
+        switch defaults.string(forKey: type.selectionKey) {
         case "none":
             return .none
         case "custom":
@@ -174,8 +191,8 @@ class CustomSoundManager: ObservableObject {
         }
     }
 
-    private static func savedBuiltInSound(for type: SoundType) -> BuiltInSound {
-        if let rawValue = UserDefaults.standard.string(forKey: type.builtInSoundKey),
+    private static func savedBuiltInSound(for type: SoundType, in defaults: UserDefaults) -> BuiltInSound {
+        if let rawValue = defaults.string(forKey: type.builtInSoundKey),
             let sound = BuiltInSound(rawValue: rawValue)
         {
             return sound
@@ -184,16 +201,13 @@ class CustomSoundManager: ObservableObject {
         return type.defaultBuiltInSound
     }
 
-    private func customSoundsDirectory() -> URL? {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        else {
-            return nil
-        }
-        return appSupport.appendingPathComponent("VoiceInk/CustomSounds")
+    static var applicationSupportSoundsDirectory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("VoiceInk/CustomSounds")
     }
 
     private func createCustomSoundsDirectoryIfNeeded() {
-        guard let directory = customSoundsDirectory() else { return }
+        guard let directory = customSoundsDirectory else { return }
 
         if !FileManager.default.fileExists(atPath: directory.path) {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -202,7 +216,7 @@ class CustomSoundManager: ObservableObject {
 
     func getCustomSoundURL(for type: SoundType) -> URL? {
         guard case .custom(let filename) = soundSelection(for: type),
-            let directory = customSoundsDirectory()
+            let directory = customSoundsDirectory
         else {
             return nil
         }
@@ -256,7 +270,7 @@ class CustomSoundManager: ObservableObject {
     }
 
     private func saveSoundSelection(_ selection: SoundSelection, for type: SoundType) {
-        UserDefaults.standard.set(selection.storageValue, forKey: type.selectionKey)
+        defaults.set(selection.storageValue, forKey: type.selectionKey)
     }
 
     func selectNoSound(for type: SoundType) {
@@ -316,7 +330,7 @@ class CustomSoundManager: ObservableObject {
     func resetSoundToDefault(for type: SoundType) {
         let filename = (type == .start) ? customStartSoundFilename : customStopSoundFilename
 
-        if let filename = filename, let directory = customSoundsDirectory() {
+        if let filename = filename, let directory = customSoundsDirectory {
             let fileURL = directory.appendingPathComponent(filename)
             try? FileManager.default.removeItem(at: fileURL)
         }
@@ -346,7 +360,7 @@ class CustomSoundManager: ObservableObject {
     }
 
     private func copySoundFile(from sourceURL: URL, standardName: String) -> Result<String, CustomSoundError> {
-        guard let directory = customSoundsDirectory() else {
+        guard let directory = customSoundsDirectory else {
             return .failure(.directoryCreationFailed)
         }
 
