@@ -21,7 +21,12 @@ final class SystemShortcutEventTap: ShortcutEventTap {
     private let handler: (CGEventType, CGEvent) -> Bool
     private let runLoop: CFRunLoop
 
-    init(eventsOfInterest: CGEventMask, options: CGEventTapOptions = .defaultTap, handler: @escaping (CGEventType, CGEvent) -> Bool) throws {
+    init(
+        eventsOfInterest: CGEventMask,
+        location: CGEventTapLocation = .cgSessionEventTap,
+        options: CGEventTapOptions = .defaultTap,
+        handler: @escaping (CGEventType, CGEvent) -> Bool
+    ) throws {
         precondition(ShortcutEventTapThread.shared.isCurrent)
         self.handler = handler
         self.runLoop = CFRunLoopGetCurrent()
@@ -33,7 +38,7 @@ final class SystemShortcutEventTap: ShortcutEventTap {
             }
         }
         guard let port = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
+            tap: location,
             place: .headInsertEventTap,
             options: options,
             eventsOfInterest: eventsOfInterest,

@@ -47,7 +47,7 @@ class RecordingShortcutManager: ObservableObject {
     private var recorderUIManager: RecorderUIManager
     private var recorderPanelShortcutManager: RecorderPanelShortcutManager
     private let modeShortcutManager: ModeShortcutManager
-    private let shortcutMonitor = ShortcutMonitor(owner: "recording")
+    private let shortcutMonitor = ShortcutMonitor(owner: "recording", makePhysicalKeyTap: ShortcutMonitor.systemPhysicalKeyTap)
     private let monitoringLifecycle = ShortcutMonitoringLifecycle()
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var shortcutChangeObserver: NSObjectProtocol?
@@ -66,6 +66,17 @@ class RecordingShortcutManager: ObservableObject {
             case .pushToTalk: return String(localized: "Push to Talk")
             case .hybrid: return String(localized: "Hybrid")
             case .doubleTap: return String(localized: "Double Tap")
+            }
+        }
+
+        /// How long a modifier-only press is held before its chord breaker; nil keeps every press a tap.
+        var chordBreakerDelay: TimeInterval? {
+            switch self {
+            // A shorter release is a discarded short tap, which stays a tap for other apps.
+            case .pushToTalk: return RecordingShortcutModeHandler.shortTapThreshold
+            // A tap starts or finishes these, so they use Hex's 40 ms chord grace instead of the hold.
+            case .toggle, .hybrid: return 0.04
+            case .doubleTap: return nil
             }
         }
     }
@@ -225,6 +236,7 @@ class RecordingShortcutManager: ObservableObject {
             shortcuts: shortcuts,
             interruptibleActions: interruptibleRecordingActions,
             standaloneModifierActions: standaloneModifierActions,
+            chordBreakerDelays: chordBreakerDelays,
             onShortcutDown: { [weak self] action, eventTime in
                 guard let self else { return }
                 guard let mode = self.recordingMode(for: action) else { return }
@@ -286,8 +298,15 @@ class RecordingShortcutManager: ObservableObject {
         return actions
     }
 
+    private var chordBreakerDelays: [ShortcutAction: TimeInterval] {
+        var delays: [ShortcutAction: TimeInterval] = [:]
+        delays[.primaryRecording] = primaryRecordingShortcutMode.chordBreakerDelay
+        delays[.secondaryRecording] = secondaryRecordingShortcutMode.chordBreakerDelay
+        return delays
+    }
+
     private func updateStandaloneModifierActions() {
-        shortcutMonitor.updateStandaloneModifierActions(standaloneModifierActions)
+        shortcutMonitor.updateStandaloneModifierActions(standaloneModifierActions, chordBreakerDelays: chordBreakerDelays)
     }
 
     private func recordingMode(for action: ShortcutAction) -> Mode? {
@@ -411,7 +430,7 @@ final class RecordingShortcutModeHandler {
     private let hybridPressThreshold: TimeInterval = 0.5
     private let doubleTapThreshold: TimeInterval = 0.7
     /// A push-to-talk release sooner than this is an accidental start, not a dictation.
-    static let shortTapThreshold: TimeInterval = 0.3
+    nonisolated static let shortTapThreshold: TimeInterval = 0.3
 
     init(
         canHandleShortcutAction: @escaping @MainActor () -> Bool,
@@ -709,6 +728,11 @@ final class RecordingShortcutModeHandler {
 
         guard activeShortcutCanCancelAccidentalStart else {
             logDecision(action, phase: "interrupted", result: "ignored-existing-recording")
+            return
+        }
+        // A capture already stopped by other means keeps its transcription.
+        guard canHandleShortcutAction() else {
+            logDecision(action, phase: "interrupted", result: "ignored-engine-state")
             return
         }
 
