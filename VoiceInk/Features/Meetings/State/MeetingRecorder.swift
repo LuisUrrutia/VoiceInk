@@ -379,8 +379,10 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         if !interrupted.isEmpty { onInterrupted?(interrupted) }
         let interval = dependencies.maintenanceInterval
         maintenanceTask = Task { [weak self] in
+            // Ends with its recorder, so a released recorder leaves no loop behind.
             while !Task.isCancelled {
-                self?.applyRetention()
+                guard let recorder = self else { return }
+                recorder.applyRetention()
                 try? await Task.sleep(for: interval)
             }
         }
