@@ -35,7 +35,7 @@ extension Transcription {
         return value.isValidEmoji ? .emoji(value) : .symbol(value)
     }
 
-    private var enhancedHistoryText: String? {
+    var enhancedHistoryText: String? {
         guard let enhancedText = historyEnhancementDetailText else { return nil }
 
         let normalizedLowercasedText = enhancedText

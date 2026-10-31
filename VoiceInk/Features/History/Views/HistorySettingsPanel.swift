@@ -11,6 +11,8 @@ struct HistorySettingsPanel: View {
     @AppStorage(CleanupSettingsKeys.isAudioCleanupEnabled) private var isAudioCleanupEnabled = false
     @AppStorage(CleanupSettingsKeys.audioRetentionPeriod) private var audioRetentionPeriod = 7
 
+    @ObservedObject private var historyAccess = HistoryAccessController.shared
+
     @State private var isPerformingAudioCleanup = false
     @State private var isShowingAudioConfirmation = false
     @State private var cleanupInfo: (fileCount: Int, totalSize: Int64, transcriptions: [Transcription]) = (0, 0, [])
@@ -62,6 +64,20 @@ struct HistorySettingsPanel: View {
                     sectionHeader(
                         "Transcript History",
                         tip: "Delete transcript history and related audio files after the retention period."
+                    )
+                }
+
+                Section {
+                    Toggle(
+                        "Allow Local Agents to Read History",
+                        isOn: Binding(get: { historyAccess.isEnabled }, set: { historyAccess.setEnabled($0) })
+                    )
+                    historyAccessStatus
+                } header: {
+                    sectionHeader(
+                        "Agent Access",
+                        tip:
+                            "While VoiceInk runs, the voiceink-history command and its MCP server can read completed transcriptions. Access is read-only and limited to programs running under your account on this Mac."
                     )
                 }
 
@@ -155,6 +171,26 @@ struct HistorySettingsPanel: View {
             } else {
                 AudioCleanupManager.shared.stopAutomaticCleanup()
             }
+        }
+    }
+
+    @ViewBuilder
+    private var historyAccessStatus: some View {
+        switch historyAccess.status {
+        case .off:
+            EmptyView()
+        case .serving(let socketPath):
+            LabeledContent("Socket") {
+                Text(socketPath)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            }
+        case .unavailable(let message):
+            Label(message, appSymbol: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
         }
     }
 
