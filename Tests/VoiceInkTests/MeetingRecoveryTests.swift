@@ -48,6 +48,28 @@ import XCTest
         XCTAssertEqual(try AVAudioFile(forReading: url).length, 800)
     }
 
+    func testRepairAtThe32BitLimitKeepsWholeFramesInsideRIFF() throws {
+        let url = root.appendingPathComponent("huge.wav")
+        try writeRecordingWAV(frames: 16, to: url)
+        let handle = try FileHandle(forWritingTo: url)
+        // A sparse file just past what a 32-bit RIFF size can describe.
+        try handle.truncate(atOffset: UInt64(UInt32.max) + 1_001)
+        try handle.close()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try MeetingWAVRepair.repair(url)
+
+        let header = try XCTUnwrap(FileHandle(forReadingFrom: url).read(upToCount: 4_200))
+        let dataOffset = try XCTUnwrap(header.range(of: Data("data".utf8))).lowerBound
+        func field(_ offset: Int) -> UInt64 {
+            UInt64(header.subdata(in: offset..<(offset + 4)).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian })
+        }
+        let dataSize = field(dataOffset + 4)
+        XCTAssertEqual(dataSize % 2, 0)
+        XCTAssertEqual(field(4), UInt64(dataOffset) + dataSize)
+        XCTAssertLessThanOrEqual(UInt64(dataOffset) + 8 + dataSize, UInt64(UInt32.max) + 8)
+    }
+
     func testFilesThatAreNotWAVAreRejected() throws {
         let url = root.appendingPathComponent("text.wav")
         try Data("not audio at all".utf8).write(to: url)
@@ -78,6 +100,90 @@ import XCTest
         XCTAssertEqual(manifest.status, .interrupted)
         XCTAssertEqual(manifest.duration, 3, accuracy: 0.05)
         XCTAssertEqual(try AVAudioFile(forReading: store.audioURL(for: crashed.id, track: .microphone)).length, 48_000)
+    }
+
+    func testRecoveredMeetingsAreTranscribedThroughTheCoordinator() async throws {
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"), movesToTrash: false)
+        let crashed = MeetingManifest(title: "Crashed")
+        _ = try store.createDirectory(for: crashed.id)
+        try store.save(crashed)
+        let url = store.audioURL(for: crashed.id, track: .microphone)
+        try writeRecordingWAV(frames: 32_000, to: url)
+        try zeroSizeFields(of: url)
+        let recorder = makeRecorder(store: store)
+        let transcriber = RecoveryTranscriber()
+        let coordinator = makeCoordinator(recorder: recorder, transcriber: transcriber)
+
+        recorder.startMaintenance()
+        await coordinator.waitUntilIdle()
+
+        let manifest = try store.load(id: crashed.id)
+        XCTAssertEqual(manifest.status, .transcribed)
+        let transcript = try String(contentsOfFile: try XCTUnwrap(manifest.transcriptPath), encoding: .utf8)
+        XCTAssertTrue(transcript.contains("recovered"))
+    }
+
+    func testTurningMeetingsOffAndOnWhileAStartIsPendingLeavesItsFilesAlone() async throws {
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"), movesToTrash: false)
+        let hardware = FakeMeetingMicrophoneHardware()
+        hardware.holdStart = true
+        let recorder = makeRecorder(store: store, microphone: hardware)
+        let transcriber = RecoveryTranscriber()
+        let coordinator = makeCoordinator(recorder: recorder, transcriber: transcriber)
+        recorder.startMaintenance()
+        let start = Task { try await recorder.start(title: "Pending") }
+        try await waitUntil { !store.loadAll().isEmpty }
+
+        Labs.setEnabled(false, for: .meetings, in: defaults)
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(store.loadAll().map(\.status), [.recording])
+        hardware.releaseStart()
+
+        await XCTAssertThrowsErrorAsync(try await start.value, MeetingRecorderError.featureDisabled)
+        await coordinator.waitUntilIdle()
+        XCTAssertEqual(transcriber.calls, 0)
+        XCTAssertTrue(store.loadAll().isEmpty)
+    }
+
+    func testRetentionRunsPeriodicallyOnlyWhileMeetingsIsOn() async throws {
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"), movesToTrash: false)
+        let recorder = makeRecorder(store: store, maintenance: .milliseconds(10))
+        recorder.startMaintenance()
+        func addExpired() throws -> UUID {
+            var manifest = MeetingManifest(createdAt: Date().addingTimeInterval(-40 * 86_400), title: "Old")
+            manifest.status = .transcribed
+            _ = try store.createDirectory(for: manifest.id)
+            try store.save(manifest)
+            return manifest.id
+        }
+
+        let first = try addExpired()
+        try await waitUntil { !FileManager.default.fileExists(atPath: store.directory(for: first).path) }
+        Labs.setEnabled(false, for: .meetings, in: defaults)
+        let second = try addExpired()
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.directory(for: second).path))
+
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+        try await waitUntil { !FileManager.default.fileExists(atPath: store.directory(for: second).path) }
+    }
+
+    func testCheckpointsExcludeADictationStillInProgress() async throws {
+        let store = MeetingStore(rootURL: root.appendingPathComponent("store"), movesToTrash: false)
+        let recorder = makeRecorder(store: store, checkpoint: .milliseconds(10))
+        try await recorder.start(title: "Dictating")
+        let id = try XCTUnwrap(recorder.activeMeeting?.id)
+        recorder.dictationCaptureBegan()
+        try await Task.sleep(for: .milliseconds(30))
+
+        try await waitUntil { (try? store.load(id: id).dictationIntervals.isEmpty) == false }
+        let saved = try store.load(id: id)
+        XCTAssertEqual(saved.dictationIntervals.count, 1)
+        XCTAssertTrue(recorder.activeMeeting?.dictationIntervals.isEmpty ?? true, "in-memory intervals close only at the end")
+        recorder.dictationCaptureEnded()
+        let stopped = await recorder.stop()
+        XCTAssertEqual(stopped?.dictationIntervals.count, 1)
     }
 
     func testNothingIsRecoveredWhileMeetingsIsOff() throws {
@@ -163,13 +269,37 @@ import XCTest
 
         let captured = try ConfigurationPreferences.capture(from: defaults)
         XCTAssertEqual(captured[MeetingAudioRetention.key], .number(7))
+
+        defaults.set(MeetingAudioRetention.forever.rawValue, forKey: MeetingAudioRetention.key)
+        try ConfigurationPreferences.apply([MeetingAudioRetention.key: .number(12)], to: defaults)
+        XCTAssertEqual(MeetingAudioRetention.current(in: defaults), .forever)
+        try ConfigurationPreferences.apply([MeetingAudioRetention.key: .number(7)], to: defaults)
+        XCTAssertEqual(MeetingAudioRetention.current(in: defaults), .week)
+        try ConfigurationPreferences.apply([MeetingAudioRetention.key: .null], to: defaults)
+        XCTAssertNil(defaults.persistentDomain(forName: suiteName)?[MeetingAudioRetention.key])
+        XCTAssertEqual(MeetingAudioRetention.current(in: defaults), .month)
     }
 
     // MARK: - Fixtures
 
+    private func makeCoordinator(recorder: MeetingRecorder, transcriber: RecoveryTranscriber) -> MeetingTranscriptionCoordinator {
+        let model = TranscriptionModelRegistry.models.first { $0.name == "parakeet-tdt-0.6b-v3" }!
+        let folder = root.appendingPathComponent("Transcripts", isDirectory: true)
+        let coordinator = MeetingTranscriptionCoordinator()
+        coordinator.configure(
+            environment: .init(
+                chooseModel: { model }, makeTranscriber: { _ in transcriber },
+                requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, isDictating: { false },
+                outputFolder: { folder }
+            ),
+            recorder: recorder
+        )
+        return coordinator
+    }
+
     private func makeRecorder(
         store: MeetingStore, microphone: FakeMeetingMicrophoneHardware = FakeMeetingMicrophoneHardware(),
-        checkpoint: Duration = .seconds(30)
+        checkpoint: Duration = .seconds(30), maintenance: Duration = .seconds(3_600)
     ) -> MeetingRecorder {
         let devices = MeetingAudioDevices(userDefaults: defaults)
         var dependencies = MeetingRecorder.Dependencies()
@@ -180,6 +310,7 @@ import XCTest
         dependencies.isMicrophoneAuthorized = { true }
         dependencies.defaults = defaults
         dependencies.checkpointInterval = checkpoint
+        dependencies.maintenanceInterval = maintenance
         return MeetingRecorder(dependencies: dependencies)
     }
 
@@ -222,4 +353,18 @@ private final class RecoveryQuietSystemAudio: SystemAudioCapturing, @unchecked S
     func start(writingTo url: URL, meetingStartNanoseconds: UInt64) throws {}
     func restart() throws {}
     func stop() -> MeetingTrackCaptureResult { MeetingTrackCaptureResult() }
+}
+
+private final class RecoveryTranscriber: TimedSpeechTranscribing {
+    var calls = 0
+
+    func transcribeTimed(
+        samples: [Float], model: any TranscriptionModel, context: TranscriptionRequestContext
+    ) async throws -> [TimedTranscriptSegment] {
+        calls += 1
+        return TimedTranscriptSegment.untimed("recovered", sampleCount: samples.count)
+    }
+
+    func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? { nil }
+    func releaseResources() async {}
 }

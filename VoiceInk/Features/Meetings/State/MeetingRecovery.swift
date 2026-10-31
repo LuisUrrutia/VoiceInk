@@ -23,9 +23,10 @@ enum MeetingWAVRepair {
             let identifier = chunk.prefix(4)
             let size = UInt64(chunk.suffix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian })
             if identifier == Data("data".utf8) {
-                // PCM16 mono: whole two-byte frames only, within 32-bit WAV limits.
-                let available = min((fileSize - offset - 8) & ~1, UInt64(UInt32.max - 36))
-                let riff = UInt32(min(fileSize - 8, UInt64(UInt32.max)))
+                // PCM16 mono: whole two-byte frames only. The RIFF size counts from byte 8 to the payload's end and
+                // must fit 32 bits, which caps the payload after this chunk's header.
+                let available = min(fileSize - offset - 8, UInt64(UInt32.max) - offset) & ~1
+                let riff = UInt32(offset + available)
                 guard size != available || riffSize(header) != riff else { return false }
                 try write(UInt32(available), at: offset + 4, to: handle)
                 try write(riff, at: 4, to: handle)
