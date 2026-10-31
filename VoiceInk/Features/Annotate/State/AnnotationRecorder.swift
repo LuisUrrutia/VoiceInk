@@ -77,6 +77,8 @@ final class AnnotationRecorder: ObservableObject {
 
     private var session: Session?
     private var startGeneration = 0
+    /// Cancel or switching Annotate off while Stop closes the files: the closed bundle is then discarded.
+    private var discardsTeardown = false
     private var labsCancellable: AnyCancellable?
 
     var isRecording: Bool { activeAnnotation != nil }
@@ -191,6 +193,11 @@ final class AnnotationRecorder: ObservableObject {
             manifest.failure = error.localizedDescription
         }
         session.sleepHold.release()
+        if discardsTeardown {
+            try? dependencies.store.delete(id: manifest.id)
+            reload()
+            return nil
+        }
         manifest.duration = seconds(end, since: session.startNanoseconds)
         manifest.narrationTimeline = microphone.timeline
         manifest.status = manifest.failure == nil ? .processing : .failed
@@ -203,6 +210,10 @@ final class AnnotationRecorder: ObservableObject {
     /// Discards the annotation and its files, or abandons a start that has not finished.
     func cancel() async {
         if isStarting { startGeneration += 1 }
+        if isStopping {
+            discardsTeardown = true
+            return
+        }
         guard let session = beginTeardown() else { return }
         defer { endTeardown() }
         _ = await session.microphone.stop()
@@ -241,6 +252,7 @@ final class AnnotationRecorder: ObservableObject {
         guard let session, !isStopping else { return nil }
         session.limitTask?.cancel()
         isStopping = true
+        discardsTeardown = false
         self.session = nil
         return session
     }

@@ -1,5 +1,6 @@
 import AVFoundation
 import IOKit.pwr_mgt
+import SwiftData
 import XCTest
 import os
 
@@ -152,6 +153,146 @@ import os
         _ = await stop.value
         XCTAssertFalse(fixture.recorder.isBusy)
         XCTAssertNil(fixture.recorder.ownedAnnotationID)
+    }
+
+    func testCancelOrSwitchingOffDuringStopDiscardsTheAnnotation() async throws {
+        for switchesOff in [false, true] {
+            let fixture = makeFixture()
+            var recorded = 0
+            fixture.recorder.onRecorded = { _ in recorded += 1 }
+            try await fixture.recorder.start()
+            fixture.screen.holdsStop = true
+            let stop = Task { await fixture.recorder.stop() }
+            try await waitUntil { fixture.screen.isHoldingStop }
+
+            if switchesOff {
+                Labs.setEnabled(false, for: .annotate, in: defaults)
+                try await Task.sleep(for: .milliseconds(20))
+            } else {
+                await fixture.recorder.cancel()
+            }
+            fixture.screen.release()
+            let result = await stop.value
+
+            XCTAssertNil(result)
+            XCTAssertEqual(recorded, 0)
+            XCTAssertTrue(fixture.store.loadAll().isEmpty)
+            XCTAssertFalse(fixture.recorder.isBusy)
+            Labs.setEnabled(true, for: .annotate, in: defaults)
+        }
+    }
+
+    func testDictationIsRefusedWhileAnnotatingAndItsActionStopsTheAnnotation() async throws {
+        let fixture = makeFixture()
+        try await fixture.recorder.start()
+        let devices = MeetingAudioDevices(userDefaults: defaults)
+        let hardware = FakeMeetingMicrophoneHardware()
+        let whisper = WhisperModelManager(modelsDirectory: root.appendingPathComponent("models"))
+        let models = TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
+        let container = try ModelContainer(for: Transcription.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let engine = VoiceInkEngine(
+            modelContext: ModelContext(container), whisperModelManager: whisper, transcriptionModelManager: models,
+            recorder: Recorder(hardware: hardware, deviceManager: devices),
+            captureReadiness: CaptureReadinessController(models: models, devices: devices, permissionReader: { (.granted, false) }),
+            annotations: fixture.recorder
+        )
+
+        await engine.toggleRecord()
+
+        XCTAssertEqual(hardware.startCount, 0)
+        XCTAssertEqual(engine.recordingState, .idle)
+        XCTAssertEqual(engine.recordingError, String(localized: "Finish the annotation before dictating."))
+        engine.preflightFailureAction?()
+        try await waitUntil { !fixture.recorder.isBusy }
+        XCTAssertEqual(fixture.store.loadAll().first?.status, .processing)
+    }
+
+    func testAMeetingHeldInItsStartOrStopKeepsAnnotateOut() async throws {
+        let annotation = makeFixture()
+        let devices = MeetingAudioDevices(userDefaults: defaults)
+        let microphone = FakeMeetingMicrophoneHardware()
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+        var dependencies = MeetingRecorder.Dependencies()
+        dependencies.store = MeetingStore(rootURL: root.appendingPathComponent("meetings"))
+        dependencies.permission = AnnotationTestSystemAudio()
+        dependencies.makeSystemAudio = { AnnotationTestTap() }
+        dependencies.makeMicrophone = { MeetingMicrophoneCapture(deviceManager: devices, makeHardware: { microphone }) }
+        dependencies.isMicrophoneAuthorized = { true }
+        dependencies.isOtherCaptureBusy = { annotation.recorder.isBusy }
+        dependencies.defaults = defaults
+        let meeting = MeetingRecorder(dependencies: dependencies)
+        let blocked = makeFixture(meetingBusy: { meeting.isBusy })
+
+        microphone.holdStart = true
+        let start = Task { try await meeting.start() }
+        try await waitUntil { meeting.isStarting }
+        await XCTAssertThrowsErrorAsync(try await blocked.recorder.start(), AnnotationRecorderError.meetingRecording)
+        microphone.releaseStart()
+        try await start.value
+
+        microphone.holdStop = true
+        let stop = Task { await meeting.stop() }
+        try await waitUntil { meeting.isStopping }
+        await XCTAssertThrowsErrorAsync(try await blocked.recorder.start(), AnnotationRecorderError.meetingRecording)
+        microphone.releaseStop()
+        _ = await stop.value
+        try await blocked.recorder.start()
+        await blocked.recorder.cancel()
+    }
+
+    func testProcessingSavesNarrationWordsInAnnotationTimeAcrossAGap() async throws {
+        let fixture = makeFixture()
+        let processor = AnnotationProcessor()
+        let model = try XCTUnwrap(TranscriptionModelRegistry.models.first { $0.name == "parakeet-tdt-0.6b-v3" })
+        processor.configure(
+            environment: .init(
+                chooseModel: { model }, makeTranscriber: { _ in WordTranscriber() },
+                requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { _ in }, notify: { _ in }
+            ),
+            recorder: fixture.recorder
+        )
+        try await fixture.recorder.start()
+        let id = try XCTUnwrap(fixture.recorder.activeAnnotation?.id)
+        let start = fixture.clock.now
+        // 0.1 s captured at 1.0 s, then a capture gap until 5.0 s.
+        fixture.microphone.emit(frames: 1_600, capturedThrough: start + 1_100_000_000)
+        fixture.microphone.emit(frames: 1_600, capturedThrough: start + 5_100_000_000)
+        fixture.clock.advance(seconds: 8)
+        _ = await fixture.recorder.stop()
+        try writeNarration(to: fixture.store.url(for: id, file: AnnotationManifest.narrationFileName), toneAt: 1)
+
+        await processor.waitUntilIdle()
+
+        let word = try XCTUnwrap(try fixture.store.load(id: id).transcript.first?.words.first)
+        XCTAssertEqual(word.start, 5.9, accuracy: 0.05)
+    }
+
+    func testAFailedBundleWriteMarksTheAnnotationFailedWithoutAHandoff() async throws {
+        let fixture = makeFixture()
+        let processor = AnnotationProcessor()
+        var copied = 0
+        var notified = 0
+        processor.configure(
+            environment: .init(
+                chooseModel: { nil }, makeTranscriber: { _ in WordTranscriber() },
+                requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { _ in copied += 1 },
+                notify: { _ in notified += 1 }
+            ),
+            recorder: fixture.recorder
+        )
+        try await fixture.recorder.start()
+        let id = try XCTUnwrap(fixture.recorder.activeAnnotation?.id)
+        _ = await fixture.recorder.stop()
+        // A directory where the summary goes makes its write fail.
+        try FileManager.default.createDirectory(
+            at: fixture.store.url(for: id, file: AnnotationManifest.summaryFileName), withIntermediateDirectories: false
+        )
+
+        await processor.waitUntilIdle()
+
+        XCTAssertEqual(try fixture.store.load(id: id).status, .failed)
+        XCTAssertEqual(copied, 0)
+        XCTAssertEqual(notified, 0)
     }
 
     func testStopAnnotationAbandonsAPendingStart() async throws {
@@ -352,8 +493,8 @@ import os
     }
 
     private func makeFixture(
-        meeting: Bool = false, microphone isMicrophoneAuthorized: Bool = true, screen isScreenAuthorized: Bool = true,
-        maximumDuration: Duration = .seconds(1_200)
+        meeting: Bool = false, meetingBusy: (@MainActor () -> Bool)? = nil, microphone isMicrophoneAuthorized: Bool = true,
+        screen isScreenAuthorized: Bool = true, maximumDuration: Duration = .seconds(1_200)
     ) -> Fixture {
         let store = AnnotationStore(rootURL: root, movesToTrash: false)
         let screen = FakeScreenRecording()
@@ -369,7 +510,7 @@ import os
         dependencies.isScreenAuthorized = { isScreenAuthorized }
         dependencies.requestScreenAccess = { false }
         dependencies.isMicrophoneAuthorized = { isMicrophoneAuthorized }
-        dependencies.isMeetingRecording = { meeting }
+        dependencies.isMeetingRecording = meetingBusy ?? { meeting }
         dependencies.displayUnderPointer = { 7 }
         dependencies.idleSleep = IdleSleepPrevention(client: power, queue: sleepQueue)
         dependencies.now = { clock.now }
@@ -532,4 +673,20 @@ private final class AnnotationTestTap: SystemAudioCapturing, @unchecked Sendable
     func start(writingTo url: URL, meetingStartNanoseconds: UInt64) throws {}
     func restart() throws {}
     func stop() -> MeetingTrackCaptureResult { MeetingTrackCaptureResult() }
+}
+
+/// Reports one word at the chunk's first loud sample.
+private final class WordTranscriber: TimedSpeechTranscribing {
+    func transcribeTimed(
+        samples: [Float], model: any TranscriptionModel, context: TranscriptionRequestContext
+    ) async throws -> [TimedTranscriptSegment] {
+        guard let loud = samples.firstIndex(where: { abs($0) > 0.1 }) else { return [] }
+        let start = Double(loud) / 16_000
+        return [TimedTranscriptSegment(
+            text: "here", start: start, end: start + 0.3, words: [TimedTranscriptWord(text: "here", start: start, end: start + 0.3)]
+        )]
+    }
+
+    func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? { nil }
+    func releaseResources() async {}
 }
