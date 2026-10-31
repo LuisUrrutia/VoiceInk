@@ -22,6 +22,14 @@ struct CustomSoundSettingsView: View {
             LabeledContent("Stop Sound") {
                 soundControls(for: .stop)
             }
+
+            LabeledContent("Done Sound") {
+                soundControls(for: .done)
+            }
+
+            LabeledContent("Error Sound") {
+                soundControls(for: .error)
+            }
         }
         .alert(alertTitle, isPresented: $showingAlert) {
             Button("OK", role: .cancel) {}
@@ -57,11 +65,7 @@ struct CustomSoundSettingsView: View {
             .help("Select sound")
 
             Button {
-                if type == .start {
-                    SoundManager.shared.playStartSound()
-                } else {
-                    SoundManager.shared.playStopSound()
-                }
+                SoundManager.shared.preview(type)
             } label: {
                 Image(appSymbol: "play.fill")
             }

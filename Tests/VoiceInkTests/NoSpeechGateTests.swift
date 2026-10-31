@@ -220,7 +220,7 @@ final class NoSpeechGateTests: XCTestCase {
 
     func testBundledSoundReferencesDecodeAndSuppressTheirOwnWaveforms() throws {
         for sound in CustomSoundManager.BuiltInSound.allCases {
-            let reference = try FeedbackSoundReference.load(from: XCTUnwrap(sound.bundleURL))
+            let reference = try FeedbackSoundReference.load(from: XCTUnwrap(sound.url))
             var capture = silence(1_280) + reference.samples.map { $0 * 0.3 } + silence(8_000)
 
             let matched = reference.suppress(in: &capture, expectedOffsetFrames: 0)

@@ -241,7 +241,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 await cancelRecording()
             case .idle:
                 if engine.assistantSession.canSendFollowUp {
-                    SoundManager.shared.playStartSound()
+                    SoundManager.shared.scheduleStartSound()
                     await engine.toggleRecord(
                         modeId: modeId,
                         isAssistantFollowUp: true,
@@ -254,7 +254,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 await dismissRecorderPanel()
             }
         } else {
-            SoundManager.shared.playStartSound()
+            SoundManager.shared.scheduleStartSound()
             isRecorderPanelVisible = true
             await engine.toggleRecord(
                 modeId: modeId, deliverySession: deliverySession, preRollPressNanoseconds: preRollPressNanoseconds
@@ -266,7 +266,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         guard let engine, !engine.microphoneDiagnostic.isBusy else { return }
         let deliverySession = RecordingDeliverySession.capture()
         if engine.recordingState == .idle {
-            SoundManager.shared.playStartSound()
+            SoundManager.shared.scheduleStartSound()
             isRecorderPanelVisible = true
         }
         await engine.toggleRecord(deliverySession: deliverySession)

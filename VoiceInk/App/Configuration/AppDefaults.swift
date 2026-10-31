@@ -55,6 +55,10 @@ enum AppDefaults {
                 .rawValue,
             CustomSoundManager.SoundType.stop.builtInSoundKey: CustomSoundManager.SoundType.stop.defaultBuiltInSound
                 .rawValue,
+            CustomSoundManager.SoundType.done.builtInSoundKey: CustomSoundManager.SoundType.done.defaultBuiltInSound
+                .rawValue,
+            CustomSoundManager.SoundType.error.builtInSoundKey: CustomSoundManager.SoundType.error.defaultBuiltInSound
+                .rawValue,
 
             // Recording & Transcription
             "AppendTrailingSpace": true,
