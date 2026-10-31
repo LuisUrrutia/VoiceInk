@@ -49,6 +49,7 @@ enum ConfigurationPreferences {
                 "CloudTranscriptionTimeout", "ShortEnhancementWordThreshold", "EnhancementTimeoutSeconds",
                 "TranscriptionRetentionMinutes", "AudioRetentionPeriod", "AutoLearnDictionaryMinimumCorrections",
                 IdleModelUnloadSettings.minutesKey,
+                MeetingAudioRetention.key,
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
             (.stringMap, ["CustomLanguagePrompts", UserDefaults.Keys.audioDeviceNamesByUID, MeetingSettings.providerPoliciesKey]),

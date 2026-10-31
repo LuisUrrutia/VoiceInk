@@ -19,6 +19,12 @@ protocol SystemAudioCapturing: AnyObject, Sendable {
     /// Replaces a stalled tap while keeping the same file and timeline.
     func restart() throws
     func stop() -> MeetingTrackCaptureResult
+    /// What the capture has recorded so far, for checkpoints while it runs.
+    func snapshot() -> MeetingTrackCaptureResult
+}
+
+extension SystemAudioCapturing {
+    func snapshot() -> MeetingTrackCaptureResult { MeetingTrackCaptureResult() }
 }
 
 enum SystemAudioCaptureError: LocalizedError {
@@ -69,6 +75,8 @@ final class ProcessTapSystemAudioCapture: SystemAudioCapturing, @unchecked Senda
     }
 
     var lastDeliveryNanoseconds: UInt64? { state.withLock { $0.lastDeliveryNanoseconds } }
+
+    func snapshot() -> MeetingTrackCaptureResult { state.withLock { $0.result } }
 
     func start(writingTo url: URL, meetingStartNanoseconds: UInt64) throws {
         try queue.sync {
