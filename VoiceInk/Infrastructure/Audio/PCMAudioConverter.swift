@@ -17,7 +17,11 @@ enum PCMAudioConverter {
     }
 
     static func pcmBuffer(fromPCM16Data data: Data) -> AVAudioPCMBuffer? {
-        let samples = float32Samples(fromPCM16Data: data)
+        pcmBuffer(from: float32Samples(fromPCM16Data: data))
+    }
+
+    /// A 16 kHz mono Float32 buffer holding `samples`; nil when empty.
+    static func pcmBuffer(from samples: [Float]) -> AVAudioPCMBuffer? {
         guard !samples.isEmpty,
             let format = AVAudioFormat(
                 commonFormat: .pcmFormatFloat32,

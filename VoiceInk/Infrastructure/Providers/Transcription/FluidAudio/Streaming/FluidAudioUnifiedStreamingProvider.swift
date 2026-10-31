@@ -12,6 +12,7 @@ final class FluidAudioUnifiedStreamingProvider: StreamingTranscriptionProvider {
     private let models: UnifiedModelCache<StreamingUnifiedAsrManager>
     private let processing = UnifiedModelAccess()
     private var manager: StreamingUnifiedAsrManager?
+    private var pauseCap = UnifiedStreamPauseCap()
     private var isDisconnected = false
     private var eventsContinuation: AsyncStream<StreamingTranscriptionEvent>.Continuation?
 
@@ -54,7 +55,10 @@ final class FluidAudioUnifiedStreamingProvider: StreamingTranscriptionProvider {
 
     func sendAudioChunk(_ data: Data) async throws {
         guard !data.isEmpty else { return }
-        guard let buffer = PCMAudioConverter.pcmBuffer(fromPCM16Data: data) else {
+        // Only the stream's feed is capped; the WAV and batch fallback keep every sample.
+        let heard = pauseCap.feed(PCMAudioConverter.float32Samples(fromPCM16Data: data))
+        guard !heard.isEmpty else { return }
+        guard let buffer = PCMAudioConverter.pcmBuffer(from: heard) else {
             throw StreamingTranscriptionError.audioConversionFailed
         }
         _ = try await process { manager in
@@ -65,7 +69,12 @@ final class FluidAudioUnifiedStreamingProvider: StreamingTranscriptionProvider {
     }
 
     func commit() async throws {
-        let finalText = try await process { manager in try await manager.finish() }
+        let rest = PCMAudioConverter.pcmBuffer(from: pauseCap.finish())
+        let finalText = try await process { manager in
+            if let rest { try await manager.appendAudio(rest) }
+            return try await manager.finish()
+        }
+        logger.notice("Parakeet Unified stream skipped \(self.pauseCap.droppedSamples / 16, privacy: .public) ms of long pauses")
         let text = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
         eventsContinuation?.yield(.committed(text: text))
     }
