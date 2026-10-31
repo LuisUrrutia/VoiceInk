@@ -10,12 +10,27 @@ import XCTest
         XCTAssertEqual(Set(destinations), Set(available))
         XCTAssertEqual(destinations.count, available.count)
         XCTAssertEqual(ViewType.sidebarGroups.first, [.dashboard, .modes, .dictionary])
-        XCTAssertEqual(ViewType.allCases.count, 9)
+        XCTAssertEqual(ViewType.allCases.count, 10)
+    }
+
+    func testMeetingsAppearsWithHistoryOnlyWhileItsLabsSwitchIsOn() {
+        let suiteName = "NavigationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(ViewType.meetings.isAvailable(defaults: defaults))
+        XCTAssertFalse(ViewType.sidebarGroups(labsFeatures: LabsFeature.all, defaults: defaults).joined().contains(.meetings))
+
+        Labs.setEnabled(true, for: .meetings, in: defaults)
+
+        XCTAssertTrue(ViewType.meetings.isAvailable(defaults: defaults))
+        XCTAssertEqual(ViewType.sidebarGroups(labsFeatures: LabsFeature.all, defaults: defaults)[2], [.history, .transcribeAudio, .meetings])
+        XCTAssertFalse(ViewType.meetings.isAvailable(labsFeatures: [], defaults: defaults))
     }
 
     func testLabsIsTheLastSidebarItemOnlyWhileItListsAFeature() {
         let feature = LabsFeature(id: "navigationFixture", title: "Fixture", summary: "Fixture.")
-        let featureDestinations = ViewType.allCases.filter { $0 != .labs }
+        let featureDestinations = ViewType.allCases.filter { $0 != .labs && $0.labsFeature == nil }
 
         XCTAssertEqual(Set(ViewType.sidebarGroups(labsFeatures: []).flatMap { $0 }), Set(featureDestinations))
         XCTAssertFalse(ViewType.labs.isAvailable(labsFeatures: []))

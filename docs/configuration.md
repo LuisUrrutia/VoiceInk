@@ -135,6 +135,8 @@ generated file to keep the complete structure and stable UUIDs.
   minimum corrections, automatic vocabulary correction, dictionary sorting, retention preferences, automatic update checks, announcements and playback rate.
 - **Labs:** one `labs.<feature>` boolean per feature listed in the Labs page,
   `false` until you turn it on.
+- **Meetings:** `MeetingsOutputFolder` (an absolute folder path for transcripts;
+  remove it for the default) and `MeetingsShowsRecordingIndicator`.
 
 The supported names and value types are defined in
 `VoiceInk/Infrastructure/Persistence/Configuration/ConfigurationPreferences.swift`.

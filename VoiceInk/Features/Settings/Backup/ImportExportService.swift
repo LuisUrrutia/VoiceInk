@@ -207,7 +207,8 @@ class ImportExportService {
             isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
             autoLearnMinimumCorrections: AutoLearnSettings.minimumCorrections,
             keepMicrophoneReady: UserDefaults.standard.keepMicrophoneReady,
-            labsFeatures: Labs.backup()
+            labsFeatures: Labs.backup(),
+            meetings: .capture()
         )
 
         let exportedSettings = BackupFile(

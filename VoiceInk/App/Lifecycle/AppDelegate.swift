@@ -32,6 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        MeetingRecorder.shared.closeForTermination()
         IdleSleepPrevention.shared.releaseAll()
     }
 
