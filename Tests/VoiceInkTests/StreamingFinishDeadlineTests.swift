@@ -65,7 +65,12 @@ final class StreamingFinishDeadlineTests: XCTestCase {
         let deadline = ManualDeadline()
         let (session, fallback) = try await makeSession(provider: provider, deadline: deadline)
 
-        let text = try await stopAtDeadline(session, deadline: deadline)
+        let stopping = Task { try await session.transcribe(audioURL: self.clipURL, vocabulary: RecordingVocabulary()) }
+        await deadline.waitUntilRequested()
+        // The finish runs apart from its deadline timer; fire only once it waits for the final event.
+        try await waitUntil { provider.commitCount == 1 }
+        deadline.fire()
+        let text = try await stopping.value
 
         XCTAssertEqual(text, "Batch fixture")
         XCTAssertEqual(provider.commitCount, 1)
