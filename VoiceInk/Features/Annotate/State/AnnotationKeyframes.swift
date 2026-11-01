@@ -43,7 +43,7 @@ enum AnnotationKeyframes {
         var t: TimeInterval
         var score: Double
         var reason: AnnotationKeyframe.Reason
-        var event: String?
+        var event: String? = nil
     }
 
     static func candidates(_ manifest: AnnotationManifest, sceneChanges: [AnnotationSceneSampler.Change]) -> [Candidate] {
@@ -68,47 +68,59 @@ enum AnnotationKeyframes {
         return candidates
     }
 
-    /// The highest-scoring candidates at least `minimumGap` apart, plus coverage of long quiet stretches, in time order.
+    /// Keyframes in time order: first the best candidate of each stretch of at most `coverageGap` (a coverage frame
+    /// where a stretch has none), with stretches widened to fit the budget, then the highest-scoring rest. All stay
+    /// `minimumGap` apart, so an early burst cannot leave the rest of a long annotation without images.
     static func select(_ candidates: [Candidate], duration: TimeInterval) -> [Candidate] {
         let budget = budget(for: duration)
+        let windowCount = min(budget, max(1, Int((duration / coverageGap).rounded(.up))))
+        let windowLength = max(duration, 0.001) / Double(windowCount)
         var selected: [Candidate] = []
-        for candidate in candidates.sorted(by: { ($0.score, -$0.t) > ($1.score, -$1.t) }) where selected.count < budget {
-            if selected.allSatisfy({ abs($0.t - candidate.t) >= minimumGap }) { selected.append(candidate) }
-        }
-        selected.sort { $0.t < $1.t }
-        var bounds = [0.0] + selected.map(\.t) + [duration]
-        var index = 0
-        while selected.count < budget, index < bounds.count - 1 {
-            let gap = bounds[index + 1] - bounds[index]
-            if gap > coverageGap {
-                let middle = bounds[index] + gap / 2
-                selected.append(Candidate(t: middle, score: 0, reason: .coverage, event: nil))
-                bounds.insert(middle, at: index + 1)
+        func fits(_ candidate: Candidate) -> Bool { selected.allSatisfy { abs($0.t - candidate.t) >= minimumGap } }
+        let ranked = candidates.sorted { ($0.score, -$0.t) > ($1.score, -$1.t) }
+        for window in 0..<windowCount {
+            let lower = Double(window) * windowLength
+            let upper = window == windowCount - 1 ? .infinity : lower + windowLength
+            if let best = ranked.first(where: { $0.t >= lower && $0.t < upper && fits($0) }) {
+                selected.append(best)
             } else {
-                index += 1
+                let coverage = Candidate(t: min(lower + windowLength / 2, max(0, duration - 0.05)), score: 0, reason: .coverage)
+                if fits(coverage) { selected.append(coverage) }
             }
+        }
+        for candidate in ranked where selected.count < budget && !selected.contains(candidate) && fits(candidate) {
+            selected.append(candidate)
         }
         return selected.sorted { $0.t < $1.t }
     }
 
-    /// Words spoken from just before this frame until the next one.
-    static func said(at t: TimeInterval, until next: TimeInterval?, in transcript: [TimedTranscriptSegment]) -> String? {
+    /// What was said at each keyframe, each word given to one frame only: a frame's narration runs from up to 1.5 s
+    /// before it (half-way to the previous frame when that is closer) to where the next frame's begins. The first
+    /// frame also takes everything said before it.
+    static func said(at times: [TimeInterval], in transcript: [TimedTranscriptSegment]) -> [String?] {
         let words = transcript.flatMap { segment in
             segment.words.isEmpty ? [TimedTranscriptWord(text: segment.text, start: segment.start, end: segment.end)] : segment.words
         }
-        let from = t - 1.5
-        let spoken = words.filter { $0.end >= from && $0.start < (next ?? .infinity) - 0.25 }.map(\.text)
-        let text = spoken.joined(separator: " ").trimmingCharacters(in: .whitespaces)
-        return text.isEmpty ? nil : text
+        let boundaries = times.indices.map { index -> TimeInterval in
+            guard index > 0 else { return -.infinity }
+            return times[index] - min(1.5, (times[index] - times[index - 1]) / 2)
+        }
+        return times.indices.map { index in
+            let lower = boundaries[index]
+            let upper = index + 1 < boundaries.count ? boundaries[index + 1] : .infinity
+            let text = words.filter { $0.start >= lower && $0.start < upper }.map(\.text).joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            return text.isEmpty ? nil : text
+        }
     }
 
     static func keyframes(_ manifest: AnnotationManifest, sceneChanges: [AnnotationSceneSampler.Change]) -> [AnnotationKeyframe] {
         let chosen = select(candidates(manifest, sceneChanges: sceneChanges), duration: manifest.duration)
+        let narration = said(at: chosen.map(\.t), in: manifest.transcript)
         return chosen.enumerated().map { offset, candidate in
-            let next = offset + 1 < chosen.count ? chosen[offset + 1].t : nil
-            return AnnotationKeyframe(
+            AnnotationKeyframe(
                 index: offset + 1, t: candidate.t, reason: candidate.reason, event: candidate.event,
-                said: said(at: candidate.t, until: next, in: manifest.transcript),
+                said: narration[offset],
                 file: String(format: "frames/frame-%02d.png", offset + 1)
             )
         }

@@ -35,19 +35,49 @@ import XCTest
     func testLongQuietStretchesGetCoverageFrames() {
         let selected = AnnotationKeyframes.select([.init(t: 0.5, score: 30, reason: .initial)], duration: 100)
 
-        XCTAssertEqual(selected.map(\.reason), [.initial, .coverage, .coverage, .coverage])
-        XCTAssertTrue(zip(selected, selected.dropFirst()).allSatisfy { $1.t - $0.t <= AnnotationKeyframes.coverageGap })
+        // One frame in each of three 33 s stretches.
+        XCTAssertEqual(selected.map(\.reason), [.initial, .coverage, .coverage])
+        XCTAssertEqual(selected.map { Int($0.t / (100.0 / 3)) }, [0, 1, 2])
     }
 
-    func testEachKeyframeCarriesWhatWasSaidUntilTheNextOne() {
+    func testAnEarlyBurstLeavesRoomForTheRestOfALongAnnotation() {
+        let clicks = (1...10).map { AnnotationKeyframes.Candidate(t: Double($0) + 0.25, score: 60, reason: .click) }
+
+        let selected = AnnotationKeyframes.select(clicks, duration: 100)
+
+        XCTAssertEqual(selected.count, AnnotationKeyframes.budget(for: 100))
+        XCTAssertTrue(selected.contains { $0.t >= 35 && $0.t < 70 })
+        XCTAssertTrue(selected.contains { $0.t >= 70 })
+    }
+
+    func testAQuietMaximumLengthAnnotationIsCoveredEvenly() {
+        let selected = AnnotationKeyframes.select([.init(t: 0.5, score: 30, reason: .initial)], duration: 1_200)
+
+        XCTAssertEqual(selected.count, 12)
+        XCTAssertGreaterThan(selected.last?.t ?? 0, 1_100)
+        XCTAssertTrue(zip(selected, selected.dropFirst()).allSatisfy { $1.t - $0.t <= 150 })
+    }
+
+    func testEachWordIsSaidAtOneKeyframeOnly() {
         let transcript = [TimedTranscriptSegment(text: "", start: 0, end: 6, words: [
-            TimedTranscriptWord(text: "first", start: 1, end: 1.3), TimedTranscriptWord(text: "button", start: 1.4, end: 1.8),
-            TimedTranscriptWord(text: "then", start: 5, end: 5.2),
+            TimedTranscriptWord(text: "first", start: 1.6, end: 1.9), TimedTranscriptWord(text: "second", start: 2.6, end: 2.9),
+            TimedTranscriptWord(text: "later", start: 5, end: 5.2),
         ])]
 
-        XCTAssertEqual(AnnotationKeyframes.said(at: 1.2, until: 5, in: transcript), "first button")
-        XCTAssertEqual(AnnotationKeyframes.said(at: 5, until: nil, in: transcript), "then")
-        XCTAssertNil(AnnotationKeyframes.said(at: 20, until: nil, in: transcript))
+        let said = AnnotationKeyframes.said(at: [0.5, 2, 3], in: transcript)
+
+        // Frames 0.75 s and 0.5 s apart split the narration half-way: 1.25 s and 2.5 s.
+        XCTAssertEqual(said, [nil, "first", "second later"])
+        XCTAssertEqual(said.compactMap { $0 }.joined(separator: " ").split(separator: " ").count, 3)
+    }
+
+    func testSegmentsWithoutWordsAreAssignedOnceToo() {
+        let transcript = [
+            TimedTranscriptSegment(text: "open settings", start: 0.2, end: 1.5),
+            TimedTranscriptSegment(text: "this toggle", start: 4, end: 5),
+        ]
+
+        XCTAssertEqual(AnnotationKeyframes.said(at: [0.5, 4.5, 4.9], in: transcript), ["open settings", "this toggle", nil])
     }
 
     // MARK: - Scene changes
@@ -169,6 +199,78 @@ import XCTest
         XCTAssertTrue(summary.contains("- #2 (00:04) [clicked at x 0.50, y 0.50]"))
     }
 
+    func testABundleRemovedWhileFramesDecodeIsNotRecreatedOrHandedOff() async throws {
+        let fixture = try makeProcessing { store, id in
+            RemovingFrames(image: try self.solid(320, 200, gray: 0.5), remove: store.directory(for: id))
+        }
+
+        fixture.processor.process(fixture.id)
+        await fixture.processor.waitUntilIdle()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.store.directory(for: fixture.id).path))
+        XCTAssertTrue(fixture.copied.values.isEmpty)
+    }
+
+    func testFrameAndContactSheetWriteFailuresFailTheAnnotationWithoutAHandoff() async throws {
+        for blocked in ["frames", "contact-sheet.png"] {
+            let image = try solid(320, 200, gray: 0.5)
+            let fixture = try makeProcessing { _, _ in StillFrames(image: image) }
+            let path = fixture.store.directory(for: fixture.id).appendingPathComponent(blocked)
+            if blocked == "frames" {
+                FileManager.default.createFile(atPath: path.path, contents: Data())
+            } else {
+                try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false)
+            }
+
+            fixture.processor.process(fixture.id)
+            await fixture.processor.waitUntilIdle()
+
+            XCTAssertEqual(try fixture.store.load(id: fixture.id).status, .failed, blocked)
+            XCTAssertTrue(fixture.copied.values.isEmpty, blocked)
+        }
+    }
+
+    private final class Copies {
+        var values: [String] = []
+    }
+
+    private struct ProcessingFixture {
+        let processor: AnnotationProcessor
+        /// The processor holds the recorder weakly, as the app's shared instances outlive it.
+        let recorder: AnnotationRecorder
+        let store: AnnotationStore
+        let id: UUID
+        let copied: Copies
+    }
+
+    private func makeProcessing(
+        frames: @escaping (AnnotationStore, UUID) throws -> any AnnotationFrameSource
+    ) throws -> ProcessingFixture {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AnnotationKeyframeTests-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let store = AnnotationStore(rootURL: root, movesToTrash: false)
+        var manifest = AnnotationManifest()
+        manifest.duration = 12
+        manifest.status = .processing
+        try store.createDirectory(for: manifest.id)
+        try store.save(manifest)
+        var dependencies = AnnotationRecorder.Dependencies()
+        dependencies.store = store
+        let recorder = AnnotationRecorder(dependencies: dependencies)
+        let processor = AnnotationProcessor()
+        let copied = Copies()
+        let source = try frames(store, manifest.id)
+        processor.configure(
+            environment: .init(
+                chooseModel: { nil }, makeTranscriber: { _ in fatalError("no model") },
+                requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { copied.values.append($0) },
+                notify: { _ in }, frameSource: { _, _ in source }
+            ),
+            recorder: recorder
+        )
+        return ProcessingFixture(processor: processor, recorder: recorder, store: store, id: manifest.id, copied: copied)
+    }
+
     // MARK: - Fixtures
 
     private func solid(_ width: Int, _ height: Int, gray: CGFloat) throws -> CGImage {
@@ -238,4 +340,14 @@ import XCTest
 private struct StillFrames: AnnotationFrameSource {
     let image: CGImage
     func images(at times: [TimeInterval]) async throws -> [CGImage?] { times.map { _ in image } }
+}
+
+/// Removes the bundle while "decoding", as Finder could.
+private struct RemovingFrames: AnnotationFrameSource {
+    let image: CGImage
+    let remove: URL
+    func images(at times: [TimeInterval]) async throws -> [CGImage?] {
+        try? FileManager.default.removeItem(at: remove)
+        return times.map { _ in image }
+    }
 }
