@@ -5,9 +5,8 @@ import Foundation
 /// until no dictation owns them.
 ///
 /// Each dictation acquires ownership at capture start; the global release runs only when the last owner releases.
-/// Per-recording VAD leases stay with each preparation, and the VAD cache holds one lease, so a newer preparation
-/// takes it over. Idle unloading is separate: the residency holds no idle-unload lease, so it never keeps models
-/// alive against it.
+/// Per-recording VAD leases stay with each preparation; the VAD cache keeps its manager while any lease remains.
+/// Idle unloading is separate: the residency holds no idle-unload lease, so it never keeps models alive against it.
 @MainActor
 final class TranscriptionResidency {
     private let releaseResources: @MainActor () async -> Void

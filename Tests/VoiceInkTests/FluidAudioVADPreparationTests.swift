@@ -110,7 +110,7 @@ final class FluidAudioVADPreparationTests: XCTestCase {
         let old = Task { try await cache.prepare(recordingID: oldID, modelName: "old") }
         await loader.waitForLoads(1)
         let release = Task { await cache.release(recordingID: oldID) }
-        // A new identity invalidates the old generation independently of task cancellation.
+        // A model change invalidates the old generation independently of task cancellation.
         let new = Task { try await cache.prepare(recordingID: UUID(), modelName: "new") }
         await loader.waitForCancellations(1)
 
@@ -139,8 +139,208 @@ final class FluidAudioVADPreparationTests: XCTestCase {
         _ = try await cache.prepare(recordingID: newID, modelName: "ultra")
         let count = await loader.loadCount
 
-        XCTAssertEqual(count, 2)
+        XCTAssertEqual(count, 1)
         await cache.cleanup()
+    }
+
+    // MARK: - Several owners
+
+    func testFirstOwnerReleaseKeepsManagerForSecondOwnerUntilItReleases() async throws {
+        let lifetime = VADLifetimeFixture()
+        let loader = VADLoaderFixture(lifetime: lifetime)
+        let service = makeService(loader)
+        let first = UUID()
+        let second = UUID()
+        _ = try await service.prepareVAD(recordingID: first, model: model)
+        _ = try await service.prepareVAD(recordingID: second, model: model)
+
+        await service.releaseVADPreparation(recordingID: first)
+        let segments = try await service.detectedSpeechSegments(in: [0.1, 0.2])
+        let containsSpeech = try await service.containsSpeech(in: [0.1, 0.2])
+        let loadsWhileShared = await loader.loadCount
+        XCTAssertEqual(lifetime.liveCount, 1)
+
+        await service.releaseVADPreparation(recordingID: second)
+
+        XCTAssertEqual(segments?.map(\.startTime), [0.25, 1.5])
+        XCTAssertEqual(containsSpeech, true)
+        XCTAssertEqual(loadsWhileShared, 1)
+        XCTAssertEqual(lifetime.liveCount, 0)
+    }
+
+    func testInterleavedPreparationsAndReleasesFreeOnlyAfterLastOwner() async throws {
+        let lifetime = VADLifetimeFixture()
+        let loader = VADLoaderFixture(lifetime: lifetime)
+        let cache = makeCache(loader)
+        let (a, b, c) = (UUID(), UUID(), UUID())
+
+        _ = try await cache.prepare(recordingID: a, modelName: "ultra")
+        _ = try await cache.prepare(recordingID: b, modelName: "ultra")
+        await cache.release(recordingID: a)
+        _ = try await cache.prepare(recordingID: c, modelName: "ultra")
+        await cache.release(recordingID: b)
+        await cache.release(recordingID: a)
+        XCTAssertEqual(lifetime.liveCount, 1)
+        _ = try await cache.prepare(recordingID: a, modelName: "ultra")
+        await cache.release(recordingID: c)
+        XCTAssertEqual(lifetime.liveCount, 1)
+        await cache.release(recordingID: a)
+        XCTAssertEqual(lifetime.liveCount, 0)
+        _ = try await cache.prepare(recordingID: b, modelName: "ultra")
+        let count = await loader.loadCount
+
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(lifetime.liveCount, 1)
+        await cache.release(recordingID: b)
+        XCTAssertEqual(lifetime.liveCount, 0)
+    }
+
+    func testOwnersShareOneLoadInFlight() async throws {
+        let loader = VADLoaderFixture(delayedLoads: 1)
+        let cache = makeCache(loader)
+        let service = FluidAudioTranscriptionService(vadCache: cache)
+        let first = UUID()
+        let second = UUID()
+        let firstPreparation = Task { try await service.prepareVAD(recordingID: first, model: model) }
+        await loader.waitForLoads(1)
+        let secondPreparation = Task { try await service.prepareVAD(recordingID: second, model: model) }
+        await waitForLeases(2, in: cache)
+
+        await loader.finishNextLoad()
+        let firstReady = try await firstPreparation.value
+        let secondReady = try await secondPreparation.value
+        await service.releaseVADPreparation(recordingID: first)
+        let segments = try await service.detectedSpeechSegments(in: [0.1, 0.2])
+        let count = await loader.loadCount
+        let maxConcurrentLoads = await loader.maxConcurrentLoads
+
+        XCTAssertTrue(firstReady)
+        XCTAssertTrue(secondReady)
+        XCTAssertEqual(segments?.map(\.startTime), [0.25, 1.5])
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(maxConcurrentLoads, 1)
+        await service.releaseVADPreparation(recordingID: second)
+    }
+
+    func testOneOwnerCancellationKeepsSharedLoadForOtherOwner() async throws {
+        let lifetime = VADLifetimeFixture()
+        let loader = VADLoaderFixture(delayedLoads: 1, lifetime: lifetime)
+        let cache = makeCache(loader)
+        let canceled = UUID()
+        let kept = UUID()
+        let canceledPreparation = Task { try await cache.prepare(recordingID: canceled, modelName: "ultra") }
+        await loader.waitForLoads(1)
+        let keptPreparation = Task { try await cache.prepare(recordingID: kept, modelName: "ultra") }
+        await waitForLeases(2, in: cache)
+
+        canceledPreparation.cancel()
+        await loader.finishNextLoad()
+        await assertCanceled(canceledPreparation)
+        let ready = try await keptPreparation.value
+        _ = try await cache.manager()
+        let count = await loader.loadCount
+
+        XCTAssertTrue(ready)
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(lifetime.liveCount, 1)
+        await cache.release(recordingID: kept)
+        XCTAssertEqual(lifetime.liveCount, 0)
+    }
+
+    func testModelChangeInvalidatesEveryOwnerAndTheirReleasesBecomeHarmless() async throws {
+        let lifetime = VADLifetimeFixture()
+        let loader = VADLoaderFixture(lifetime: lifetime)
+        let cache = makeCache(loader)
+        let (a, b, c) = (UUID(), UUID(), UUID())
+        _ = try await cache.prepare(recordingID: a, modelName: "ultra")
+        _ = try await cache.prepare(recordingID: b, modelName: "ultra")
+
+        _ = try await cache.prepare(recordingID: c, modelName: "v3")
+        await cache.release(recordingID: a)
+        await cache.release(recordingID: b)
+        let count = await loader.loadCount
+        XCTAssertEqual(lifetime.liveCount, 1)
+
+        await cache.release(recordingID: c)
+
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(lifetime.liveCount, 0)
+    }
+
+    func testModelChangeRejectsEveryOwnerOfALoadInFlight() async throws {
+        let loader = VADLoaderFixture(delayedLoads: 1)
+        let cache = makeCache(loader)
+        let first = Task { try await cache.prepare(recordingID: UUID(), modelName: "ultra") }
+        await loader.waitForLoads(1)
+        let second = Task { try await cache.prepare(recordingID: UUID(), modelName: "ultra") }
+        await waitForLeases(2, in: cache)
+        let changed = Task { try await cache.prepare(recordingID: UUID(), modelName: "v3") }
+        await loader.waitForCancellations(1)
+
+        await loader.finishNextLoad()
+        await assertCanceled(first)
+        await assertCanceled(second)
+        let ready = try await changed.value
+        let maxConcurrentLoads = await loader.maxConcurrentLoads
+
+        XCTAssertTrue(ready)
+        XCTAssertEqual(maxConcurrentLoads, 1)
+        await cache.cleanup()
+    }
+
+    func testDisablingVADReleasesEveryOwner() async throws {
+        let lifetime = VADLifetimeFixture()
+        let setting = VADSettingFixture()
+        let loader = VADLoaderFixture(lifetime: lifetime)
+        let cache = FluidAudioVADCache(loader: { try await loader.load() }, isEnabled: { setting.isEnabled })
+        let (a, b) = (UUID(), UUID())
+        _ = try await cache.prepare(recordingID: a, modelName: "ultra")
+        _ = try await cache.prepare(recordingID: b, modelName: "ultra")
+
+        setting.setEnabled(false)
+        let disabled = try await cache.manager()
+        XCTAssertEqual(lifetime.liveCount, 0)
+        setting.setEnabled(true)
+        let c = UUID()
+        _ = try await cache.prepare(recordingID: c, modelName: "ultra")
+        await cache.release(recordingID: a)
+        await cache.release(recordingID: b)
+        let count = await loader.loadCount
+
+        XCTAssertNil(disabled)
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(lifetime.liveCount, 1)
+        await cache.release(recordingID: c)
+        XCTAssertEqual(lifetime.liveCount, 0)
+    }
+
+    func testCleanupWithSeveralOwnersAwaitsLoadAndReleasesManager() async throws {
+        let lifetime = VADLifetimeFixture()
+        let loader = VADLoaderFixture(delayedLoads: 1, lifetime: lifetime)
+        let cache = makeCache(loader)
+        let service = FluidAudioTranscriptionService(vadCache: cache)
+        let (a, b) = (UUID(), UUID())
+        let first = Task { try await service.prepareVAD(recordingID: a, model: model) }
+        await loader.waitForLoads(1)
+        let second = Task { try await service.prepareVAD(recordingID: b, model: model) }
+        await waitForLeases(2, in: cache)
+
+        let cleanup = Task { await service.cleanup() }
+        await loader.waitForCancellations(1)
+        await loader.finishNextLoad()
+        await cleanup.value
+        await assertCanceled(first)
+        await assertCanceled(second)
+        XCTAssertEqual(lifetime.liveCount, 0)
+        await service.releaseVADPreparation(recordingID: a)
+        _ = try await service.prepareVAD(recordingID: UUID(), model: model)
+        await service.releaseVADPreparation(recordingID: b)
+        let count = await loader.loadCount
+
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(lifetime.liveCount, 1)
+        await service.cleanup()
+        XCTAssertEqual(lifetime.liveCount, 0)
     }
 
     func testCanceledPreparationDoesNotRetainLoadedManager() async throws {
@@ -244,6 +444,12 @@ final class FluidAudioVADPreparationTests: XCTestCase {
         XCTAssertEqual(lifetime.liveCount, 0)
     }
 
+    private func waitForLeases(_ count: Int, in cache: FluidAudioVADCache) async {
+        while await cache.leaseCount < count {
+            await Task.yield()
+        }
+    }
+
     private func makeCache(_ loader: VADLoaderFixture) -> FluidAudioVADCache {
         FluidAudioVADCache(loader: { try await loader.load() }, isEnabled: { true })
     }
@@ -286,9 +492,15 @@ private final class LifetimeVAD: FluidAudioVADManaging {
         lifetime.changed(by: 1)
     }
     deinit { lifetime.changed(by: -1) }
-    func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment] { [] }
-    func segmentSpeech(_ samples: [Float], config: VadSegmentationConfig) async throws -> [VadSegment] { [] }
-    func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]] { [] }
+    func segmentSpeech(_ samples: [Float]) async throws -> [VadSegment] {
+        try await VADManagerFixture().segmentSpeech(samples)
+    }
+    func segmentSpeech(_ samples: [Float], config: VadSegmentationConfig) async throws -> [VadSegment] {
+        try await VADManagerFixture().segmentSpeech(samples, config: config)
+    }
+    func segmentSpeechAudio(_ samples: [Float]) async throws -> [[Float]] {
+        try await VADManagerFixture().segmentSpeechAudio(samples)
+    }
 }
 
 private struct VADManagerFixture: FluidAudioVADManaging {
@@ -312,6 +524,7 @@ private struct VADManagerFixture: FluidAudioVADManaging {
 private actor VADLoaderFixture {
     private let delayedLoads: Int
     private let manager: VADManagerFixture
+    private let lifetime: VADLifetimeFixture?
     private var fails: Bool
     private var pending: [CheckedContinuation<any FluidAudioVADManaging, Error>] = []
     private var waiting: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -321,10 +534,16 @@ private actor VADLoaderFixture {
     private(set) var loadCount = 0
     private(set) var maxConcurrentLoads = 0
 
-    init(delayedLoads: Int = 0, fails: Bool = false, manager: VADManagerFixture = VADManagerFixture()) {
+    init(delayedLoads: Int = 0, fails: Bool = false, manager: VADManagerFixture = VADManagerFixture(),
+         lifetime: VADLifetimeFixture? = nil) {
         self.delayedLoads = delayedLoads
         self.fails = fails
         self.manager = manager
+        self.lifetime = lifetime
+    }
+
+    private func makeManager() -> any FluidAudioVADManaging {
+        lifetime.map { LifetimeVAD(lifetime: $0) } ?? manager
     }
 
     func load() async throws -> any FluidAudioVADManaging {
@@ -344,7 +563,7 @@ private actor VADLoaderFixture {
         }
         resumeWaiters()
         if fails { throw VADFixtureError.unavailable }
-        return manager
+        return makeManager()
     }
 
     func waitForLoads(_ count: Int) async {
@@ -355,7 +574,7 @@ private actor VADLoaderFixture {
     func finishNextLoad() {
         let continuation = pending.removeFirst()
         if fails { continuation.resume(throwing: VADFixtureError.unavailable) }
-        else { continuation.resume(returning: manager) }
+        else { continuation.resume(returning: makeManager()) }
     }
 
     func setFailure(_ value: Bool) { fails = value }
