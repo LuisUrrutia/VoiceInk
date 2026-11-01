@@ -514,3 +514,146 @@ final class BrowserMediaPausingSettingsTests: XCTestCase {
         XCTAssertEqual(enabled.isPauseBrowserMediaEnabled, true)
     }
 }
+
+private final class FakeNowPlaying: NowPlayingMediaControlling {
+    var onStateReceived: ((NowPlayingState?) -> Void)?
+    var current: NowPlayingState?
+    private(set) var commands: [BrowserMediaCommand] = []
+    private(set) var isListening = false
+
+    func startListening() { isListening = true }
+    func stopListening() { isListening = false }
+    func play() { commands.append(.play) }
+    func pause() { commands.append(.pause) }
+    func fetchState(_ onReceive: @escaping (NowPlayingState?) -> Void) { onReceive(current) }
+
+    func report(_ bundleID: String, playing: Bool) {
+        current = NowPlayingState(bundleIdentifier: bundleID, isPlaying: playing)
+        onStateReceived?(current)
+    }
+}
+
+@MainActor
+final class PlaybackControllerOwnershipTests: XCTestCase {
+    private var suite = ""
+    private var defaults: UserDefaults!
+    private var nowPlaying: FakeNowPlaying!
+    private var browserCommands: RecordingCommands!
+    private var playPauseKeys = 0
+    private var delay = 0.0
+
+    override func setUp() async throws {
+        suite = "PlaybackControllerOwnershipTests.\(UUID())"
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set(true, forKey: "isPauseMediaEnabled")
+        defaults.set(true, forKey: PlaybackController.pauseBrowserMediaKey)
+        nowPlaying = FakeNowPlaying()
+        browserCommands = RecordingCommands()
+        playPauseKeys = 0
+        delay = 0
+    }
+
+    override func tearDown() async throws {
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    private func makeController(_ listeners: [ScriptedBrowserAudio]) -> (PlaybackController, ListenerQueue) {
+        let queue = ListenerQueue(listeners)
+        let pauser = BrowserMediaPauser(
+            permission: FixedPermission(state: .granted), commands: browserCommands, makeListener: { queue.next($0) }
+        )
+        let controller = PlaybackController(
+            mediaController: nowPlaying, browserMediaPauser: pauser, defaults: defaults,
+            sendPlayPauseKey: { [unowned self] in playPauseKeys += 1 },
+            isApplicationRunning: { _ in true },
+            resumptionDelay: { [unowned self] in delay }
+        )
+        return (controller, queue)
+    }
+
+    func testANowPlayingPauseNeverAlsoPausesTheBrowser() async {
+        let (controller, queue) = makeController([ScriptedBrowserAudio(playing + [-200, -200])])
+        nowPlaying.report("com.spotify.client", playing: true)
+        let session = controller.beginRecordingSession()
+
+        await controller.pauseMedia(sessionID: session)
+        nowPlaying.report("com.spotify.client", playing: false)
+        await controller.resumeMedia(sessionID: session)
+
+        XCTAssertEqual(nowPlaying.commands, [.pause])
+        XCTAssertEqual(playPauseKeys, 1, "the Now Playing restore keeps its play/pause key")
+        XCTAssertEqual(queue.requested, [], "the browser is not heard while a Now Playing pause is owned")
+        XCTAssertEqual(browserCommands.sent, [])
+    }
+
+    func testABrowserPauseSkipsTheNowPlayingPathAndResumesOnlyTheBrowser() async {
+        let (controller, queue) = makeController([
+            ScriptedBrowserAudio(playing + [-200, -200]), ScriptedBrowserAudio([-200, -25]),
+        ])
+        let first = controller.beginRecordingSession()
+        await controller.pauseMedia(sessionID: first)
+
+        // A second recording inherits the unresumed browser pause even though Spotify now plays.
+        nowPlaying.report("com.spotify.client", playing: true)
+        let second = controller.beginRecordingSession()
+        await controller.pauseMedia(sessionID: second)
+        await controller.resumeMedia(sessionID: first)
+        let ownedAfterStaleResume = browserCommands.sent
+        await controller.resumeMedia(sessionID: second)
+
+        XCTAssertEqual(ownedAfterStaleResume, [.pause], "an older session's resume does not play")
+        XCTAssertEqual(browserCommands.sent, [.pause, .play])
+        XCTAssertEqual(queue.requested, [.playing, .all])
+        XCTAssertEqual(nowPlaying.commands, [], "Spotify is never paused while the browser pause is owned")
+        XCTAssertEqual(playPauseKeys, 0)
+    }
+
+    func testBrowserResumeWaitsForResumeDelayAndCancellationKeepsThePause() async {
+        delay = 5
+        let (controller, queue) = makeController([
+            ScriptedBrowserAudio(playing + [-200, -200]), ScriptedBrowserAudio([-200, -25]),
+        ])
+        let session = controller.beginRecordingSession()
+        await controller.pauseMedia(sessionID: session)
+
+        let restore = Task { await controller.resumeMedia(sessionID: session) }
+        try? await Task.sleep(for: .milliseconds(50))
+        restore.cancel()
+        await restore.value
+        let afterCanceledDelay = browserCommands.sent
+        delay = 0
+        await controller.resumeMedia(sessionID: session)
+
+        XCTAssertEqual(afterCanceledDelay, [.pause], "no play during Resume Delay or after its cancellation")
+        XCTAssertEqual(browserCommands.sent, [.pause, .play])
+        XCTAssertEqual(queue.requested, [.playing, .all])
+    }
+
+    func testBrowserStepNeedsBothSettings() async {
+        for (pauseMedia, browser) in [(true, false), (false, true)] {
+            defaults.set(pauseMedia, forKey: "isPauseMediaEnabled")
+            defaults.set(browser, forKey: PlaybackController.pauseBrowserMediaKey)
+            browserCommands = RecordingCommands()
+            let (controller, queue) = makeController([ScriptedBrowserAudio(playing + [-200, -200])])
+            let session = controller.beginRecordingSession()
+
+            await controller.pauseMedia(sessionID: session)
+
+            XCTAssertEqual(queue.requested, [], "pause media \(pauseMedia), browser \(browser)")
+            XCTAssertEqual(browserCommands.sent, [])
+        }
+    }
+
+    func testTurningTheBrowserSettingOffForgetsItsPauseWithoutPlaying() async {
+        let (controller, queue) = makeController([ScriptedBrowserAudio(playing + [-200, -200])])
+        let session = controller.beginRecordingSession()
+        await controller.pauseMedia(sessionID: session)
+
+        controller.isPauseBrowserMediaEnabled = false
+        await controller.resumeMedia(sessionID: session)
+
+        XCTAssertEqual(browserCommands.sent, [.pause])
+        XCTAssertEqual(queue.requested, [.playing])
+        XCTAssertEqual(defaults.object(forKey: PlaybackController.pauseBrowserMediaKey) as? Bool, false)
+    }
+}
