@@ -22,7 +22,6 @@ class ActiveWindowService: ObservableObject {
     private let apply: (ModeConfig) -> Void
     private let currentURL: (BrowserType) async throws -> String
     private var selectionID = UUID()
-    private var pendingLookup: Task<Void, Never>?
 
     private let logger = Logger(
         subsystem: "com.prakashjoshipax.voiceink",
@@ -48,24 +47,24 @@ class ActiveWindowService: ObservableObject {
         self.currentURL = currentURL
     }
 
+    /// Applies the recording's mode and returns it to the recording; nil means no decision.
+    /// A later request never cancels an earlier lookup, but only the newest one updates the global mode.
     @discardableResult
     func beginApplyingConfiguration(
         modeId: UUID? = nil,
         shouldApply: @escaping @MainActor () -> Bool = { true }
-    ) -> Task<Void, Never> {
-        guard shouldApply() else { return Task {} }
-        pendingLookup?.cancel()
-        pendingLookup = nil
+    ) -> Task<UUID?, Never> {
+        guard shouldApply() else { return Task { nil } }
         selectionID = UUID()
         let selectionID = selectionID
         let configurations = configurations()
 
         if let modeId, let config = configurations.first(where: { $0.id == modeId }) {
             apply(config)
-            return Task {}
+            return Task { config.id }
         }
 
-        guard let application = frontmostApplication() else { return Task {} }
+        guard let application = frontmostApplication() else { return Task { nil } }
         currentApplication = application.runningApplication
         let bundleIdentifier = application.bundleIdentifier
         let enabledConfigurations = configurations.filter(\.isEnabled)
@@ -73,38 +72,38 @@ class ActiveWindowService: ObservableObject {
             $0.allAppConfigs.contains { $0.bundleIdentifier == bundleIdentifier }
         } ?? enabledConfigurations.first(where: \.isDefault)
         if let quickConfig { apply(quickConfig) }
+        let fallbackID = quickConfig?.id
 
         let rules = Self.urlRules(in: configurations)
         guard !rules.isEmpty,
             let browser = BrowserType.allCases.first(where: { $0.bundleIdentifier == bundleIdentifier })
-        else { return Task {} }
+        else { return Task { fallbackID } }
 
-        let task = Task { [weak self] in
-            guard let self else { return }
-            defer { if self.selectionID == selectionID { self.pendingLookup = nil } }
+        return Task { [weak self] in
+            guard let self else { return fallbackID }
             do {
                 try Task.checkCancellation()
                 let url = try await self.currentURL(browser)
                 try Task.checkCancellation()
                 // Recorder focus changes do not replace the recording's original application.
-                guard self.selectionID == selectionID, shouldApply(),
+                guard shouldApply(),
                     application.runningApplication?.isTerminated != true,
                     Self.urlRules(in: self.configurations()) == rules,
                     let config = self.configuration(for: url, rules: rules)
-                else { return }
-                self.apply(config)
+                else { return fallbackID }
+                if self.selectionID == selectionID { self.apply(config) }
+                return config.id
             } catch is CancellationError {
-                return
+                return fallbackID
             } catch {
                 self.logger.error("Browser URL lookup failed for \(browser.displayName, privacy: .public)")
+                return fallbackID
             }
         }
-        pendingLookup = task
-        return task
     }
 
     func applyConfiguration(modeId: UUID? = nil) async {
-        await beginApplyingConfiguration(modeId: modeId).value
+        _ = await beginApplyingConfiguration(modeId: modeId).value
     }
 
     private static func urlRules(in configurations: [ModeConfig]) -> [URLRules] {

@@ -27,9 +27,10 @@ final class RecordingFinalizationTests: XCTestCase {
                     modeEntered.fulfill()
                 }
             } onCancel: { modeCanceled.fulfill() }
+            return nil
         })
         preparation.start(
-            resolveConfiguration: { nil }, retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
+            resolveConfiguration: { _ in nil }, retireAutoLearn: {}, prepareModel: { _ in }, prepareSession: { _ in nil }
         )
         engine.activeRecordingPreparation = preparation
         engine.recordedFile = url
