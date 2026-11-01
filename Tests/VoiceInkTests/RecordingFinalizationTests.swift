@@ -89,7 +89,7 @@ final class RecordingFinalizationTests: XCTestCase {
         let url = directory.appendingPathComponent("recording.wav")
         let hardware = try HeldRecordingHardware(url: url)
         defer { hardware.releaseStop() }
-        let recorder = Recorder(hardware: hardware)
+        let recorder = Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         let chunks = OSAllocatedUnfairLock(initialState: [Data]())
         recorder.onAudioChunk = { data in chunks.withLock { $0.append(data) } }
         var didStop = false
@@ -115,7 +115,7 @@ final class RecordingFinalizationTests: XCTestCase {
     func testOverlappingStopsWaitForOneHardwareCloseDespiteTaskCancellation() async throws {
         let hardware = try HeldRecordingHardware()
         defer { hardware.releaseStop() }
-        let recorder = Recorder(hardware: hardware)
+        let recorder = Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         let secondEntered = expectation(description: "second stop caller")
         var finishedStops = 0
         let first = Task {
@@ -146,7 +146,7 @@ final class RecordingFinalizationTests: XCTestCase {
     func testCancelledRestartWaitsForCloseWithoutStartingHardware() async throws {
         let hardware = try HeldRecordingHardware()
         defer { hardware.releaseStop() }
-        let recorder = Recorder(hardware: hardware)
+        let recorder = Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         let restartEntered = expectation(description: "restart caller")
         var didRestart = false
         let stop = Task { await recorder.stopRecording() }
@@ -329,7 +329,7 @@ final class RecordingFinalizationTests: XCTestCase {
         )
         return VoiceInkEngine(
             modelContext: ModelContext(container), whisperModelManager: whisper,
-            transcriptionModelManager: models, recorder: Recorder(hardware: hardware)
+            transcriptionModelManager: models, recorder: Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         )
     }
 

@@ -54,6 +54,8 @@ class AudioDeviceManager: ObservableObject {
     @Published private(set) var avoidsBluetoothDefaultMicrophone: Bool
     private var workspaceObservers: [NSObjectProtocol] = []
     private var eligiblePreferredMicrophones = Set<String>()
+    /// Set only while `resolveCurrentRecordingDevice(using:)` runs, so resolution reads no CoreAudio property.
+    private(set) var prefetchedRoutingProperties: RecordingDeviceProperties?
 
     @Published var recordingDeviceSession = RecordingDeviceSession()
     var clamshellStateMonitor: ClamshellStateMonitor?
@@ -117,6 +119,14 @@ class AudioDeviceManager: ObservableObject {
             return nil
         }
         return deviceID
+    }
+
+    /// Resolves from `properties`, fetched for the current `availableDevices`, without querying CoreAudio.
+    func resolveCurrentRecordingDevice(using properties: RecordingDeviceProperties) -> RecordingDeviceResolution {
+        let previous = prefetchedRoutingProperties
+        prefetchedRoutingProperties = properties
+        defer { prefetchedRoutingProperties = previous }
+        return resolveCurrentRecordingDevice()
     }
 
     func getSystemDefaultDeviceName() -> String? {
@@ -571,7 +581,7 @@ class AudioDeviceManager: ObservableObject {
             return found
         }
         if let modelUID, !modelUID.isEmpty,
-            let found = availableDevices.first(where: { getDeviceModelUID(deviceID: $0.id) == modelUID })
+            let found = availableDevices.first(where: { routingModelUID($0.id) == modelUID })
         {
             return found
         }

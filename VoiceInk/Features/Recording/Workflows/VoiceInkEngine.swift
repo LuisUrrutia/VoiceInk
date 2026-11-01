@@ -34,8 +34,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return self.recordingState == .idle && !self.finalization.isRunning
         },
         captureIssue: { [weak self] in
-            self?.captureReadiness.refreshSnapshot()
-            return self?.captureReadiness.snapshot.issues(for: .microphoneTest).first
+            self?.captureReadiness.currentSnapshot().issues(for: .microphoneTest).first
         }
     )
     private(set) var capture: DictationCapture? {
@@ -650,8 +649,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     /// Checks requirements that do not depend on asynchronous app and URL mode resolution.
     @MainActor
     private func passesRecordingPreflight(delivery: RecordingDeliverySession) async -> Bool {
-        captureReadiness.refreshSnapshot()
-        if let issue = captureReadiness.snapshot.issues(for: .microphoneTest).first {
+        if let issue = await captureReadiness.refreshedSnapshot().issues(for: .microphoneTest).first {
             await failRecordingPreflight(
                 title: issue.message,
                 actionLabel: String(localized: "Audio Settings"),

@@ -3,6 +3,7 @@ import AppKit
 import Combine
 import CoreAudio
 import SwiftData
+import os
 @testable import VoiceInk
 
 @MainActor
@@ -148,6 +149,95 @@ final class CaptureReadinessTests: XCTestCase {
         XCTAssertEqual(engine.recordingState, .idle)
     }
 
+    func testSlowDeviceQueryLeavesTheMainActorResponsive() async throws {
+        let devices = SlowQueryAudioDevices()
+        devices.lidClosed = true
+        devices.hold()
+        defer { devices.release() }
+        let readiness = makeReadiness(devices: devices)
+
+        await fulfillment(of: [devices.queryEntered], timeout: 3)
+        let mainActorTurn = expectation(description: "main actor ran while the device query was held")
+        Task { @MainActor in mainActorTurn.fulfill() }
+        await fulfillment(of: [mainActorTurn], timeout: 1)
+
+        XCTAssertFalse(devices.queriedOnMainThread)
+        XCTAssertTrue(readiness.snapshot.hasMicrophone, "the previous resolution stands until the query returns")
+        let published = expectation(description: "closed-lid resolution published")
+        let subscription = readiness.$snapshot.first { !$0.hasMicrophone }.sink { _ in published.fulfill() }
+        defer { subscription.cancel() }
+        devices.release()
+        await fulfillment(of: [published], timeout: 3)
+        XCTAssertEqual(readiness.snapshot.issues(for: .microphoneTest), [.microphoneUnavailable])
+    }
+
+    func testDeviceChangeBurstCoalescesIntoOneFurtherPass() async throws {
+        let devices = SlowQueryAudioDevices()
+        defer { devices.release() }
+        let models = makeModels()
+        let readiness = CaptureReadinessController(models: models, devices: devices, permissionReader: { (.granted, true) })
+        // Model scans finishing later would request passes of their own.
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !models.hasLoadedInstallationSnapshot || models.configuredCloudProviderKeys == nil {
+            guard ContinuousClock.now < deadline else { return XCTFail("Model state did not load") }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        _ = await readiness.refreshedSnapshot()
+        devices.hold()
+        let queriesBefore = devices.queryCount
+        readiness.refreshSnapshot()
+        await fulfillment(of: [devices.queryEntered], timeout: 3)
+
+        for _ in 0..<20 {
+            NotificationCenter.default.post(name: Notification.Name("AudioDeviceChanged"), object: nil)
+            devices.objectWillChange.send()
+            readiness.refreshSnapshot()
+        }
+        await drainMainActor()
+        devices.release()
+        _ = await readiness.refreshedSnapshot()
+
+        XCTAssertEqual(devices.queryCount - queriesBefore, 2)
+    }
+
+    func testControllerReleasesItsObserversWithItsOwnerDuringAQuery() async throws {
+        let devices = SlowQueryAudioDevices()
+        devices.hold()
+        defer { devices.release() }
+        weak var released: CaptureReadinessController?
+        do {
+            let readiness = makeReadiness(devices: devices)
+            released = readiness
+            await fulfillment(of: [devices.queryEntered], timeout: 3)
+        }
+
+        XCTAssertNil(released)
+        devices.release()
+        await drainMainActor()
+        let queriesAfterRelease = devices.queryCount
+        NotificationCenter.default.post(name: Notification.Name("AudioDeviceChanged"), object: nil)
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        devices.objectWillChange.send()
+        await drainMainActor()
+        XCTAssertEqual(devices.queryCount, queriesAfterRelease)
+    }
+
+    private func makeReadiness(devices: AudioDeviceManager) -> CaptureReadinessController {
+        CaptureReadinessController(models: makeModels(), devices: devices, permissionReader: { (.granted, true) })
+    }
+
+    private func makeModels() -> TranscriptionModelManager {
+        let whisper = WhisperModelManager(
+            modelsDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        )
+        return TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
+    }
+
+    /// Lets notification deliveries and the tasks they schedule on the main actor run.
+    private func drainMainActor() async {
+        for _ in 0..<20 { await Task.yield() }
+    }
+
     private func snapshot(permission: CapturePermission = .granted) -> CaptureReadiness {
         CaptureReadiness(
             microphonePermission: permission, hasMicrophone: true, accessibilityGranted: true,
@@ -175,6 +265,65 @@ private final class ReadinessAudioDevices: AudioDeviceManager {
     override func getSystemDefaultDevice() -> AudioDeviceID? { 91 }
     override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
     override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { false }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .other }
+}
+
+/// An internal microphone whose default-input query can be held, standing in for a stalled coreaudiod.
+private final class SlowQueryAudioDevices: AudioDeviceManager {
+    private struct State {
+        var isHeld = false
+        var queryCount = 0
+        var queriedOnMainThread = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let gate = DispatchSemaphore(value: 0)
+    let queryEntered: XCTestExpectation = {
+        let expectation = XCTestExpectation(description: "held device query entered")
+        expectation.assertForOverFulfill = false
+        return expectation
+    }()
+    var lidClosed = false
+
+    var queryCount: Int { state.withLock { $0.queryCount } }
+    var queriedOnMainThread: Bool { state.withLock { $0.queriedOnMainThread } }
+
+    init() {
+        super.init(userDefaults: UserDefaults(suiteName: "SlowQueryAudioDevices")!, notificationCenter: NotificationCenter())
+    }
+
+    override var isClamshellClosed: Bool { lidClosed }
+    override func startMonitoring() {}
+    override func loadAvailableDevices(completion: (() -> Void)? = nil) {
+        availableDevices = [(id: 91, uid: "slow-mic", name: "Slow microphone")]
+        completion?()
+    }
+    override func getSystemDefaultDevice() -> AudioDeviceID? {
+        let isHeld = state.withLock { state in
+            state.queryCount += 1
+            if state.isHeld && Thread.isMainThread { state.queriedOnMainThread = true }
+            return state.isHeld
+        }
+        if isHeld {
+            queryEntered.fulfill()
+            // Bounded so that a query on the main thread fails the test instead of hanging it.
+            _ = gate.wait(timeout: .now() + 2)
+        }
+        return 91
+    }
+    override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
+    override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { true }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .builtIn }
+
+    func hold() { state.withLock { $0.isHeld = true } }
+
+    func release() {
+        let wasHeld = state.withLock { state in
+            defer { state.isHeld = false }
+            return state.isHeld
+        }
+        if wasHeld { gate.signal() }
+    }
 }
 
 private final class ReadinessAudioHardware: RecordingHardware, @unchecked Sendable {

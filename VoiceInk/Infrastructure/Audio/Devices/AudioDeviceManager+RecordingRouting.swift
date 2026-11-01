@@ -7,6 +7,15 @@ struct RecordingDeviceResolution {
     let internalMicrophoneBlockedByClosedLid: Bool
 }
 
+/// The CoreAudio properties that recording-device resolution reads, queried together for `deviceIDs`.
+struct RecordingDeviceProperties: Sendable {
+    let deviceIDs: [AudioDeviceID]
+    let systemDefaultDeviceID: AudioDeviceID?
+    let transports: [AudioDeviceID: AudioInputTransport]
+    let internalMicrophoneIDs: Set<AudioDeviceID>
+    let modelUIDs: [AudioDeviceID: String]
+}
+
 struct RecordingDeviceSession {
     var isActive = false
     var activeDeviceID: AudioDeviceID?
@@ -59,7 +68,7 @@ extension AudioDeviceManager {
         let preferredCandidates = preferredRecordingDeviceIDs()
         let preferredAvailableDevice = preferredCandidates.first(where: isOperationalInputDevice)
         let internalMicrophoneBlockedByClosedLid = isClamshellClosed
-            && preferredAvailableDevice.map(isInternalMicrophone) == true
+            && preferredAvailableDevice.map(routingIsInternalMicrophone) == true
 
         var seen = Set<AudioDeviceID>()
         let candidates = (preferredCandidates + fallbackRecordingDeviceIDs()).filter { deviceID in
@@ -72,6 +81,44 @@ extension AudioDeviceManager {
             deviceID: resolvedDeviceID,
             internalMicrophoneBlockedByClosedLid: internalMicrophoneBlockedByClosedLid
         )
+    }
+
+    /// Each query is a synchronous call into coreaudiod that can take hundreds of milliseconds under load, so
+    /// capture readiness fetches off the main thread; overrides of the queried methods must be thread-safe.
+    func fetchRecordingDeviceProperties(for deviceIDs: [AudioDeviceID]) -> RecordingDeviceProperties {
+        RecordingDeviceProperties(
+            deviceIDs: deviceIDs,
+            systemDefaultDeviceID: getSystemDefaultDevice(),
+            transports: Dictionary(deviceIDs.map { ($0, inputTransport($0)) }, uniquingKeysWith: { first, _ in first }),
+            internalMicrophoneIDs: Set(deviceIDs.filter(isInternalMicrophone)),
+            modelUIDs: Dictionary(
+                deviceIDs.compactMap { id in getDeviceModelUID(deviceID: id).map { (id, $0) } },
+                uniquingKeysWith: { first, _ in first }
+            )
+        )
+    }
+
+    func routingSystemDefaultDevice() -> AudioDeviceID? {
+        guard let properties = prefetchedRoutingProperties else { return getSystemDefaultDevice() }
+        return properties.systemDefaultDeviceID
+    }
+
+    func routingTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport {
+        prefetchedRoutingProperties?.transports[deviceID] ?? inputTransport(deviceID)
+    }
+
+    func routingIsInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool {
+        guard let properties = prefetchedRoutingProperties, properties.deviceIDs.contains(deviceID) else {
+            return isInternalMicrophone(deviceID)
+        }
+        return properties.internalMicrophoneIDs.contains(deviceID)
+    }
+
+    func routingModelUID(_ deviceID: AudioDeviceID) -> String? {
+        guard let properties = prefetchedRoutingProperties, properties.deviceIDs.contains(deviceID) else {
+            return getDeviceModelUID(deviceID: deviceID)
+        }
+        return properties.modelUIDs[deviceID]
     }
 
     func getCurrentDevice() -> AudioDeviceID {
@@ -89,7 +136,7 @@ extension AudioDeviceManager {
 
     func isPhysicalInputUsable(_ deviceID: AudioDeviceID) -> Bool {
         isOperationalInputDevice(deviceID)
-            && !(isClamshellClosed && isInternalMicrophone(deviceID))
+            && !(isClamshellClosed && routingIsInternalMicrophone(deviceID))
     }
 
     private func preferredRecordingDeviceIDs() -> [AudioDeviceID] {
@@ -103,7 +150,7 @@ extension AudioDeviceManager {
     func automaticRecordingDeviceIDs() -> [AudioDeviceID] {
         switch inputMode {
         case .systemDefault:
-            guard let defaultDeviceID = getSystemDefaultDevice() else { return [] }
+            guard let defaultDeviceID = routingSystemDefaultDevice() else { return [] }
             return bluetoothDefaultStandInIDs(for: defaultDeviceID) + [defaultDeviceID]
         case .custom:
             let savedUID = userDefaults.selectedAudioDeviceUID ?? ""
@@ -120,7 +167,7 @@ extension AudioDeviceManager {
     /// that keeps a temporary selection.
     func preferredMicrophoneIDs() -> [AudioDeviceID] {
         guard inputMode == .systemDefault else { return automaticRecordingDeviceIDs() }
-        return getSystemDefaultDevice().map { [$0] } ?? []
+        return routingSystemDefaultDevice().map { [$0] } ?? []
     }
 
     var bluetoothDefaultSubstitution: BluetoothMicrophoneSubstitution? {
@@ -140,7 +187,7 @@ extension AudioDeviceManager {
     /// last automatic candidate, so it is kept when no stand-in is usable.
     private func bluetoothDefaultStandInIDs(for defaultDeviceID: AudioDeviceID) -> [AudioDeviceID] {
         guard avoidsBluetoothDefaultMicrophone, isOperationalInputDevice(defaultDeviceID),
-            inputTransport(defaultDeviceID) == .bluetooth
+            routingTransport(defaultDeviceID) == .bluetooth
         else { return [] }
         return rankedFallbackDevices().filter {
             $0.rank <= .otherInput && isDeviceUsableForRecording($0.id)
@@ -154,11 +201,11 @@ extension AudioDeviceManager {
     }
 
     private func fallbackRank(_ deviceID: AudioDeviceID) -> FallbackRank {
-        if isInternalMicrophone(deviceID) {
+        if routingIsInternalMicrophone(deviceID) {
             return isClamshellClosed ? .closedLidInternalMicrophone : .internalMicrophone
         }
         guard avoidsBluetoothDefaultMicrophone else { return .otherInput }
-        switch inputTransport(deviceID) {
+        switch routingTransport(deviceID) {
         case .bluetooth: return .bluetooth
         case .virtual: return hasMicrophoneRequirements(deviceID) ? .otherInput : .unconfiguredVirtual
         case .builtIn, .other: return .otherInput

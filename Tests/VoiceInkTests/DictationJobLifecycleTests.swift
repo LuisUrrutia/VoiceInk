@@ -267,7 +267,7 @@ final class DictationJobLifecycleTests: XCTestCase {
         )
         let whisper = WhisperModelManager(modelsDirectory: directory)
         let models = TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
-        let recorder = Recorder(hardware: hardware)
+        let recorder = Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         let readiness = CaptureReadinessController(
             models: models, devices: recorder.deviceManager, permissionReader: { (.denied, false) }
         )

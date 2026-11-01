@@ -899,6 +899,7 @@ private final class IdleUnloadAudioDevices: AudioDeviceManager {
     override func getSystemDefaultDevice() -> AudioDeviceID? { 93 }
     override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
     override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { false }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .other }
 }
 
 /// Holds its start until released, then fails it, so the recording's session ends without a pipeline.

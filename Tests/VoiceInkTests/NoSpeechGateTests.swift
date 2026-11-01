@@ -671,7 +671,7 @@ final class NoSpeechGateTests: XCTestCase {
             recorder: Recorder(hardware: try FixtureRecordingHardware(
                 url: url, samples: samples,
                 preRollStartNanoseconds: preRollNanoseconds.map { timing.originNanoseconds - $0 }
-            )),
+            ), deviceManager: FixedInputAudioDevices()),
             speechDetector: detector, isNoSpeechGateEnabled: { isGateEnabled },
             startSoundPlayback: { startSoundSource.playback }
         )
