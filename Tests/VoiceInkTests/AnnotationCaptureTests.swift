@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import IOKit.pwr_mgt
 import SwiftData
 import XCTest
@@ -605,6 +606,7 @@ private final class AnnotationClock: @unchecked Sendable {
 
 @MainActor
 private final class FakeScreenRecording: ScreenRecording {
+    var onFrame: ((CMSampleBuffer) -> Void)?
     var url: URL?
     var startCount = 0
     var stopCount = 0
