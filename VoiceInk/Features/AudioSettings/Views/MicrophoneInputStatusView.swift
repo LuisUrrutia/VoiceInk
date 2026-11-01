@@ -62,12 +62,16 @@ private struct MicrophoneLevelBars: View {
         }
         .frame(width: 13, height: 18)
         .animation(animates ? .easeOut(duration: 0.08) : nil, value: display.step)
+        // A plain element has no AX role, so macOS drops its value; a level indicator keeps it.
+        .accessibilityRepresentation {
+            ProgressView(value: Double(display.step), total: Double(MicrophoneLevelMeter.steps)) {
+                Text("Input level")
+            }
+            .accessibilityValue(accessibilityValue)
+        }
         .help(
             "Shows the input level while VoiceInk records, tests the microphone or keeps it ready. Opening this page never turns the microphone on."
         )
-        .accessibilityElement()
-        .accessibilityLabel("Input level")
-        .accessibilityValue(accessibilityValue)
     }
 
     private func barStyle(level: CGFloat) -> HierarchicalShapeStyle {
