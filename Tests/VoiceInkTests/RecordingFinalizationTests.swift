@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import CoreAudio
 import SwiftData
 import XCTest
@@ -95,6 +96,9 @@ final class RecordingFinalizationTests: XCTestCase {
         XCTAssertTrue(engine.hasUnfinishedDictationWork)
         XCTAssertFalse(engine.relauncher.canRelaunch)
 
+        var finalizingChanges: [Bool] = []
+        let finalizingObserver = engine.$isFinalizing.dropFirst().sink { finalizingChanges.append($0) }
+        defer { finalizingObserver.cancel() }
         let cancel = Task { await engine.cancelRecording() }
         modeCompletion?.resume()
         await cancel.value
@@ -105,6 +109,10 @@ final class RecordingFinalizationTests: XCTestCase {
         XCTAssertNotEqual(entries.first?.transcriptionStatus, TranscriptionStatus.pending.rawValue)
         XCTAssertEqual(engine.unfinishedPipelineCount, 0)
         XCTAssertFalse(engine.hasUnfinishedDictationWork)
+        // Restart reads the barrier, so its end must be published for the button to re-enable.
+        XCTAssertTrue(finalizingChanges.contains(true))
+        XCTAssertEqual(finalizingChanges.last, false)
+        XCTAssertFalse(engine.isFinalizing)
     }
 
     func testCaptureFailureIsRetainedAfterAwaitedStopAndDoesNotEnterTranscription() async throws {

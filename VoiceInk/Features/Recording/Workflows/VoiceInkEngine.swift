@@ -26,6 +26,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published private(set) var recordingNotice: String?
     /// Stops still running their pipeline; Cancel makes the state idle before a canceled pipeline saves History.
     @Published private(set) var unfinishedPipelineCount = 0
+    /// Mirrors the capture and job barriers so views gated on them, such as Restart, refresh when cleanup ends.
+    @Published private(set) var isFinalizing = false
     private var recordingNoticeTask: Task<Void, Never>?
     let captureReadiness: CaptureReadinessController
     private var readinessSubscription: AnyCancellable?
@@ -138,6 +140,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         self.startSoundPlayback = startSoundPlayback
 
         super.init()
+        finalization.onRunningChange = { [weak self] in self?.isFinalizing = $0 }
         outputQueue.isCaptureActive = { [weak self] in
             guard let self else { return false }
             return self.isStoppingCaptureHardware || (self.capture.map { $0.phase != .idle } ?? false)
