@@ -12,6 +12,26 @@ protocol AnnotationInputCapturing: AnyObject {
     func stop() -> (strokes: [AnnotationStroke], events: [AnnotationEvent], displaySize: CGSize)
 }
 
+/// Adds and removes NSEvent monitors; a seam so tests can deliver events.
+@MainActor
+protocol AnnotationEventMonitoring {
+    func addGlobal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> Void) -> Any?
+    func addLocal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> NSEvent?) -> Any?
+    func remove(_ monitor: Any)
+}
+
+struct SystemEventMonitoring: AnnotationEventMonitoring {
+    func addGlobal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> Void) -> Any? {
+        NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler)
+    }
+
+    func addLocal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> NSEvent?) -> Any? {
+        NSEvent.addLocalMonitorForEvents(matching: mask, handler: handler)
+    }
+
+    func remove(_ monitor: Any) { NSEvent.removeMonitor(monitor) }
+}
+
 /// A transparent overlay on the recorded display draws ink while the pen is on or Shift alone is held, as in Hex.
 /// VoiceInk's windows are excluded from the recording, so ink never appears in the movie; keyframes draw it
 /// later. Clicks and scrolls elsewhere are logged with their positions; keystrokes are not.
@@ -19,9 +39,14 @@ protocol AnnotationInputCapturing: AnyObject {
 final class AnnotationInputCapture: AnnotationInputCapturing {
     /// Scrolls are logged at most this often.
     static let scrollInterval: TimeInterval = 0.5
+    /// Above application windows; the annotation capsule sits above this, so its controls stay reachable.
+    static let overlayLevel = NSWindow.Level.statusBar
+
+    private let monitoring: any AnnotationEventMonitoring
+    private let displayFrame: (CGDirectDisplayID) -> CGRect?
 
     private var panel: NSPanel?
-    private var ink: InkView?
+    private(set) var ink: InkView?
     private var monitors: [Any] = []
     private var frame: CGRect = .zero
     private var startNanoseconds: UInt64 = 0
@@ -29,12 +54,24 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
     private var lastScroll: TimeInterval = -.infinity
     private(set) var isPenEnabled = false
     private var isShiftHeld = false
+    /// Whether the overlay currently catches the pointer to draw.
+    var isTakingPointer: Bool { isPenEnabled || isShiftHeld }
+
+    init(
+        monitoring: (any AnnotationEventMonitoring)? = nil,
+        displayFrame: @escaping (CGDirectDisplayID) -> CGRect? = { id in
+            NSScreen.screens.first {
+                $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID == id
+            }?.frame
+        }
+    ) {
+        self.monitoring = monitoring ?? SystemEventMonitoring()
+        self.displayFrame = displayFrame
+    }
 
     func start(displayID: CGDirectDisplayID, startNanoseconds: UInt64) {
-        guard let screen = NSScreen.screens.first(where: {
-            $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID == displayID
-        }) else { return }
-        frame = screen.frame
+        guard let displayFrame = displayFrame(displayID) else { return }
+        frame = displayFrame
         self.startNanoseconds = startNanoseconds
         let ink = InkView(frame: CGRect(origin: .zero, size: frame.size))
         ink.time = { [weak self] in self?.now() ?? 0 }
@@ -44,7 +81,7 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .screenSaver
+        panel.level = Self.overlayLevel
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.setFrame(frame, display: false)
@@ -53,10 +90,10 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
         self.ink = ink
 
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .scrollWheel, .flagsChanged]
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
+        if let global = monitoring.addGlobal(mask, { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
         }) { monitors.append(global) }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged], handler: { [weak self] event in
+        if let local = monitoring.addLocal([.flagsChanged], { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
             return event
         }) { monitors.append(local) }
@@ -68,8 +105,10 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
     }
 
     func stop() -> (strokes: [AnnotationStroke], events: [AnnotationEvent], displaySize: CGSize) {
-        monitors.forEach(NSEvent.removeMonitor)
+        monitors.forEach(monitoring.remove)
         monitors = []
+        // A stroke still being drawn when Stop arrives is kept as drawn so far.
+        ink?.finishCurrentStroke()
         let strokes = ink?.finishedStrokes ?? []
         panel?.close()
         panel = nil
@@ -81,14 +120,18 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
         Double(Int64(bitPattern: DispatchTime.now().uptimeNanoseconds &- startNanoseconds)) / 1_000_000_000
     }
 
-    private func handle(_ event: NSEvent) {
-        if event.type == .flagsChanged {
-            isShiftHeld = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .shift
+    func handle(_ event: NSEvent) {
+        // Every event carries the modifiers, so a missed Shift release (Secure Input, a lost flagsChanged) heals.
+        let isShiftAlone = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .shift
+        if isShiftAlone != isShiftHeld {
+            isShiftHeld = isShiftAlone
             updateDrawing()
-            return
         }
-        guard !(panel?.ignoresMouseEvents == false), let point = AnnotationMarks.normalized(NSEvent.mouseLocation, in: frame) else { return }
-        let t = now()
+        guard event.type != .flagsChanged, !isTakingPointer else { return }
+        // A global event's location is in screen coordinates, captured when it happened, as is its timestamp.
+        let location = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
+        guard let point = AnnotationMarks.normalized(location, in: frame) else { return }
+        let t = event.timestamp - Double(startNanoseconds) / 1_000_000_000
         let kind: AnnotationEvent.Kind
         switch event.type {
         case .leftMouseDown: kind = .click
@@ -104,7 +147,7 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
 
     /// The overlay takes the pointer only while drawing, so clicks reach the apps otherwise.
     private func updateDrawing() {
-        panel?.ignoresMouseEvents = !(isPenEnabled || isShiftHeld)
+        panel?.ignoresMouseEvents = !isTakingPointer
     }
 }
 
@@ -126,6 +169,10 @@ final class InkView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         add(event, starting: false)
+        finishCurrentStroke()
+    }
+
+    func finishCurrentStroke() {
         if !currentPoints.isEmpty {
             finishedStrokes.append(AnnotationStroke(points: currentPoints))
             visible.append((current, time()))

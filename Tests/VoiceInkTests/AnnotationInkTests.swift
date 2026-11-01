@@ -43,6 +43,77 @@ import XCTest
         XCTAssertTrue(marks[0].description.hasSuffix("(2 strokes)"))
     }
 
+    func testALineKeepsTheDirectionItWasDrawnAndSeparateLinesAreARegion() {
+        let single = AnnotationMarks.marks([stroke([(0.2, 0.8), (0.5, 0.5), (0.8, 0.2)])], displaySize: display)
+        let pair = AnnotationMarks.marks(
+            [stroke([(0.1, 0.1), (0.2, 0.3)]), stroke([(0.7, 0.7), (0.9, 0.95)], start: 0.5)], displaySize: display
+        )
+
+        XCTAssertEqual(single.first?.description, "drew a line from x 0.20, y 0.80 to x 0.80, y 0.20")
+        XCTAssertEqual(pair.first?.shape, .mark)
+        XCTAssertTrue(pair.first?.description.hasPrefix("marked region x 0.10–0.90") == true)
+    }
+
+    func testTheCapsuleSitsAboveTheInkOverlay() {
+        XCTAssertGreaterThan(AnnotationCapsuleController.capsuleLevel.rawValue, AnnotationInputCapture.overlayLevel.rawValue)
+        XCTAssertGreaterThan(AnnotationInputCapture.overlayLevel.rawValue, NSWindow.Level.floating.rawValue)
+    }
+
+    func testStopKeepsTheStrokeBeingDrawn() throws {
+        let monitors = FakeEventMonitoring()
+        let capture = AnnotationInputCapture(monitoring: monitors, displayFrame: { _ in CGRect(x: 0, y: 0, width: 1_000, height: 800) })
+        capture.start(displayID: 1, startNanoseconds: 0)
+        let ink = try XCTUnwrap(capture.ink)
+
+        ink.mouseDown(with: try mouse(.leftMouseDown, at: CGPoint(x: 100, y: 400)))
+        ink.mouseDragged(with: try mouse(.leftMouseDragged, at: CGPoint(x: 400, y: 400)))
+        let result = capture.stop()
+
+        XCTAssertEqual(result.strokes.count, 1)
+        XCTAssertEqual(result.strokes.first?.points.count, 2)
+        XCTAssertEqual(monitors.added, 2)
+        XCTAssertEqual(monitors.removed, 2)
+    }
+
+    func testClicksUseTheirOwnPositionAndTimeAndScrollsAreThrottled() throws {
+        let monitors = FakeEventMonitoring()
+        let frame = CGRect(x: -1_000, y: 0, width: 1_000, height: 800)
+        let capture = AnnotationInputCapture(monitoring: monitors, displayFrame: { _ in frame })
+        capture.start(displayID: 1, startNanoseconds: 100_000_000_000)
+
+        monitors.deliver(try mouse(.leftMouseDown, at: CGPoint(x: -500, y: 600), timestamp: 101.5))
+        monitors.deliver(try mouse(.rightMouseDown, at: CGPoint(x: -250, y: 200), timestamp: 102))
+        monitors.deliver(try mouse(.leftMouseDown, at: CGPoint(x: 300, y: 600), timestamp: 102.1))
+        for time in [103.0, 103.2, 103.6] { monitors.deliver(try scroll(at: CGPoint(x: -100, y: 100), timestamp: time)) }
+        let result = capture.stop()
+
+        XCTAssertEqual(result.events.map(\.kind), [.click, .rightClick, .scroll, .scroll])
+        XCTAssertEqual(result.events[0].t, 1.5, accuracy: 0.001)
+        XCTAssertEqual(result.events[0].x, 0.5, accuracy: 0.001)
+        XCTAssertEqual(result.events[0].y, 0.25, accuracy: 0.001)
+        XCTAssertEqual(result.events[1].y, 0.75, accuracy: 0.001)
+        XCTAssertEqual(result.events[3].t, 3.6, accuracy: 0.001)
+    }
+
+    func testShiftAloneDrawsAndAMissedReleaseHealsOnTheNextEvent() throws {
+        let monitors = FakeEventMonitoring()
+        let capture = AnnotationInputCapture(monitoring: monitors, displayFrame: { _ in CGRect(x: 0, y: 0, width: 1_000, height: 800) })
+        capture.start(displayID: 1, startNanoseconds: 0)
+
+        monitors.deliver(try flags([.maskShift]))
+        XCTAssertTrue(capture.isTakingPointer)
+        monitors.deliver(try flags([.maskShift, .maskCommand]))
+        XCTAssertFalse(capture.isTakingPointer, "Shift with another modifier is a shortcut, not drawing")
+        monitors.deliver(try flags([.maskShift]))
+        monitors.deliver(try mouse(.leftMouseDown, at: CGPoint(x: 10, y: 10), timestamp: 1))
+        XCTAssertFalse(capture.isTakingPointer)
+        capture.setPenEnabled(true)
+        XCTAssertTrue(capture.isTakingPointer)
+        capture.setPenEnabled(false)
+        XCTAssertFalse(capture.isTakingPointer)
+        _ = capture.stop()
+    }
+
     func testPointsAreNormalizedFromTheTopLeftOfTheDisplay() {
         let frame = CGRect(x: -1_512, y: 200, width: 1_512, height: 982)
 
@@ -128,10 +199,48 @@ import XCTest
         return stroke(points, start: start)
     }
 
-    private func mouse(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+    private func mouse(_ type: NSEvent.EventType, at point: CGPoint, timestamp: TimeInterval = 0) throws -> NSEvent {
         try XCTUnwrap(NSEvent.mouseEvent(
-            with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0,
+            with: type, location: point, modifierFlags: [], timestamp: timestamp, windowNumber: 0, context: nil, eventNumber: 0,
             clickCount: 1, pressure: 1
         ))
     }
+
+    /// A scroll at `point` in AppKit screen coordinates; CoreGraphics measures y down from the main display's top.
+    private func scroll(at point: CGPoint, timestamp: TimeInterval) throws -> NSEvent {
+        let event = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 3, wheel2: 0, wheel3: 0))
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        event.location = CGPoint(x: point.x, y: mainHeight - point.y)
+        event.timestamp = UInt64(timestamp * 1_000_000_000)
+        return try XCTUnwrap(NSEvent(cgEvent: event))
+    }
+
+    private func flags(_ flags: CGEventFlags) throws -> NSEvent {
+        let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 56, keyDown: true))
+        event.type = .flagsChanged
+        event.flags = flags
+        return try XCTUnwrap(NSEvent(cgEvent: event))
+    }
+}
+
+@MainActor
+private final class FakeEventMonitoring: AnnotationEventMonitoring {
+    private var global: ((NSEvent) -> Void)?
+    private(set) var added = 0
+    private(set) var removed = 0
+
+    func addGlobal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> Void) -> Any? {
+        added += 1
+        global = handler
+        return "global"
+    }
+
+    func addLocal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> NSEvent?) -> Any? {
+        added += 1
+        return "local"
+    }
+
+    func remove(_ monitor: Any) { removed += 1 }
+
+    func deliver(_ event: NSEvent) { global?(event) }
 }

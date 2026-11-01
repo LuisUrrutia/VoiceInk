@@ -105,6 +105,8 @@ private struct AnnotationRow: View {
 @MainActor
 final class AnnotationCapsuleController {
     static let shared = AnnotationCapsuleController()
+    /// Above the ink overlay, so Stop, Cancel and the pen stay clickable while drawing.
+    static let capsuleLevel = NSWindow.Level(rawValue: AnnotationInputCapture.overlayLevel.rawValue + 1)
 
     private var panel: NSPanel?
     private var cancellable: AnyCancellable?
@@ -127,7 +129,7 @@ final class AnnotationCapsuleController {
         )
         panel.contentView = hosting
         panel.isFloatingPanel = true
-        panel.level = .statusBar
+        panel.level = Self.capsuleLevel
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true
