@@ -76,6 +76,12 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
         let ink = InkView(frame: CGRect(origin: .zero, size: frame.size))
         ink.time = { [weak self] in self?.now() ?? 0 }
         ink.normalize = { [weak self] point in self.flatMap { AnnotationMarks.normalized(point, in: $0.frame) } }
+        // The overlay's own clicks never reach the monitors, so they refresh the Shift state here.
+        ink.shouldDraw = { [weak self] event in
+            guard let self else { return false }
+            self.refreshShift(from: event)
+            return self.isTakingPointer
+        }
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.contentView = ink
         panel.isOpaque = false
@@ -121,12 +127,7 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
     }
 
     func handle(_ event: NSEvent) {
-        // Every event carries the modifiers, so a missed Shift release (Secure Input, a lost flagsChanged) heals.
-        let isShiftAlone = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .shift
-        if isShiftAlone != isShiftHeld {
-            isShiftHeld = isShiftAlone
-            updateDrawing()
-        }
+        refreshShift(from: event)
         guard event.type != .flagsChanged, !isTakingPointer else { return }
         // A global event's location is in screen coordinates, captured when it happened, as is its timestamp.
         let location = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
@@ -145,6 +146,15 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
         events.append(AnnotationEvent(kind: kind, t: t, x: point.x, y: point.y))
     }
 
+    /// Every event carries the modifiers, so a missed Shift release (Secure Input, a lost flagsChanged) heals on the next
+    /// event, whether it reaches the overlay or another app.
+    private func refreshShift(from event: NSEvent) {
+        let isShiftAlone = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .shift
+        guard isShiftAlone != isShiftHeld else { return }
+        isShiftHeld = isShiftAlone
+        updateDrawing()
+    }
+
     /// The overlay takes the pointer only while drawing, so clicks reach the apps otherwise.
     private func updateDrawing() {
         panel?.ignoresMouseEvents = !isTakingPointer
@@ -155,6 +165,9 @@ final class AnnotationInputCapture: AnnotationInputCapturing {
 final class InkView: NSView {
     var time: () -> TimeInterval = { 0 }
     var normalize: (CGPoint) -> CGPoint? = { _ in nil }
+    /// Whether a press should start a stroke; a press with drawing switched off is not ink.
+    var shouldDraw: (NSEvent) -> Bool = { _ in true }
+    private var isDrawingStroke = false
     private(set) var finishedStrokes: [AnnotationStroke] = []
     private var current: [CGPoint] = []
     private var currentPoints: [AnnotationStroke.Point] = []
@@ -164,15 +177,23 @@ final class InkView: NSView {
     override var isFlipped: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func mouseDown(with event: NSEvent) { add(event, starting: true) }
-    override func mouseDragged(with event: NSEvent) { add(event, starting: false) }
+    override func mouseDown(with event: NSEvent) {
+        isDrawingStroke = shouldDraw(event)
+        if isDrawingStroke { add(event, starting: true) }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if isDrawingStroke { add(event, starting: false) }
+    }
 
     override func mouseUp(with event: NSEvent) {
+        guard isDrawingStroke else { return }
         add(event, starting: false)
         finishCurrentStroke()
     }
 
     func finishCurrentStroke() {
+        isDrawingStroke = false
         if !currentPoints.isEmpty {
             finishedStrokes.append(AnnotationStroke(points: currentPoints))
             visible.append((current, time()))
