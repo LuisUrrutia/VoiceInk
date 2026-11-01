@@ -75,20 +75,30 @@ final class AnnotationProcessor: ObservableObject {
         }
     }
 
-    /// Chooses keyframes, renders them with ink and clicks into `frames/` and the contact sheet. A movie that cannot be
-    /// read leaves the bundle without images; the summary then lists the narration instead.
+    enum RenderError: Error {
+        /// The bundle was removed while frames were decoded.
+        case bundleRemoved
+    }
+
+    /// Chooses keyframes and renders them with ink and clicks into `frames/` and the contact sheet. A movie that
+    /// cannot be read leaves the bundle without images, and the summary lists the narration instead; a write that
+    /// fails, or a bundle removed meanwhile, is an error.
     private func renderKeyframes(
         _ manifest: inout AnnotationManifest, store: AnnotationStore,
         frameSource: (URL, TimeInterval) -> any AnnotationFrameSource
-    ) async {
+    ) async throws {
         var keyframes = AnnotationKeyframes.keyframes(manifest, sceneChanges: manifest.sceneChanges)
+        manifest.keyframes = []
+        manifest.contactSheet = nil
         let source = frameSource(store.url(for: manifest.id, file: AnnotationManifest.videoFileName), manifest.videoOffset ?? 0)
-        guard !keyframes.isEmpty, let images = try? await source.images(at: keyframes.map(\.t)) else {
-            manifest.keyframes = []
-            return
+        guard !keyframes.isEmpty, let images = try? await source.images(at: keyframes.map(\.t)) else { return }
+        let bundle = store.directory(for: manifest.id)
+        guard FileManager.default.fileExists(atPath: bundle.path) else { throw RenderError.bundleRemoved }
+        let folder = bundle.appendingPathComponent(AnnotationManifest.framesDirectoryName, isDirectory: true)
+        // Never recreates a removed bundle: only the frames folder inside an existing one.
+        if !FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         }
-        let folder = store.directory(for: manifest.id).appendingPathComponent(AnnotationManifest.framesDirectoryName, isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var rendered: [(image: CGImage, label: String)] = []
         for index in keyframes.indices {
             guard index < images.count, let image = images[index],
@@ -98,22 +108,17 @@ final class AnnotationProcessor: ObservableObject {
                 keyframes[index].file = nil
                 continue
             }
-            let url = store.directory(for: manifest.id).appendingPathComponent(file)
-            do {
-                try AnnotationRenderer.writePNG(annotated, to: url)
-                store.protect(url)
-                rendered.append((annotated, "#\(keyframes[index].index) \(MeetingMarkdown.timestamp(keyframes[index].t))"))
-            } catch {
-                keyframes[index].file = nil
-            }
+            let url = bundle.appendingPathComponent(file)
+            try AnnotationRenderer.writePNG(annotated, to: url)
+            store.protect(url)
+            rendered.append((annotated, "#\(keyframes[index].index) \(MeetingMarkdown.timestamp(keyframes[index].t))"))
         }
         manifest.keyframes = keyframes.filter { $0.file != nil }
         if let sheet = AnnotationRenderer.contactSheet(rendered) {
             let url = store.url(for: manifest.id, file: AnnotationManifest.contactSheetFileName)
-            if (try? AnnotationRenderer.writePNG(sheet, to: url)) != nil {
-                store.protect(url)
-                manifest.contactSheet = AnnotationManifest.contactSheetFileName
-            }
+            try AnnotationRenderer.writePNG(sheet, to: url)
+            store.protect(url)
+            manifest.contactSheet = AnnotationManifest.contactSheetFileName
         }
     }
 
@@ -140,7 +145,18 @@ final class AnnotationProcessor: ObservableObject {
             manifest.failure = TimedTranscriptionError.unsupportedModel.localizedDescription
         }
 
-        await renderKeyframes(&manifest, store: store, frameSource: environment.frameSource)
+        do {
+            try await renderKeyframes(&manifest, store: store, frameSource: environment.frameSource)
+        } catch RenderError.bundleRemoved {
+            logger.notice("Annotation was removed while its frames were decoded")
+            return
+        } catch {
+            logger.error("Could not write the annotation images: \(error, privacy: .public)")
+            manifest.status = .failed
+            manifest.failure = error.localizedDescription
+            if FileManager.default.fileExists(atPath: store.directory(for: id).path) { recorder.update(manifest) }
+            return
+        }
 
         // The bundle can be trashed while its narration transcribes; then nothing is written or copied.
         guard FileManager.default.fileExists(atPath: store.directory(for: id).path) else {
@@ -187,7 +203,7 @@ enum AnnotationSummary {
             lines += [
                 "",
                 // As Hex's summary does: the marks and words only make sense on the images.
-                "Open \(manifest.contactSheet ?? AnnotationManifest.contactSheetFileName) and \(AnnotationManifest.framesDirectoryName)/ in that folder before changing anything: the marks and words only make sense on the images, which can show more than the text does.",
+                "Open \([manifest.contactSheet, AnnotationManifest.framesDirectoryName + "/"].compactMap { $0 }.joined(separator: " and ")) in that folder before changing anything: the marks and words only make sense on the images, which can show more than the text does.",
                 "",
                 "## \(String(localized: "Keyframes"))",
                 "",
