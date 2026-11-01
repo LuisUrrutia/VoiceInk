@@ -31,6 +31,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         !WindowManager.shared.requestMainWindow()
     }
 
+    /// A running annotation agent is stopped first: its timeout and process group belong to this process.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let processor = AnnotationProcessor.shared
+        guard !processor.agentIDs.isEmpty else { return .terminateNow }
+        Task { @MainActor in
+            await processor.stopAllAgents()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MeetingRecorder.shared.closeForTermination()
         IdleSleepPrevention.shared.releaseAll()
