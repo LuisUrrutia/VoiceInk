@@ -51,7 +51,6 @@ class CursorPaster {
                 }.didPostPasteCommand
             },
             typeText: { method, text, sendKey, canPost in
-                guard canPost() else { return (.commandNotPosted, nil) }
                 var failure: String?
                 let result = await deliverWithDiagnostics(method) { _ in
                     let typed = await typeText(text, method: method, sendKey: sendKey, canContinue: canPost)
@@ -101,7 +100,8 @@ class CursorPaster {
                 remotePushCommand: UserDefaults.standard.string(forKey: PasteTargetSettings.remoteClipboardPushCommandKey),
                 sendKey: sendKey,
                 timing: deliverySession?.timing,
-                shouldCancel: { deliverySession?.isCancelled == true }
+                shouldCancel: { deliverySession?.isCancelled == true },
+                commitOutput: { deliverySession?.commitOutput() ?? true }
             )
         }
         deliverySession?.own(task)

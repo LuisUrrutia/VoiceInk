@@ -166,8 +166,6 @@ final class DictationJob {
         self.didChangePhase = didChangePhase
     }
 
-    /// Delivery passed its destination guards, after which output to the destination may begin.
-    var outputStarted: Bool {
-        delivery?.timing.snapshot.contains { $0.phase == .destinationReady && $0.outcome == .completed } ?? false
-    }
+    /// Past the commit point (the first clipboard write or typed chunk), so Cancel no longer stops it.
+    var outputStarted: Bool { delivery?.hasCommittedOutput ?? false }
 }

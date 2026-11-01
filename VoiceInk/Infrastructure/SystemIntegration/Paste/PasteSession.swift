@@ -72,7 +72,8 @@ final class PasteSession {
         remotePushCommand: String?,
         sendKey: FinishAndSendKey = .none,
         timing: RecordingTimingTrace? = nil,
-        shouldCancel: @escaping () -> Bool = { false }
+        shouldCancel: @escaping () -> Bool = { false },
+        commitOutput: @escaping () -> Bool = { true }
     ) async -> CursorPaster.PasteOutcome {
         var unreachedOutcome = RecordingTimingTrace.Outcome.canceled
         defer {
@@ -86,6 +87,11 @@ final class PasteSession {
         }
         let canceled = { Task.isCancelled || shouldCancel() }
         guard !canceled() else { return finish(.cancelled) }
+        var committed = false
+        func commit() -> Bool {
+            if !committed { committed = commitOutput() }
+            return committed
+        }
 
         latestRequest &+= 1
         let request = latestRequest
@@ -164,6 +170,7 @@ final class PasteSession {
                 for: target, preferredMethod: preferredMethod, losesSyntheticPaste: losesSyntheticPaste
             )
             if policy.method.usesClipboard {
+                guard commit() else { return fail(.cancelled) }
                 guard takeClipboard(text) else { return fail(.commandNotPosted, cause: copyFailure) }
             }
             let deliveredText = await environment.adjustText(text, target, policy.method)
@@ -209,7 +216,8 @@ final class PasteSession {
                 let posted = await environment.postPaste(policy.method, canPost)
                 guard posted else { return fail(canceled() ? .cancelled : .commandNotPosted) }
             } else {
-                let typed = await environment.typeText(policy.method, deliveredText, sendKey, canPost)
+                // Typers check this before every chunk, so the first chunk commits the output.
+                let typed = await environment.typeText(policy.method, deliveredText, sendKey) { canPost() && commit() }
                 guard typed.result == .commandPosted else {
                     // Partial typing is always reported because part of the text may have been inserted.
                     let interrupted = typed.result == .commandNotPosted && !mayContinue()
