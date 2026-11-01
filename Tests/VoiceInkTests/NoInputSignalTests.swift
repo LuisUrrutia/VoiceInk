@@ -1,3 +1,4 @@
+import Combine
 import CoreAudio
 import XCTest
 import os
@@ -186,6 +187,9 @@ final class NoInputSignalRecorderTests: XCTestCase {
 
     func testPickingAnotherMicrophoneSwitchesTheRecordingWithoutANewFile() async throws {
         let (recorder, hardware, devices) = makeRecorder()
+        var warnings: [Bool] = []
+        let observation = recorder.$isInputSilent.removeDuplicates().dropFirst().sink { warnings.append($0) }
+        defer { observation.cancel() }
         try await recorder.startRecording(toOutputFile: temporaryWAV(), applyRecordingEffects: false)
         await waitUntil { recorder.isInputSilent }
 
@@ -193,11 +197,11 @@ final class NoInputSignalRecorderTests: XCTestCase {
         menu.performActionForItem(at: try XCTUnwrap(menu.items.firstIndex { $0.title == "USB" }))
 
         await waitUntil { devices.activeRecordingDeviceID == 2 }
-        await waitUntil { !recorder.isInputSilent }
+        // The silent new input clears the warning for only one quiet period, which a late poll can miss.
+        await waitUntil { warnings == [true, false, true] }
         XCTAssertEqual(hardware.events, ["start:1", "switch:2"])
         XCTAssertEqual(devices.temporaryMicrophone?.uid, "usb-mic")
         XCTAssertEqual(defaults.selectedAudioDeviceUID, "dead-mic")
-        await waitUntil { recorder.isInputSilent }
         XCTAssertEqual(announcements.count, 2)
 
         await recorder.stopRecording()

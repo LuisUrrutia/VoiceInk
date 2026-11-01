@@ -97,10 +97,7 @@ enum CustomCommandDeliveryRunner {
             continuation.resume(throwing: CancellationError())
             return
         }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
-        process.environment = ShellCommandEnvironment.commandEnvironment(
+        let environment = ShellCommandEnvironment.commandEnvironment(
             additionalEnvironment: context.environment
         )
         guard !cancellation.isCancelled else {
@@ -111,37 +108,52 @@ enum CustomCommandDeliveryRunner {
         let inputPipe = Pipe()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
+        // A command that exits without reading stdin must fail the write, not raise SIGPIPE in the app.
+        _ = fcntl(inputPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
 
         let outputCollector = PipeOutputCollector(handle: outputPipe.fileHandleForReading)
         let errorCollector = PipeOutputCollector(handle: errorPipe.fileHandleForReading)
         let outputCollectors = [outputCollector, errorCollector]
         let inputWriteGroup = DispatchGroup()
 
-        let semaphore = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in semaphore.signal() }
-
+        let leader: ProcessGroupLeader
         do {
-            try process.run()
+            var actions: posix_spawn_file_actions_t?
+            try ProcessGroupLeader.check(posix_spawn_file_actions_init(&actions))
+            defer { posix_spawn_file_actions_destroy(&actions) }
+            try ProcessGroupLeader.check(posix_spawn_file_actions_adddup2(
+                &actions, inputPipe.fileHandleForReading.fileDescriptor, STDIN_FILENO))
+            try ProcessGroupLeader.check(posix_spawn_file_actions_adddup2(
+                &actions, outputPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO))
+            try ProcessGroupLeader.check(posix_spawn_file_actions_adddup2(
+                &actions, errorPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO))
+            leader = try ProcessGroupLeader.spawn(
+                executable: "/bin/zsh", arguments: ["/bin/zsh", "-lc", command], environment: environment,
+                fileActions: &actions
+            )
         } catch {
             try? inputPipe.fileHandleForWriting.close()
             outputCollectors.forEach { $0.stop() }
-            continuation.resume(throwing: CustomCommandDeliveryError.launchFailed(error.localizedDescription))
+            let message = (error as? ProcessGroupLeader.SystemError)?.message ?? error.localizedDescription
+            continuation.resume(throwing: CustomCommandDeliveryError.launchFailed(message))
             return
         }
+        // The child holds its own copies; the parent's would keep the output pipes from reaching EOF.
+        try? inputPipe.fileHandleForReading.close()
+        try? outputPipe.fileHandleForWriting.close()
+        try? errorPipe.fileHandleForWriting.close()
 
         let timeoutDeadline = DispatchTime.now() + timeout
         startWritingStandardInput(context.standardInput, to: inputPipe.fileHandleForWriting, group: inputWriteGroup)
 
-        var waitResult: DispatchTimeoutResult = .timedOut
+        var exit: siginfo_t?
         while !cancellation.isCancelled && DispatchTime.now() < timeoutDeadline {
-            waitResult = semaphore.wait(timeout: min(.now() + 0.05, timeoutDeadline))
-            if waitResult == .success { break }
+            exit = (try? leader.exitInformation()) ?? nil
+            if exit != nil { break }
+            usleep(10_000)
         }
-        if waitResult == .timedOut {
-            terminate(process, semaphore: semaphore)
+        guard let exit else {
+            terminate(leader)
             try? inputPipe.fileHandleForWriting.close()
             _ = waitForCollectors(outputCollectors, timeout: 1)
             outputCollectors.forEach { $0.stop() }
@@ -150,6 +162,9 @@ enum CustomCommandDeliveryRunner {
                 ? CancellationError() : CustomCommandDeliveryError.timeout(seconds: timeout))
             return
         }
+        leader.reap()
+        // Process reported only the low byte of an exit value, which waitid keeps whole.
+        let status = exit.si_code == CLD_EXITED ? exit.si_status & 0xff : exit.si_status
 
         _ = waitForCollectors(outputCollectors, timeout: 2)
         outputCollectors.forEach { $0.stop() }
@@ -163,10 +178,10 @@ enum CustomCommandDeliveryRunner {
             return
         }
 
-        guard process.terminationStatus == 0 else {
+        guard status == 0 else {
             continuation.resume(
                 throwing: CustomCommandDeliveryError.nonZeroExit(
-                    status: process.terminationStatus,
+                    status: status,
                     stderr: stderr
                 )
             )
@@ -175,7 +190,7 @@ enum CustomCommandDeliveryRunner {
 
         continuation.resume(
             returning: CustomCommandDeliveryResult(
-                status: process.terminationStatus,
+                status: status,
                 stdout: stdout,
                 stderr: stderr
             )
@@ -204,95 +219,18 @@ enum CustomCommandDeliveryRunner {
         }
     }
 
-    private static func terminate(_ process: Process, semaphore: DispatchSemaphore) {
-        guard process.isRunning else { return }
-
-        let targets = processTreeTargets(rootPID: process.processIdentifier)
-        signalTargets(targets, signal: SIGTERM)
-        let didExitAfterTerminate = semaphore.wait(timeout: .now() + 2) == .success
-
-        let remainingTargets = targets.filter(isProcessRunning)
-        if !remainingTargets.isEmpty {
-            signalTargets(remainingTargets, signal: SIGKILL)
+    private static func terminate(_ leader: ProcessGroupLeader) {
+        leader.signalGroup(SIGTERM)
+        let grace = DispatchTime.now() + 2
+        while ((try? leader.exitInformation()) ?? nil) == nil, DispatchTime.now() < grace {
+            usleep(10_000)
         }
-
-        if !didExitAfterTerminate,
-            semaphore.wait(timeout: .now() + 1) == .timedOut
-        {
-            logger.error(
-                "Custom command process \(process.processIdentifier, privacy: .public) did not exit after SIGKILL")
+        // Children can ignore TERM or outlive the shell; the unreaped leader keeps the group ID reserved.
+        leader.signalGroup(SIGKILL)
+        if !leader.waitForOtherMembersToExit(timeout: 1) {
+            logger.error("Custom command process group \(leader.pid, privacy: .public) did not exit after SIGKILL")
         }
-    }
-
-    private static func processTreeTargets(rootPID: pid_t) -> [pid_t] {
-        Array(descendants(of: rootPID).reversed()) + [rootPID]
-    }
-
-    private static func signalTargets(_ pids: [pid_t], signal: Int32) {
-        for pid in pids {
-            if kill(pid, signal) != 0 && errno != ESRCH {
-                logger.error(
-                    "Failed to signal custom command process \(pid, privacy: .public): errno \(errno, privacy: .public)"
-                )
-            }
-        }
-    }
-
-    private static func isProcessRunning(_ pid: pid_t) -> Bool {
-        errno = 0
-        if kill(pid, 0) == 0 {
-            return true
-        }
-        return errno == EPERM
-    }
-
-    private static func descendants(of rootPID: pid_t) -> [pid_t] {
-        var result: [pid_t] = []
-        var queue = [rootPID]
-        var visited = Set<pid_t>()
-
-        while let parentPID = queue.first {
-            queue.removeFirst()
-            guard visited.insert(parentPID).inserted else { continue }
-
-            let childPIDs = children(of: parentPID)
-            result.append(contentsOf: childPIDs)
-            queue.append(contentsOf: childPIDs)
-        }
-
-        return result
-    }
-
-    private static func children(of parentPID: pid_t) -> [pid_t] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        process.arguments = ["-P", "\(parentPID)"]
-
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-        let outputCollector = PipeOutputCollector(handle: outputPipe.fileHandleForReading)
-
-        do {
-            try process.run()
-        } catch {
-            outputCollector.stop()
-            return []
-        }
-
-        process.waitUntilExit()
-        _ = waitForCollectors([outputCollector], timeout: 0.5)
-        outputCollector.stop()
-
-        guard process.terminationStatus == 0 else {
-            return []
-        }
-
-        let output = outputCollector.stringValue()
-        return
-            output
-            .split(whereSeparator: \.isNewline)
-            .compactMap { Int32(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+        leader.reap()
     }
 
     private static func waitForGroup(_ group: DispatchGroup, timeout: TimeInterval) -> Bool {

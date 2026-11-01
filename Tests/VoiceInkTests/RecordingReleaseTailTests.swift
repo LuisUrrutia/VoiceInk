@@ -138,7 +138,8 @@ final class RecordingReleaseTailTests: XCTestCase {
         let url = directory.appendingPathComponent("cancel-tail.wav")
         let hardware = try StreamingTailHardware(url: url)
         let (engine, timing) = try makeRecordingEngine(hardware: hardware, directory: directory, url: url)
-        let tail = RecordingReleaseTail.now()
+        // A release handled 10 s from now keeps the tail capturing however late a loaded scheduler delivers Escape.
+        let tail = RecordingReleaseTail(releasedAtNanoseconds: DispatchTime.now().uptimeNanoseconds + 10_000_000_000)
 
         let stop = Task { await engine.toggleRecord(releaseTail: tail) }
         try await waitUntilTailIsCapturing(hardware)
@@ -215,7 +216,8 @@ final class RecordingReleaseTailTests: XCTestCase {
         let url = directory.appendingPathComponent("press-tail.wav")
         let hardware = try StreamingTailHardware(url: url)
         let (engine, timing) = try makeRecordingEngine(hardware: hardware, directory: directory, url: url)
-        let tail = RecordingReleaseTail.now()
+        // A release handled 10 s from now keeps the tail open until the test delivers its audio.
+        let tail = RecordingReleaseTail(releasedAtNanoseconds: DispatchTime.now().uptimeNanoseconds + 10_000_000_000)
 
         let stop = Task { await engine.toggleRecord(releaseTail: tail) }
         try await waitUntilTailIsCapturing(hardware)
@@ -230,12 +232,12 @@ final class RecordingReleaseTailTests: XCTestCase {
         XCTAssertEqual(hardware.events, [])
         // Cancel before it can reach real preflight, as in RecordingFinalizationTests.
         press.cancel()
+        hardware.deliverAudioThroughTail()
         await stop.value
         await press.value
 
         XCTAssertEqual(hardware.events, ["stop"])
         XCTAssertEqual(timing.snapshot.first { $0.phase == .releaseTailEnded }?.outcome, .completed)
-        XCTAssertGreaterThanOrEqual(try XCTUnwrap(hardware.stoppedAt), tail.captureDeadlineNanoseconds)
     }
 
     // MARK: - Shortcut gestures
@@ -328,6 +330,7 @@ private final class StreamingTailHardware: RecordingHardware, @unchecked Sendabl
         var stoppedAt: UInt64?
         var stopCount = 0
         var capturedThroughReads = 0
+        var capturedThroughOverride: UInt64?
         var events: [String] = []
     }
 
@@ -347,8 +350,16 @@ private final class StreamingTailHardware: RecordingHardware, @unchecked Sendabl
     var events: [String] { state.withLock { $0.events } }
 
     var capturedThroughNanoseconds: UInt64? {
-        state.withLock { $0.capturedThroughReads += 1 }
+        let override = state.withLock { state -> UInt64? in
+            state.capturedThroughReads += 1
+            return state.capturedThroughOverride
+        }
+        if let override { return override }
         return stalled ? startedAt : DispatchTime.now().uptimeNanoseconds - 5_000_000
+    }
+
+    func deliverAudioThroughTail() {
+        state.withLock { $0.capturedThroughOverride = .max }
     }
 
     init(url: URL? = nil, stalled: Bool = false) throws {

@@ -65,33 +65,21 @@ enum LocalCLIProcessRunner {
         try checkSystemCall(posix_spawn_file_actions_adddup2(&actions, output.writeDescriptor, STDOUT_FILENO))
         try checkSystemCall(posix_spawn_file_actions_adddup2(&actions, error.writeDescriptor, STDERR_FILENO))
 
-        var attributes: posix_spawnattr_t?
-        try checkSystemCall(posix_spawnattr_init(&attributes))
-        defer { posix_spawnattr_destroy(&attributes) }
-        // The group is assigned atomically at launch; cancellation never targets the app's group.
-        try checkSystemCall(posix_spawnattr_setpgroup(&attributes, 0))
-        try checkSystemCall(posix_spawnattr_setflags(
-            &attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
-        ))
-        let arguments = [executable, "-lc", command].map { strdup($0) }
-        let variables = environment.map { strdup("\($0.key)=\($0.value)") }
-        defer {
-            arguments.forEach { free($0) }
-            variables.forEach { free($0) }
-        }
-        var pid: pid_t = 0
         try checkTermination(cancellation, deadline: deadline, timeout: timeout)
-        let launchStatus = (arguments + [nil]).withUnsafeBufferPointer { argv in
-            (variables + [nil]).withUnsafeBufferPointer { envp in
-                posix_spawn(&pid, executable, &actions, &attributes, argv.baseAddress!, envp.baseAddress!)
-            }
+        let leader: ProcessGroupLeader
+        do {
+            leader = try ProcessGroupLeader.spawn(
+                executable: executable, arguments: [executable, "-lc", command], environment: environment,
+                fileActions: &actions
+            )
+        } catch let failure as ProcessGroupLeader.SystemError {
+            throw systemError(failure.code)
         }
-        try checkSystemCall(launchStatus)
         input?.closeReadEnd()
         output.closeWriteEnd()
         error.closeWriteEnd()
         var completed = false
-        defer { shutdown(pid: pid, completed: completed) }
+        defer { shutdown(leader, completed: completed) }
 
         var stdout = Data()
         var stderr = Data()
@@ -99,7 +87,7 @@ enum LocalCLIProcessRunner {
         var exit: siginfo_t?
         while true {
             try checkTermination(cancellation, deadline: deadline, timeout: timeout)
-            if exit == nil { exit = try exitInformation(pid: pid) }
+            if exit == nil { exit = try exitInformation(leader) }
             if exit != nil { input?.closeWriteEnd() }
 
             try output.read(into: &stdout)
@@ -134,35 +122,23 @@ enum LocalCLIProcessRunner {
         if DispatchTime.now() >= deadline { throw LocalCLIError.timeout(seconds: timeout) }
     }
 
-    private static func exitInformation(pid: pid_t) throws -> siginfo_t? {
-        var info = siginfo_t()
-        // Keep the leader waitable until group shutdown, preventing its PID from being reused.
-        if waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) < 0 {
-            if errno == EINTR { return nil }
-            throw systemError(errno)
+    private static func exitInformation(_ leader: ProcessGroupLeader) throws -> siginfo_t? {
+        do {
+            return try leader.exitInformation()
+        } catch let failure as ProcessGroupLeader.SystemError {
+            throw systemError(failure.code)
         }
-        return info.si_pid == pid ? info : nil
     }
 
-    private static func shutdown(pid: pid_t, completed: Bool) {
+    private static func shutdown(_ leader: ProcessGroupLeader, completed: Bool) {
         if !completed {
-            _ = kill(-pid, SIGTERM)
+            leader.signalGroup(SIGTERM)
             let grace = DispatchTime.now() + 0.2
             while DispatchTime.now() < grace { usleep(10_000) }
         }
         // Even an exited shell may have children that closed or still hold its pipes.
-        _ = kill(-pid, SIGKILL)
-        let deadline = DispatchTime.now() + 1
-        var status: Int32 = 0
-        while DispatchTime.now() < deadline {
-            let result = waitpid(pid, &status, WNOHANG)
-            if result == pid || (result < 0 && errno == ECHILD) { return }
-            usleep(10_000)
-        }
-        DispatchQueue.global(qos: .utility).async {
-            var status: Int32 = 0
-            while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
-        }
+        leader.signalGroup(SIGKILL)
+        leader.reap()
     }
 
     private static func checkSystemCall(_ status: Int32) throws {

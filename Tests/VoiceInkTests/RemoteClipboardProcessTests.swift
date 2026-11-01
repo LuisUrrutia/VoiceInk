@@ -16,6 +16,26 @@ final class RemoteClipboardProcessTests: XCTestCase {
         XCTAssertEqual(result.stdout, transcript)
     }
 
+    func testCommandsStartWithDefaultSignalHandlingWhenTheAppIgnoresSIGPIPE() async throws {
+        let previous = signal(SIGPIPE, SIG_IGN)
+        defer { signal(SIGPIPE, previous) }
+
+        let result = try await CustomCommandDeliveryRunner.run(
+            command: "/usr/bin/yes | /usr/bin/head -1 > /dev/null; print -r -- ${pipestatus[1]}", timeout: 5,
+            context: .init(transcript: "text")
+        )
+
+        XCTAssertEqual(result.stdout, "\(128 + SIGPIPE)\n")
+    }
+
+    func testExitStatusKeepsOnlyTheLowByteLikeProcess() async throws {
+        let result = try await CustomCommandDeliveryRunner.run(
+            command: "exec /usr/bin/perl -e 'exit 256'", timeout: 5, context: .init(transcript: "text")
+        )
+
+        XCTAssertEqual(result.status, 0)
+    }
+
     func testNonzeroCommandIsAReportedFailure() async {
         do {
             _ = try await CustomCommandDeliveryRunner.run(
@@ -48,6 +68,73 @@ final class RemoteClipboardProcessTests: XCTestCase {
         else { return XCTFail("The child process did not start") }
         XCTAssertEqual(kill(pid, 0), -1)
         XCTAssertEqual(errno, ESRCH)
+    }
+
+    func testTerminationReachesChildrenForkedAfterTheDescendantSnapshot() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // Each TERM forks a child, so every child starts after termination took its descendant snapshot.
+        let command = "cd " + shellQuote(directory.path)
+            + " && trap '/bin/sleep 30 & print -r -- $! >> children.pid' TERM; : > ready;"
+            + " zmodload zsh/zselect; while :; do zselect -t 10; done"
+        let run = Task {
+            try await CustomCommandDeliveryRunner.run(command: command, timeout: 30, context: .init(transcript: "text"))
+        }
+        let ready = directory.appendingPathComponent("ready")
+        for _ in 0..<1_000 where !FileManager.default.fileExists(atPath: ready.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        run.cancel()
+
+        do {
+            _ = try await run.value
+            XCTFail("A canceled push must not finish")
+        } catch is CancellationError {
+        } catch { XCTFail("Unexpected error: \(error)") }
+        let pidText = (try? String(contentsOf: directory.appendingPathComponent("children.pid"), encoding: .utf8)) ?? ""
+        let children = pidText.split(whereSeparator: \.isNewline).compactMap { Int32($0) }
+        XCTAssertFalse(children.isEmpty, "Termination must signal the shell")
+        for child in children {
+            XCTAssertEqual(kill(child, 0), -1, "child \(child) survived")
+            XCTAssertEqual(errno, ESRCH)
+            if kill(child, 0) == 0 { kill(child, SIGKILL) }
+        }
+    }
+
+    func testTerminationKillsAResistantChildAfterTheShellExitsAndSparesOtherProcesses() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let unrelated = Process()
+        unrelated.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        unrelated.arguments = ["30"]
+        try unrelated.run()
+        defer { unrelated.terminate() }
+        // The shell exits on TERM; its child ignores TERM, so only the group KILL after the shell's exit stops it.
+        let command = "cd " + shellQuote(directory.path)
+            + " && (trap '' TERM; : > child-ignores-term; /bin/sleep 30) & print -r -- $! > child.pid;"
+            + " zmodload zsh/zselect; until [[ -e child-ignores-term ]]; do zselect -t 1; done; : > ready; wait"
+        let run = Task {
+            try await CustomCommandDeliveryRunner.run(command: command, timeout: 30, context: .init(transcript: "text"))
+        }
+        let ready = directory.appendingPathComponent("ready")
+        for _ in 0..<1_000 where !FileManager.default.fileExists(atPath: ready.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        run.cancel()
+
+        do {
+            _ = try await run.value
+            XCTFail("A canceled push must not finish")
+        } catch is CancellationError {
+        } catch { XCTFail("Unexpected error: \(error)") }
+        let pidText = try String(contentsOf: directory.appendingPathComponent("child.pid"), encoding: .utf8)
+        let child = try XCTUnwrap(Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertEqual(kill(child, 0), -1, "the TERM-resistant child survived")
+        XCTAssertEqual(errno, ESRCH)
+        if kill(child, 0) == 0 { kill(child, SIGKILL) }
+        XCTAssertTrue(unrelated.isRunning, "a process outside the command's group was signaled")
     }
 
     @MainActor func testCustomDeliveryWaitsForCommandBeforeNormalSessionRetirement() async throws {
