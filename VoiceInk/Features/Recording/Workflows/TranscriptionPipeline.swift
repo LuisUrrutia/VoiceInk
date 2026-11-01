@@ -26,18 +26,21 @@ class TranscriptionPipeline {
     private let serviceRegistry: TranscriptionServiceRegistry
     private let enhancementService: DictationEnhancing?
     private let delivery: TranscriptionDelivery
+    let lane: TranscriptionLane
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionPipeline")
 
     init(
         modelContext: ModelContext,
         serviceRegistry: TranscriptionServiceRegistry,
         enhancementService: DictationEnhancing?,
-        delivery: TranscriptionDelivery? = nil
+        delivery: TranscriptionDelivery? = nil,
+        lane: TranscriptionLane? = nil
     ) {
         self.modelContext = modelContext
         self.serviceRegistry = serviceRegistry
         self.enhancementService = enhancementService
         self.delivery = delivery ?? TranscriptionDelivery()
+        self.lane = lane ?? TranscriptionLane()
     }
 
     /// Run the full pipeline for a given transcription record.
@@ -48,6 +51,7 @@ class TranscriptionPipeline {
     ///   - modeSnapshot: This dictation's formatting, enhancement and output settings; only its trigger word replaces it.
     ///   - session: An active streaming session if one was prepared, otherwise nil.
     ///   - vocabularyPreparation: Saved vocabulary plus any screen names ready by transcription completion.
+    ///   - laneSequence: The dictation's sequence, which admits its transcription through `lane`; nil bypasses it.
     ///   - onStateChange: Called when the pipeline moves to a new recording state (e.g. `.enhancing`).
     ///   - shouldCancel: Returns true if the user requested cancellation.
     ///   - onCancel: Called when cancellation is detected to cancel active session state.
@@ -63,6 +67,7 @@ class TranscriptionPipeline {
         recordingContextSnapshot: () -> RecordingContextSnapshot? = { nil },
         cancelContextCapture: () -> Void = {},
         sendAfterPaste: Bool = false,
+        laneSequence: UInt64? = nil,
         deliverySession: RecordingDeliverySession? = nil,
         preparation: RecordingTranscriptionPreparation? = nil,
         onStateChange: @escaping (RecordingState) -> Void,
@@ -116,7 +121,7 @@ class TranscriptionPipeline {
             let transcriptionVocabulary = vocabularyPreparation.current
             let transcriptionStart = Date()
             var text: String
-            let transcribe: @MainActor () async throws -> String = { [serviceRegistry] in
+            let transcribeNow: @MainActor () async throws -> String = { [serviceRegistry] in
                 if let session {
                     return try await session.transcribe(audioURL: audioURL, vocabulary: transcriptionVocabulary)
                 }
@@ -124,6 +129,11 @@ class TranscriptionPipeline {
                     audioURL: audioURL, model: model,
                     context: transcriptionConfiguration.requestContext.withVocabulary(transcriptionVocabulary)
                 )
+            }
+            // Inside the preparation's transcription task, so canceling the recording also ends a lane wait.
+            let transcribe: @MainActor () async throws -> String = { [lane] in
+                guard let laneSequence else { return try await transcribeNow() }
+                return try await lane.run(sequence: laneSequence, provider: model.provider, transcribeNow)
             }
             if let preparation {
                 text = try await preparation.performTranscription(transcribe)

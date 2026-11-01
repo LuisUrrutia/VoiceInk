@@ -90,6 +90,8 @@ enum DictationUseCase {
 /// Its preparation holds its mode snapshot and start-sound playback; Stop transfers it all to a `DictationJob`.
 @MainActor
 final class DictationCapture {
+    /// Owns this dictation's share of the transcription residency, through its job.
+    let dictationID: UUID
     /// Nil once the capture has ended, so late start and setup completions no longer own it.
     var startID: UUID?
     var delivery: RecordingDeliverySession?
@@ -112,6 +114,7 @@ final class DictationCapture {
         didChangePhase: @escaping @MainActor () -> Void
     ) {
         self.startID = startID
+        dictationID = startID ?? UUID()
         self.delivery = delivery
         self.preparation = preparation
         self.audioGate = audioGate
@@ -124,6 +127,7 @@ final class DictationCapture {
 @MainActor
 final class DictationJob {
     let sequence: UInt64
+    let dictationID: UUID
     var audioURL: URL?
     var preparation: RecordingTranscriptionPreparation?
     var delivery: RecordingDeliverySession?
@@ -149,6 +153,7 @@ final class DictationJob {
         didChangePhase: @escaping @MainActor () -> Void
     ) {
         self.sequence = sequence
+        dictationID = capture.dictationID
         audioURL = capture.fileURL
         preparation = capture.preparation
         delivery = capture.delivery
