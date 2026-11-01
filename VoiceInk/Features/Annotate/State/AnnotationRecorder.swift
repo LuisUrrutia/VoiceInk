@@ -47,6 +47,8 @@ final class AnnotationRecorder: ObservableObject {
         var now: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
         var defaults: UserDefaults = .standard
         var maximumDuration: Duration = .seconds(20 * 60)
+        var maintenanceInterval: Duration = .seconds(3_600)
+        var date: () -> Date = { Date() }
     }
 
     static let assertionName = "VoiceInk annotation"
@@ -85,6 +87,8 @@ final class AnnotationRecorder: ObservableObject {
     /// Cancel or switching Annotate off while Stop closes the files: the closed bundle is then discarded.
     private var discardsTeardown = false
     private var labsCancellable: AnyCancellable?
+    private var maintenanceCancellable: AnyCancellable?
+    private var maintenanceTask: Task<Void, Never>?
 
     var isRecording: Bool { activeAnnotation != nil }
     /// Starting, recording or closing files; another capture or dictation must wait.
@@ -262,6 +266,49 @@ final class AnnotationRecorder: ObservableObject {
 
     func reload() {
         annotations = dependencies.store.loadAll()
+    }
+
+    /// Removes media, then whole bundles, past the retention period; the annotation being recorded or processed
+    /// is never touched.
+    func applyRetention() {
+        reload()
+        let store = dependencies.store
+        let actions = AnnotationRetention.current(in: dependencies.defaults).actions(
+            for: annotations, now: dependencies.date(), isBusy: { [self] id in id == ownedAnnotationID || isProcessing(id) }
+        )
+        for action in actions {
+            switch action {
+            case .removeBundle(let id):
+                try? store.delete(id: id)
+            case .removeMedia(let id):
+                guard var manifest = try? store.load(id: id), !manifest.mediaRemoved else { continue }
+                for file in AnnotationRetention.mediaFiles { try? FileManager.default.removeItem(at: store.url(for: id, file: file)) }
+                manifest.mediaRemoved = true
+                try? store.save(manifest)
+            }
+        }
+        if !actions.isEmpty { reload() }
+    }
+
+    /// While Annotate is on: retention now and every hour.
+    func startMaintenance() {
+        guard maintenanceCancellable == nil else { return }
+        maintenanceCancellable = Labs.enabledPublisher(.annotate, in: dependencies.defaults).sink { [weak self] isEnabled in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.maintenanceTask?.cancel()
+                self.maintenanceTask = nil
+                guard isEnabled else { return }
+                let interval = self.dependencies.maintenanceInterval
+                self.maintenanceTask = Task { [weak self] in
+                    while !Task.isCancelled {
+                        guard let recorder = self else { return }
+                        recorder.applyRetention()
+                        try? await Task.sleep(for: interval)
+                    }
+                }
+            }
+        }
     }
 
     /// The files stay owned, and the capsule and dictation block stay up, until the awaited teardown ends.

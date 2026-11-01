@@ -54,3 +54,48 @@ with your ink, clicks and a number drawn on them:
 
 The summary asks the agent to look at those images first and lists each
 keyframe with what you said at that moment.
+
+## Sending it to an agent
+
+Every annotation copies its summary. Paste it into an agent that runs in a
+terminal and can read files, such as Claude Code or Codex. It keeps your session
+and its context. For a chat app that accepts images, use the camera button on
+the Annotations page to copy the contact sheet as an image.
+
+To hand every annotation to an agent automatically, set **Agent command** on the
+Annotations page. VoiceInk runs it in your login shell when an annotation is
+ready, with the summary on standard input and these variables:
+
+| Variable | Value |
+|---|---|
+| `VOICEINK_ANNOTATION_DIR` | the bundle folder |
+| `VOICEINK_ANNOTATION_SUMMARY` | `summary.md` |
+| `VOICEINK_ANNOTATION_CONTACT_SHEET` | `contact-sheet.png`, when it exists |
+| `VOICEINK_ANNOTATION_IMAGES` | the contact sheet, then each keyframe, one path per line |
+
+A command starts a new agent session without the context of a session you have
+open. Its output is saved as `agent-output.txt` in the bundle, and **Stop
+Agent** ends it. The command must finish within the time limit, five minutes by
+default. Examples, checked against `claude --help` and `codex exec --help`
+(replace the project path):
+
+```sh
+cd ~/Projects/my-app && claude -p --add-dir "$VOICEINK_ANNOTATION_DIR" \
+  "Read $VOICEINK_ANNOTATION_SUMMARY and the images it names, then explain what the annotation asks for."
+```
+
+```sh
+codex exec -C ~/Projects/my-app -i "$VOICEINK_ANNOTATION_CONTACT_SHEET" \
+  "Follow the annotation below. Its contact sheet is attached."
+```
+
+Codex appends the summary from standard input to the prompt. Both agents use
+their own sign-in and network access; VoiceInk only starts them.
+
+## Retention
+
+**Keep annotations** removes the movie and the narration after 7 days, and the
+whole bundle after 30 days. The images, the summary and `annotation.json` stay
+until the bundle is removed. You can also choose 30 and 90 days, or **Forever**.
+An annotation that is recording, processing or running its command is never
+removed.

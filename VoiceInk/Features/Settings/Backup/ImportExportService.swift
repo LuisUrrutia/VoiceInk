@@ -213,7 +213,8 @@ class ImportExportService {
             modelIdleUnloadMinutes: IdleModelUnloadSettings.minutes(),
             rawRecordingShortcut: ShortcutStore.shortcut(for: .rawRecording).map(ShortcutBackup.init),
             isRawRecordingShortcutUnbound: ShortcutStore.shortcut(for: .rawRecording) == nil,
-            meetings: .capture()
+            meetings: .capture(),
+            annotate: .capture()
         )
 
         let exportedSettings = BackupFile(

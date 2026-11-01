@@ -18,6 +18,10 @@ final class AnnotationProcessor: ObservableObject {
         }
         var notify: @MainActor (String) -> Void = { NotificationManager.shared.showNotification(title: $0, type: .success) }
         var frameSource: (_ movie: URL, _ offset: TimeInterval) -> any AnnotationFrameSource = { MovieFrameSource(url: $0, offset: $1) }
+        var agentCommand: () -> String? = { AnnotationSettings.agentCommand() }
+        var agentTimeout: () -> TimeInterval = { AnnotationSettings.agentTimeout() }
+        var agentRunner: any AnnotationAgentRunning = LoginShellAgentRunner()
+        var notifyFailure: @MainActor (String) -> Void = { NotificationManager.shared.showNotification(title: $0, type: .error, duration: 7) }
     }
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AnnotationProcessor")
@@ -25,6 +29,9 @@ final class AnnotationProcessor: ObservableObject {
     private weak var recorder: AnnotationRecorder?
     private var worker: Task<Void, Never>?
     @Published private(set) var processingID: UUID?
+    /// Annotations whose agent command is running.
+    @Published private(set) var agentIDs = Set<UUID>()
+    private var agentTasks: [UUID: Task<Void, Never>] = [:]
 
     func configure(engine: VoiceInkEngine, recorder: AnnotationRecorder = .shared) {
         let models = engine.transcriptionModelManager
@@ -52,7 +59,9 @@ final class AnnotationProcessor: ObservableObject {
         self.environment = environment
         self.recorder = recorder
         recorder.onRecorded = { [weak self] manifest in self?.process(manifest.id) }
-        recorder.isProcessing = { [weak self] id in self?.processingID == id || self?.pendingIDs.contains(id) == true }
+        recorder.isProcessing = { [weak self] id in
+            self?.processingID == id || self?.pendingIDs.contains(id) == true || self?.agentIDs.contains(id) == true
+        }
     }
 
     private var pendingIDs = Set<UUID>()
@@ -73,6 +82,57 @@ final class AnnotationProcessor: ObservableObject {
             await worker.value
             if self.worker == worker { self.worker = nil }
         }
+    }
+
+    /// Runs the configured command with the summary on standard input and the bundle's paths in its environment,
+    /// saving its output in the bundle. The annotation stays undeletable until the command ends or is cancelled.
+    private func runAgent(_ command: String, summary: String, manifest: AnnotationManifest, environment: Environment) {
+        guard let recorder else { return }
+        let id = manifest.id
+        let store = recorder.store
+        let variables = AnnotationAgentHandoff.environment(for: manifest, store: store)
+        agentIDs.insert(id)
+        agentTasks[id] = Task { [weak self] in
+            var run = AnnotationAgentRun(command: command, exitStatus: nil, failure: nil, finishedAt: Date())
+            do {
+                let result = try await environment.agentRunner.run(
+                    command: command, standardInput: Data(summary.utf8), timeout: environment.agentTimeout(), environment: variables
+                )
+                run.exitStatus = result.status
+                let url = store.url(for: id, file: AnnotationAgentHandoff.outputFileName)
+                if FileManager.default.fileExists(atPath: store.directory(for: id).path) {
+                    try? result.output.write(to: url, options: [.atomic])
+                    store.protect(url)
+                }
+                if result.status != 0 { run.failure = String(format: String(localized: "The agent command exited with status %d."), result.status) }
+            } catch is CancellationError {
+                run.failure = String(localized: "The agent command was cancelled.")
+            } catch {
+                run.failure = error.localizedDescription
+            }
+            run.finishedAt = Date()
+            guard let self else { return }
+            self.agentIDs.remove(id)
+            self.agentTasks[id] = nil
+            if var saved = try? store.load(id: id) {
+                saved.agentRun = run
+                self.recorder?.update(saved)
+            }
+            if let failure = run.failure {
+                environment.notifyFailure(failure)
+            } else {
+                environment.notify(String(localized: "The agent command finished"))
+            }
+        }
+    }
+
+    func cancelAgent(_ id: UUID) {
+        agentTasks[id]?.cancel()
+    }
+
+    /// Waits for every agent command started so far.
+    func waitForAgents() async {
+        while let task = agentTasks.values.first { await task.value }
     }
 
     enum RenderError: Error {
@@ -180,6 +240,7 @@ final class AnnotationProcessor: ObservableObject {
         recorder.reload()
         environment.copy(summary)
         environment.notify(String(localized: "Annotation copied for your agent"))
+        if let command = environment.agentCommand() { runAgent(command, summary: summary, manifest: manifest, environment: environment) }
     }
 }
 
