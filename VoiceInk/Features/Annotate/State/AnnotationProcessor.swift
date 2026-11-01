@@ -144,6 +144,23 @@ enum AnnotationSummary {
                 lines.append("- \(MeetingMarkdown.timestamp(segment.start)) “\(segment.text)”")
             }
         }
+        let moments = manifest.marks.map { (t: $0.start, text: $0.description) }
+            + manifest.events.map { event in
+                let verb = switch event.kind {
+                case .click: "clicked"
+                case .rightClick: "right-clicked"
+                case .scroll: "scrolled"
+                }
+                return (t: event.t, text: String(format: "\(verb) at x %.2f, y %.2f", event.x, event.y))
+            }
+        if !moments.isEmpty {
+            lines += ["", "## \(String(localized: "Marks and clicks"))", ""]
+            lines.append(String(localized: "Positions are fractions of the display, from its top-left corner."))
+            lines.append("")
+            for moment in moments.sorted(by: { $0.t < $1.t }) {
+                lines.append("- \(MeetingMarkdown.timestamp(moment.t)) \(moment.text)")
+            }
+        }
         if let failure = manifest.narrationFailure {
             lines += ["", "_\(String(format: String(localized: "The narration recording failed (%@), so it may be incomplete."), failure))_"]
         }

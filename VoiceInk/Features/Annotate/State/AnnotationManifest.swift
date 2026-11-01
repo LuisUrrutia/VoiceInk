@@ -43,6 +43,34 @@ struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
     var failure: String?
     /// The narration capture failed; its audio, and so its transcript, may be incomplete.
     var narrationFailure: String?
+    var strokes: [AnnotationStroke] = []
+    var marks: [AnnotationMark] = []
+    var events: [AnnotationEvent] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case version, id, createdAt, status, duration, display, videoOffset, narrationTimeline, transcript, transcriptModel,
+            failure, narrationFailure, strokes, marks, events
+    }
+
+    /// Fields added after the first version default when an older manifest lacks them.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        id = try container.decode(UUID.self, forKey: .id)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        status = try container.decode(Status.self, forKey: .status)
+        duration = try container.decode(TimeInterval.self, forKey: .duration)
+        display = try container.decodeIfPresent(Display.self, forKey: .display)
+        videoOffset = try container.decodeIfPresent(TimeInterval.self, forKey: .videoOffset)
+        narrationTimeline = try container.decodeIfPresent(MeetingTrackTimeline.self, forKey: .narrationTimeline) ?? MeetingTrackTimeline()
+        transcript = try container.decodeIfPresent([TimedTranscriptSegment].self, forKey: .transcript) ?? []
+        transcriptModel = try container.decodeIfPresent(String.self, forKey: .transcriptModel)
+        failure = try container.decodeIfPresent(String.self, forKey: .failure)
+        narrationFailure = try container.decodeIfPresent(String.self, forKey: .narrationFailure)
+        strokes = try container.decodeIfPresent([AnnotationStroke].self, forKey: .strokes) ?? []
+        marks = try container.decodeIfPresent([AnnotationMark].self, forKey: .marks) ?? []
+        events = try container.decodeIfPresent([AnnotationEvent].self, forKey: .events) ?? []
+    }
 
     init(id: UUID = UUID(), createdAt: Date = Date()) {
         self.id = id
