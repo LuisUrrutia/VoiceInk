@@ -38,6 +38,8 @@ final class AnnotationProcessor: ObservableObject {
     @Published private(set) var agentIDs = Set<UUID>()
     private var agentTasks: [UUID: Task<Void, Never>] = [:]
     private var enabledCancellable: AnyCancellable?
+    /// Set when the app quits: annotations still processing then start no command.
+    private var isShuttingDown = false
 
     func configure(engine: VoiceInkEngine, recorder: AnnotationRecorder = .shared) {
         let models = engine.transcriptionModelManager
@@ -156,8 +158,10 @@ final class AnnotationProcessor: ObservableObject {
         agentTasks.values.forEach { $0.cancel() }
     }
 
-    /// Cancels every command and waits until its process group is stopped, before the app quits.
+    /// Starts no further command, cancels every running one and waits until its process group is stopped, before
+    /// the app quits.
     func stopAllAgents() async {
+        isShuttingDown = true
         cancelAllAgents()
         await waitForAgents()
     }
@@ -272,7 +276,7 @@ final class AnnotationProcessor: ObservableObject {
         recorder.reload()
         environment.copy(summary)
         environment.notify(String(localized: "Annotation copied for your agent"))
-        if environment.isEnabled(), let command = environment.agentCommand() { runAgent(command, summary: summary, manifest: manifest, environment: environment) }
+        if !isShuttingDown, environment.isEnabled(), let command = environment.agentCommand() { runAgent(command, summary: summary, manifest: manifest, environment: environment) }
     }
 }
 
