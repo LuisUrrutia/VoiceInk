@@ -64,6 +64,30 @@ final class DictationJobLifecycleTests: XCTestCase {
         XCTAssertEqual(try history(in: fixture.engine).map(\.transcriptionStatus), [TranscriptionStatus.canceled.rawValue])
     }
 
+    func testCancelingTheStopCallerCancelsTheJobTask() async throws {
+        let fixture = try makeFixture()
+        try fixture.fabricateCapture()
+        let stop = Task { await fixture.engine.toggleRecord() }
+        await fulfillment(of: [fixture.hardware.stopEntered], timeout: 3)
+        fixture.hardware.releaseStop()
+        await fulfillment(of: [fixture.session.transcribeEntered], timeout: 3)
+        let job = try XCTUnwrap(fixture.engine.job)
+        let jobTask = try XCTUnwrap(job.task)
+        let stopReturned = expectation(description: "stop caller returned")
+
+        stop.cancel()
+        Task {
+            await stop.value
+            stopReturned.fulfill()
+        }
+        await fulfillment(of: [stopReturned], timeout: 3)
+
+        XCTAssertTrue(jobTask.isCancelled)
+        XCTAssertNil(fixture.engine.job)
+        XCTAssertEqual(fixture.engine.recordingState, .idle)
+        XCTAssertEqual(try history(in: fixture.engine).map(\.transcriptionStatus), [TranscriptionStatus.canceled.rawValue])
+    }
+
     func testCancelDuringTheHardwareStopEndsTheJobWithoutAPipeline() async throws {
         let fixture = try makeFixture()
         try fixture.fabricateCapture()
@@ -308,7 +332,7 @@ private final class HeldSpeechDetector: SpeechDetecting {
     }
 }
 
-/// A streaming session whose transcription waits until the job cancels it.
+/// A streaming session whose transcription waits until it or its task is canceled.
 @MainActor
 private final class BlockingSession: TranscriptionSession {
     private(set) var transcribeCount = 0
@@ -325,7 +349,13 @@ private final class BlockingSession: TranscriptionSession {
     func transcribe(audioURL: URL, vocabulary: RecordingVocabulary) async throws -> String {
         transcribeCount += 1
         transcribeEntered.fulfill()
-        if cancelCount == 0 { await withCheckedContinuation { continuation = $0 } }
+        if cancelCount == 0 {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation = $0 }
+            } onCancel: {
+                Task { @MainActor in self.cancel() }
+            }
+        }
         throw CancellationError()
     }
 
