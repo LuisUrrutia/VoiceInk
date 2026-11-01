@@ -22,7 +22,17 @@ struct ProcessGroupLeader {
         defer { posix_spawnattr_destroy(&attributes) }
         // The group is assigned atomically at launch; group signals never target the app's group.
         try check(posix_spawnattr_setpgroup(&attributes, 0))
-        try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)))
+        // Like Foundation's Process, start from default signal handling: the app ignores SIGPIPE.
+        var defaultSignals = sigset_t()
+        sigemptyset(&defaultSignals)
+        for signal in 1..<NSIG where signal != SIGKILL && signal != SIGSTOP { sigaddset(&defaultSignals, signal) }
+        try check(posix_spawnattr_setsigdefault(&attributes, &defaultSignals))
+        var unblocked = sigset_t()
+        sigemptyset(&unblocked)
+        try check(posix_spawnattr_setsigmask(&attributes, &unblocked))
+        try check(posix_spawnattr_setflags(&attributes, Int16(
+            POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
+        )))
         let argv = arguments.map { strdup($0) }
         let envp = environment.map { strdup("\($0.key)=\($0.value)") }
         defer {
@@ -53,6 +63,17 @@ struct ProcessGroupLeader {
         _ = kill(-pid, signal)
     }
 
+    /// Waits up to `timeout` until no group member other than the leader remains, including killed members
+    /// that their new parent has not reaped yet.
+    func waitForOtherMembersToExit(timeout: TimeInterval) -> Bool {
+        let deadline = DispatchTime.now() + timeout
+        while hasOtherMembers() {
+            guard DispatchTime.now() < deadline else { return false }
+            usleep(10_000)
+        }
+        return true
+    }
+
     /// Reaps the leader, finishing in the background if it has not exited within a second.
     func reap() {
         let deadline = DispatchTime.now() + 1
@@ -67,6 +88,15 @@ struct ProcessGroupLeader {
             var status: Int32 = 0
             while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
         }
+    }
+
+    private func hasOtherMembers() -> Bool {
+        var members = [pid_t](repeating: 0, count: 64)
+        let bytes = members.withUnsafeMutableBytes { buffer in
+            proc_listpids(UInt32(PROC_PGRP_ONLY), UInt32(pid), buffer.baseAddress, Int32(buffer.count))
+        }
+        guard bytes > 0 else { return false }
+        return members.prefix(Int(bytes) / MemoryLayout<pid_t>.size).contains { $0 != 0 && $0 != pid }
     }
 
     static func check(_ status: Int32) throws {
