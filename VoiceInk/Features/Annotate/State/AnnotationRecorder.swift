@@ -75,6 +75,7 @@ final class AnnotationRecorder: ObservableObject {
         let screen: any ScreenRecording
         let microphone: MeetingMicrophoneCapture
         let input: any AnnotationInputCapturing
+        let sampler: AnnotationSceneSampler
         let sleepHold: IdleSleepPrevention.Hold
         var limitTask: Task<Void, Never>?
     }
@@ -135,6 +136,8 @@ final class AnnotationRecorder: ObservableObject {
         ownedAnnotationID = manifest.id
         let startNanoseconds = dependencies.now()
         let screen = dependencies.makeScreen()
+        let sampler = AnnotationSceneSampler(startNanoseconds: startNanoseconds)
+        screen.onFrame = { [sampler] in sampler.ingest($0) }
         let microphone = dependencies.makeMicrophone()
         do {
             try store.save(manifest)
@@ -166,6 +169,7 @@ final class AnnotationRecorder: ObservableObject {
 
         var session = Session(
             manifest: manifest, startNanoseconds: startNanoseconds, screen: screen, microphone: microphone, input: input,
+            sampler: sampler,
             sleepHold: dependencies.idleSleep.begin(name: Self.assertionName)
         )
         let limit = dependencies.maximumDuration
@@ -195,6 +199,7 @@ final class AnnotationRecorder: ObservableObject {
         manifest.strokes = input.strokes
         manifest.events = input.events
         manifest.marks = AnnotationMarks.marks(input.strokes, displaySize: input.displaySize)
+        manifest.sceneChanges = session.sampler.changes
         do {
             let screen = try await session.screen.stop()
             manifest.display = screen.display

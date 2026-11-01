@@ -17,6 +17,7 @@ final class AnnotationProcessor: ObservableObject {
             NSPasteboard.general.setString(text, forType: .string)
         }
         var notify: @MainActor (String) -> Void = { NotificationManager.shared.showNotification(title: $0, type: .success) }
+        var frameSource: (_ movie: URL, _ offset: TimeInterval) -> any AnnotationFrameSource = { MovieFrameSource(url: $0, offset: $1) }
     }
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AnnotationProcessor")
@@ -74,6 +75,53 @@ final class AnnotationProcessor: ObservableObject {
         }
     }
 
+    enum RenderError: Error {
+        /// The bundle was removed while frames were decoded.
+        case bundleRemoved
+    }
+
+    /// Chooses keyframes and renders them with ink and clicks into `frames/` and the contact sheet. A movie that
+    /// cannot be read leaves the bundle without images, and the summary lists the narration instead; a write that
+    /// fails, or a bundle removed meanwhile, is an error.
+    private func renderKeyframes(
+        _ manifest: inout AnnotationManifest, store: AnnotationStore,
+        frameSource: (URL, TimeInterval) -> any AnnotationFrameSource
+    ) async throws {
+        var keyframes = AnnotationKeyframes.keyframes(manifest, sceneChanges: manifest.sceneChanges)
+        manifest.keyframes = []
+        manifest.contactSheet = nil
+        let source = frameSource(store.url(for: manifest.id, file: AnnotationManifest.videoFileName), manifest.videoOffset ?? 0)
+        guard !keyframes.isEmpty, let images = try? await source.images(at: keyframes.map(\.t)) else { return }
+        let bundle = store.directory(for: manifest.id)
+        guard FileManager.default.fileExists(atPath: bundle.path) else { throw RenderError.bundleRemoved }
+        let folder = bundle.appendingPathComponent(AnnotationManifest.framesDirectoryName, isDirectory: true)
+        // Never recreates a removed bundle: only the frames folder inside an existing one.
+        if !FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        var rendered: [(image: CGImage, label: String)] = []
+        for index in keyframes.indices {
+            guard index < images.count, let image = images[index],
+                let annotated = AnnotationRenderer.annotate(image, keyframe: keyframes[index], manifest: manifest),
+                let file = keyframes[index].file
+            else {
+                keyframes[index].file = nil
+                continue
+            }
+            let url = bundle.appendingPathComponent(file)
+            try AnnotationRenderer.writePNG(annotated, to: url)
+            store.protect(url)
+            rendered.append((annotated, "#\(keyframes[index].index) \(MeetingMarkdown.timestamp(keyframes[index].t))"))
+        }
+        manifest.keyframes = keyframes.filter { $0.file != nil }
+        if let sheet = AnnotationRenderer.contactSheet(rendered) {
+            let url = store.url(for: manifest.id, file: AnnotationManifest.contactSheetFileName)
+            try AnnotationRenderer.writePNG(sheet, to: url)
+            store.protect(url)
+            manifest.contactSheet = AnnotationManifest.contactSheetFileName
+        }
+    }
+
     private func run(_ id: UUID) async {
         guard let environment, let recorder, var manifest = try? recorder.store.load(id: id) else { return }
         processingID = id
@@ -95,6 +143,19 @@ final class AnnotationProcessor: ObservableObject {
             await transcriber.releaseResources()
         } else {
             manifest.failure = TimedTranscriptionError.unsupportedModel.localizedDescription
+        }
+
+        do {
+            try await renderKeyframes(&manifest, store: store, frameSource: environment.frameSource)
+        } catch RenderError.bundleRemoved {
+            logger.notice("Annotation was removed while its frames were decoded")
+            return
+        } catch {
+            logger.error("Could not write the annotation images: \(error, privacy: .public)")
+            manifest.status = .failed
+            manifest.failure = error.localizedDescription
+            if FileManager.default.fileExists(atPath: store.directory(for: id).path) { recorder.update(manifest) }
+            return
         }
 
         // The bundle can be trashed while its narration transcribes; then nothing is written or copied.
@@ -133,10 +194,28 @@ enum AnnotationSummary {
             "- `\(AnnotationManifest.videoFileName)`: \(String(localized: "the screen recording"))",
             "- `\(AnnotationManifest.narrationFileName)`: \(String(localized: "the narration audio"))",
             "- `\(AnnotationManifest.fileName)`: \(String(localized: "timestamps and the transcript with word times"))",
-            "",
-            "## \(String(localized: "Narration"))",
-            "",
         ]
+        if !manifest.keyframes.isEmpty {
+            if let sheet = manifest.contactSheet {
+                lines.append("- `\(sheet)`: \(String(localized: "every keyframe in order, numbered"))")
+            }
+            lines.append("- `\(AnnotationManifest.framesDirectoryName)/`: \(String(localized: "each keyframe at full size, with the ink and clicks drawn"))")
+            lines += [
+                "",
+                // As Hex's summary does: the marks and words only make sense on the images.
+                "Open \([manifest.contactSheet, AnnotationManifest.framesDirectoryName + "/"].compactMap { $0 }.joined(separator: " and ")) in that folder before changing anything: the marks and words only make sense on the images, which can show more than the text does.",
+                "",
+                "## \(String(localized: "Keyframes"))",
+                "",
+            ]
+            for keyframe in manifest.keyframes {
+                var line = "- #\(keyframe.index) (\(MeetingMarkdown.timestamp(keyframe.t)))"
+                if let said = keyframe.said { line += " “\(said)”" }
+                if let event = keyframe.event { line += " [\(event)]" }
+                lines.append(line)
+            }
+        }
+        lines += ["", "## \(String(localized: "Narration"))", ""]
         if manifest.transcript.isEmpty {
             lines.append("_\(String(localized: "No narration was transcribed."))_")
         } else {
