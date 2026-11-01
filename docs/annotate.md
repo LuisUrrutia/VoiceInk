@@ -75,8 +75,9 @@ ready, with the summary on standard input and these variables:
 
 A command starts a new agent session without the context of a session you have
 open. Its output is saved as `agent-output.txt` in the bundle, and **Stop
-Agent** ends it. The command must finish within the time limit, five minutes by
-default. Examples, checked against `claude --help` and `codex exec --help`
+Agent** ends it. Turning Annotate off or quitting VoiceInk also ends it, and no
+command starts while Annotate is off. The command must finish within the time
+limit, five minutes by default. Examples, checked against `claude --help` and `codex exec --help`
 (replace the project path):
 
 ```sh
@@ -98,4 +99,5 @@ their own sign-in and network access; VoiceInk only starts them.
 whole bundle after 30 days. The images, the summary and `annotation.json` stay
 until the bundle is removed. You can also choose 30 and 90 days, or **Forever**.
 An annotation that is recording, processing or running its command is never
-removed.
+removed. A movie that cannot be removed, for example a locked file, is tried
+again on the next hourly pass.

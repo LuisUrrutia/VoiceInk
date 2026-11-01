@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import os
 
@@ -18,10 +19,14 @@ final class AnnotationProcessor: ObservableObject {
         }
         var notify: @MainActor (String) -> Void = { NotificationManager.shared.showNotification(title: $0, type: .success) }
         var frameSource: (_ movie: URL, _ offset: TimeInterval) -> any AnnotationFrameSource = { MovieFrameSource(url: $0, offset: $1) }
-        var agentCommand: () -> String? = { AnnotationSettings.agentCommand() }
+        /// No command unless the caller supplies one, so a fixture never launches the user's configured command.
+        var agentCommand: () -> String? = { nil }
         var agentTimeout: () -> TimeInterval = { AnnotationSettings.agentTimeout() }
         var agentRunner: any AnnotationAgentRunning = LoginShellAgentRunner()
         var notifyFailure: @MainActor (String) -> Void = { NotificationManager.shared.showNotification(title: $0, type: .error, duration: 7) }
+        /// Whether Annotate is on; a command starts only then, and turning it off stops the running ones.
+        var isEnabled: () -> Bool = { true }
+        var enabledChanges: AnyPublisher<Bool, Never> = Empty().eraseToAnyPublisher()
     }
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AnnotationProcessor")
@@ -32,6 +37,7 @@ final class AnnotationProcessor: ObservableObject {
     /// Annotations whose agent command is running.
     @Published private(set) var agentIDs = Set<UUID>()
     private var agentTasks: [UUID: Task<Void, Never>] = [:]
+    private var enabledCancellable: AnyCancellable?
 
     func configure(engine: VoiceInkEngine, recorder: AnnotationRecorder = .shared) {
         let models = engine.transcriptionModelManager
@@ -49,7 +55,10 @@ final class AnnotationProcessor: ObservableObject {
                     let context = TranscriptionRequestContext(languages: UserDefaults.standard.selectedTranscriptionLanguages, model: model)
                     guard let engine else { return context }
                     return context.withVocabulary(CustomVocabularyService.shared.loadSavedVocabulary(from: engine.modelContext))
-                }
+                },
+                agentCommand: { AnnotationSettings.agentCommand() },
+                isEnabled: { Labs.isEnabled(.annotate) },
+                enabledChanges: Labs.enabledPublisher(.annotate)
             ),
             recorder: recorder
         )
@@ -61,6 +70,11 @@ final class AnnotationProcessor: ObservableObject {
         recorder.onRecorded = { [weak self] manifest in self?.process(manifest.id) }
         recorder.isProcessing = { [weak self] id in
             self?.processingID == id || self?.pendingIDs.contains(id) == true || self?.agentIDs.contains(id) == true
+        }
+        enabledCancellable = environment.enabledChanges.sink { [weak self] isEnabled in
+            MainActor.assumeIsolated {
+                if !isEnabled { self?.cancelAllAgents() }
+            }
         }
     }
 
@@ -99,12 +113,20 @@ final class AnnotationProcessor: ObservableObject {
                     command: command, standardInput: Data(summary.utf8), timeout: environment.agentTimeout(), environment: variables
                 )
                 run.exitStatus = result.status
-                let url = store.url(for: id, file: AnnotationAgentHandoff.outputFileName)
-                if FileManager.default.fileExists(atPath: store.directory(for: id).path) {
-                    try? result.output.write(to: url, options: [.atomic])
-                    store.protect(url)
-                }
                 if result.status != 0 { run.failure = String(format: String(localized: "The agent command exited with status %d."), result.status) }
+                let url = store.url(for: id, file: AnnotationAgentHandoff.outputFileName)
+                // Never recreates a removed bundle.
+                if FileManager.default.fileExists(atPath: store.directory(for: id).path) {
+                    do {
+                        try result.output.write(to: url, options: [.atomic])
+                        store.protect(url)
+                        run.outputFile = AnnotationAgentHandoff.outputFileName
+                    } catch {
+                        run.failure = run.failure ?? String(
+                            format: String(localized: "The agent output could not be saved: %@"), error.localizedDescription
+                        )
+                    }
+                }
             } catch is CancellationError {
                 run.failure = String(localized: "The agent command was cancelled.")
             } catch {
@@ -128,6 +150,16 @@ final class AnnotationProcessor: ObservableObject {
 
     func cancelAgent(_ id: UUID) {
         agentTasks[id]?.cancel()
+    }
+
+    func cancelAllAgents() {
+        agentTasks.values.forEach { $0.cancel() }
+    }
+
+    /// Cancels every command and waits until its process group is stopped, before the app quits.
+    func stopAllAgents() async {
+        cancelAllAgents()
+        await waitForAgents()
     }
 
     /// Waits for every agent command started so far.
@@ -240,7 +272,7 @@ final class AnnotationProcessor: ObservableObject {
         recorder.reload()
         environment.copy(summary)
         environment.notify(String(localized: "Annotation copied for your agent"))
-        if let command = environment.agentCommand() { runAgent(command, summary: summary, manifest: manifest, environment: environment) }
+        if environment.isEnabled(), let command = environment.agentCommand() { runAgent(command, summary: summary, manifest: manifest, environment: environment) }
     }
 }
 

@@ -243,6 +243,10 @@ enum ConfigurationPreferences {
             if key == MeetingAudioRetention.key, case .number(let days) = value,
                 MeetingAudioRetention(rawValue: Int(days)) == nil || days != days.rounded()
             { continue }
+            // An unsupported policy keeps the current one, rather than reading as the default that deletes files.
+            if key == AnnotationSettings.retentionKey, case .string(let policy) = value, AnnotationRetention(rawValue: policy) == nil {
+                continue
+            }
             if value == .null { defaults.removeObject(forKey: key) }
             else if kind(for: key, labsFeatures: labsFeatures) == .json { defaults.set(encoded[key], forKey: key) }
             else { defaults.set(value.propertyList, forKey: key) }
