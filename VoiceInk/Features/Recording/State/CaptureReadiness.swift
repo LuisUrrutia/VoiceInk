@@ -5,15 +5,42 @@ enum CapturePermission: Equatable {
 }
 
 enum RecordingHotkeyAvailability: Equatable {
-    case unconfigured, unavailable, needsAccessibility, available
+    case unconfigured, unavailable, needsAccessibility, needsRestart, available
 
     var message: String {
         switch self {
         case .unconfigured: String(localized: "Set a recording shortcut in Settings.")
         case .unavailable: String(localized: "Recording shortcut is not active. Refresh it in Settings.")
         case .needsAccessibility: String(localized: "This shortcut needs Accessibility permission.")
+        case .needsRestart:
+            String(localized: "Accessibility is on, but the recording shortcut could not start. Restart VoiceInk to apply it.")
         case .available: String(localized: "Recording shortcut is active.")
         }
+    }
+
+    enum IssueAction: Equatable { case openAccessibilitySettings, restart, refresh }
+
+    /// The fix offered beside a recording-shortcut problem; nil when there is no problem to show.
+    var issueAction: IssueAction? {
+        switch self {
+        case .needsAccessibility: .openAccessibilitySettings
+        case .needsRestart: .restart
+        case .unavailable: .refresh
+        case .unconfigured, .available: nil
+        }
+    }
+
+    /// Only a missing grant can change while the row is visible; a pending restart cannot.
+    var needsLivePermissionRefresh: Bool { self == .needsAccessibility }
+
+    static func resolve(
+        isMonitoring: Bool, hasShortcut: Bool, accessibilityTrusted: Bool, accessibilityGrantedSinceLaunch: Bool
+    ) -> Self {
+        if isMonitoring { return .available }
+        if !hasShortcut { return .unconfigured }
+        if !accessibilityTrusted { return .needsAccessibility }
+        // Only a grant made after launch points to a relaunch; with Accessibility at launch, a refused tap has another cause.
+        return accessibilityGrantedSinceLaunch ? .needsRestart : .unavailable
     }
 }
 

@@ -358,6 +358,46 @@ final class CaptureReadinessTests: XCTestCase {
         return TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
     }
 
+    func testLivePermissionChangeRefreshesReadinessWithoutActivation() async throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let directory = root.appendingPathComponent(".tmp/capture-readiness-tests/\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "ReadinessLivePermissionTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let devices = ReadinessAudioDevices(userDefaults: defaults, notificationCenter: NotificationCenter())
+        let whisper = WhisperModelManager(modelsDirectory: directory)
+        let models = TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
+        let live = OSAllocatedUnfairLock(
+            initialState: PermissionSnapshot(microphone: .denied, accessibility: false, screenRecording: false)
+        )
+        let monitor = PermissionMonitor(
+            client: PermissionClient { live.withLock { $0 } }, makeTimer: { _, _ in AnyCancellable {} },
+            observesActivation: false
+        )
+        let readiness = CaptureReadinessController(
+            models: models, devices: devices,
+            permissionReader: { live.withLock { ($0.microphone, $0.accessibility) } },
+            permissionMonitor: monitor
+        )
+        _ = await readiness.refreshedSnapshot()
+        XCTAssertEqual(readiness.snapshot.microphonePermission, .denied)
+        let refreshed = expectation(description: "readiness follows the permission monitor")
+        let subscription = readiness.$snapshot.dropFirst().first { $0.microphonePermission == .granted }.sink { snapshot in
+            XCTAssertTrue(snapshot.accessibilityGranted)
+            refreshed.fulfill()
+        }
+        defer { subscription.cancel() }
+
+        live.withLock { $0 = PermissionSnapshot(microphone: .granted, accessibility: true, screenRecording: false) }
+        monitor.refresh()
+        await fulfillment(of: [refreshed], timeout: 3)
+
+        XCTAssertTrue(readiness.snapshot.issues(for: .microphoneTest).isEmpty)
+    }
+
     private func snapshot(permission: CapturePermission = .granted) -> CaptureReadiness {
         CaptureReadiness(
             microphonePermission: permission, hasMicrophone: true, accessibilityGranted: true,

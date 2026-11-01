@@ -68,13 +68,17 @@ final class OnboardingCoordinator: ObservableObject {
 
     let defaults: UserDefaults
     let preservesConfiguredModes: Bool
-    var refreshTask: Task<Void, Never>?
+    let permissionMonitor: PermissionMonitor
     lazy var flow = OnboardingFlowController(coordinator: self)
     lazy var permissions = OnboardingPermissionController(coordinator: self)
 
-    init(defaults: UserDefaults = .standard, preservesConfiguredModes: Bool = false) {
+    init(
+        defaults: UserDefaults = .standard, preservesConfiguredModes: Bool = false,
+        permissionMonitor: PermissionMonitor? = nil
+    ) {
         self.defaults = defaults
         self.preservesConfiguredModes = preservesConfiguredModes
+        self.permissionMonitor = permissionMonitor ?? .shared
         self.storedStage = defaults.string(forKey: OnboardingStorageKeys.stage) ?? OnboardingStage.permissions.rawValue
         self.storedActivePermission =
             defaults.string(forKey: OnboardingStorageKeys.activePermission)
@@ -93,10 +97,6 @@ final class OnboardingCoordinator: ObservableObject {
             ) ?? ""
         self.hasSkippedAPISetup = defaults.bool(forKey: OnboardingStorageKeys.skippedAPISetup)
         self.hasSkippedModelSetup = defaults.bool(forKey: OnboardingStorageKeys.skippedModelSetup)
-    }
-
-    deinit {
-        refreshTask?.cancel()
     }
 
     var stage: OnboardingStage {

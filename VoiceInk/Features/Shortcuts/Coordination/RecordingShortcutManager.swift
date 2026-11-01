@@ -6,8 +6,7 @@ import os
 @MainActor
 class RecordingShortcutManager: ObservableObject {
     @Published private(set) var hotkeyAvailability: RecordingHotkeyAvailability = .unconfigured
-    private var activationSubscription: AnyCancellable?
-    private var accessibilityGranted = AXIsProcessTrusted()
+    private var permissionTracker: ShortcutPermissionTracker?
     @Published var primaryRecordingShortcut: ShortcutSelection {
         didSet {
             UserDefaults.standard.set(primaryRecordingShortcut.rawValue, forKey: "primaryRecordingShortcut")
@@ -100,7 +99,10 @@ class RecordingShortcutManager: ObservableObject {
         recordingState != .transcribing && recordingState != .enhancing && recordingState != .busy
     }
 
-    init(engine: VoiceInkEngine, recorderUIManager: RecorderUIManager) {
+    init(
+        engine: VoiceInkEngine, recorderUIManager: RecorderUIManager, permissionMonitor: PermissionMonitor? = nil
+    ) {
+        let permissionMonitor = permissionMonitor ?? .shared
         ShortcutMigration.migrateLegacyShortcutsIfNeeded()
 
         self.primaryRecordingShortcut = ShortcutMigration.migrateShortcutSelection(
@@ -175,7 +177,8 @@ class RecordingShortcutManager: ObservableObject {
                 primaryRecordingShortcutModeSource.primaryMode
             },
             shortcutModeHandler: shortcutModeHandler,
-            preRollPress: engine.recorder.preRollPress
+            preRollPress: engine.recorder.preRollPress,
+            permissionMonitor: permissionMonitor
         )
         engine.recorder.setPreRollObserverProvider { [weak self] in
             guard let self else { return false }
@@ -208,17 +211,22 @@ class RecordingShortcutManager: ObservableObject {
         ShortcutDiagnostics.notice("configuration primarySelection=\(self.primaryRecordingShortcut.rawValue) primaryMode=\(self.primaryRecordingShortcutMode.rawValue) secondarySelection=\(self.secondaryRecordingShortcut.rawValue) secondaryMode=\(self.secondaryRecordingShortcutMode.rawValue)")
         ShortcutDiagnostics.observeEnvironment(reason: "startup", force: true)
 
-        refreshShortcutMonitoring(reason: "startup")
-        activationSubscription = LifecycleObserver.shared.publisher(for: .applicationDidBecomeActive).sink { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                let granted = AXIsProcessTrusted()
-                if self.accessibilityGranted != granted {
-                    self.accessibilityGranted = granted
-                    self.refreshShortcutMonitoring(reason: "accessibility-change")
+        permissionTracker = ShortcutPermissionTracker(
+            permissionMonitor: permissionMonitor,
+            refreshMonitoring: { [weak self] in self?.refreshShortcutMonitoring(reason: "accessibility-change") },
+            availability: .init(
+                isMonitoring: { [weak self] in
+                    guard let self else { return false }
+                    return [ShortcutAction.primaryRecording, .secondaryRecording].contains(where: self.shortcutMonitor.isMonitoring)
+                },
+                hasShortcut: { [weak self] in self?.hasRecordingShortcut ?? false },
+                publish: { [weak self] availability in
+                    guard let self, availability != self.hotkeyAvailability else { return }
+                    self.hotkeyAvailability = availability
                 }
-            }
-        }
+            )
+        )
+        refreshShortcutMonitoring(reason: "startup")
     }
 
     private func refreshShortcutMonitoring(reason: String) {
@@ -295,13 +303,12 @@ class RecordingShortcutManager: ObservableObject {
             },
             reason: reason
         )
-        if [ShortcutAction.primaryRecording, .secondaryRecording].contains(where: shortcutMonitor.isMonitoring) {
-            hotkeyAvailability = .available
-        } else if primaryShortcut == nil && secondaryShortcut == nil {
-            hotkeyAvailability = .unconfigured
-        } else {
-            hotkeyAvailability = AXIsProcessTrusted() ? .unavailable : .needsAccessibility
-        }
+        permissionTracker?.updateAvailability()
+    }
+
+    private var hasRecordingShortcut: Bool {
+        (primaryRecordingShortcut == .custom && ShortcutStore.shortcut(for: .primaryRecording) != nil)
+            || (secondaryRecordingShortcut == .custom && ShortcutStore.shortcut(for: .secondaryRecording) != nil)
     }
 
     private var standaloneModifierActions: Set<ShortcutAction> {
