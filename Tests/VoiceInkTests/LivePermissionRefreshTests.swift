@@ -204,9 +204,8 @@ final class LivePermissionRefreshTests: XCTestCase {
     func testModifierPollsOnlyWhileItsBranchIsShown() throws {
         let monitor = makeMonitor()
         let model = BranchModel()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [], backing: .buffered, defer: false)
-        window.contentView = NSHostingView(rootView: BranchView(model: model, monitor: monitor))
-        defer { window.contentView = nil }
+        let window = makeShownWindow(NSHostingView(rootView: BranchView(model: model, monitor: monitor)))
+        defer { window.contentView = nil; window.orderOut(nil) }
 
         func settle() {
             window.contentView?.layoutSubtreeIfNeeded()
@@ -408,12 +407,46 @@ final class LivePermissionRefreshTests: XCTestCase {
         }
     }
 
+    func testClosedRetainedWindowStopsPollingAndReopeningResumesIt() {
+        let monitor = makeMonitor()
+        let model = BranchModel()
+        let window = makeShownWindow(NSHostingView(rootView: BranchView(model: model, monitor: monitor)))
+        defer { window.contentView = nil; window.orderOut(nil) }
+        settleRunLoop()
+        XCTAssertTrue(monitor.isLiveRefreshing)
+
+        // The main window is retained when closed, so SwiftUI sends no onDisappear.
+        window.close()
+        settleRunLoop()
+        XCTAssertFalse(monitor.isLiveRefreshing, "A closed window stops polling")
+
+        // As WindowManager.presentMainWindow reopens it: show the window and activate the app.
+        window.orderFrontRegardless()
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        settleRunLoop()
+        XCTAssertTrue(monitor.isLiveRefreshing, "Reopening resumes polling")
+    }
+
+    private func makeShownWindow(_ content: NSView) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        window.orderFrontRegardless()
+        return window
+    }
+
+    private func settleRunLoop() {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+    }
+
     func testIssueRowStopsPollingWhenAGrantTurnsIntoARestartOrRecovery() throws {
         let monitor = makeMonitor()
         let model = IssueRowModel()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [], backing: .buffered, defer: false)
-        window.contentView = NSHostingView(rootView: IssueRowView(model: model, monitor: monitor))
-        defer { window.contentView = nil }
+        let window = makeShownWindow(NSHostingView(rootView: IssueRowView(model: model, monitor: monitor)))
+        defer { window.contentView = nil; window.orderOut(nil) }
         func settle() {
             window.contentView?.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
