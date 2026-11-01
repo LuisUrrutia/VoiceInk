@@ -29,6 +29,9 @@ struct AnnotationMark: Codable, Equatable, Sendable {
     var box: [Double]
     var shape: Shape
     var description: String
+    /// A line's first and last points, as drawn.
+    var from: [Double]?
+    var to: [Double]?
 }
 
 /// A click or scroll on the recorded display, normalized like strokes. Keys are never recorded.
@@ -64,11 +67,17 @@ enum AnnotationMarks {
             let points = group.flatMap { strokes[$0].points }
             let box = bounds(points)
             let shapes = group.map { shape(of: strokes[$0], displaySize: displaySize) }
-            let shape: AnnotationMark.Shape = shapes.allSatisfy { $0 == shapes[0] } ? shapes[0] : .mark
+            var shape: AnnotationMark.Shape = shapes.allSatisfy { $0 == shapes[0] } ? shapes[0] : .mark
+            // Separate lines are not one line; their group is a region.
+            if shape == .line, group.count > 1 { shape = .mark }
             var mark = AnnotationMark(
                 id: "m\(offset + 1)", start: strokes[group[0]].start, end: group.map { strokes[$0].end }.max() ?? 0,
                 strokes: group, box: box, shape: shape, description: ""
             )
+            if shape == .line, let first = strokes[group[0]].points.first, let last = strokes[group[0]].points.last {
+                mark.from = [first.x, first.y]
+                mark.to = [last.x, last.y]
+            }
             mark.description = describe(mark)
             return mark
         }
@@ -107,7 +116,9 @@ enum AnnotationMarks {
         switch mark.shape {
         case .circle: return "circled region \(region)\(many)"
         case .underline: return String(format: "underlined x %.2f–%.2f at y %.2f", x0, x1, (y0 + y1) / 2) + many
-        case .line: return String(format: "drew a line from x %.2f, y %.2f to x %.2f, y %.2f", x0, y0, x1, y1)
+        case .line:
+            let from = mark.from ?? [x0, y0], to = mark.to ?? [x1, y1]
+            return String(format: "drew a line from x %.2f, y %.2f to x %.2f, y %.2f", from[0], from[1], to[0], to[1])
         case .tap: return String(format: "tapped x %.2f, y %.2f", (x0 + x1) / 2, (y0 + y1) / 2) + many
         case .mark: return "marked region \(region)\(many)"
         }
