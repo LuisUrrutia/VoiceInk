@@ -46,6 +46,13 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var lastJobSequence: UInt64 = 0
     /// A start waits for preflight before it owns a capture, so cancel, reset and a newer start supersede it here.
     private var startRequestGeneration: UInt64 = 0
+    /// One admitted dictation keeps the single-session behavior: a new start supersedes the previous job.
+    static let dictationCapacity = 1
+    let outputQueue = DictationOutputQueue(capacity: VoiceInkEngine.dictationCapacity)
+    /// The stopped capture's awaited hardware stop, after Stop has handed it to its job.
+    private var isStoppingCaptureHardware = false {
+        didSet { if !isStoppingCaptureHardware { outputQueue.releaseHeldOutputs() } }
+    }
     private let finalization = DictationFinalization()
     /// Releases shared models and enhancement state once no dictation owns them.
     private(set) lazy var residency = TranscriptionResidency { [weak self] in
@@ -121,13 +128,18 @@ class VoiceInkEngine: NSObject, ObservableObject {
         self.pipeline = TranscriptionPipeline(
             modelContext: modelContext,
             serviceRegistry: serviceRegistry,
-            enhancementService: enhancementService
+            enhancementService: enhancementService,
+            outputQueue: outputQueue
         )
         self.speechDetector = speechDetector ?? serviceRegistry.fluidAudioTranscriptionService
         self.isNoSpeechGateEnabled = isNoSpeechGateEnabled
         self.startSoundPlayback = startSoundPlayback
 
         super.init()
+        outputQueue.isCaptureActive = { [weak self] in
+            guard let self else { return false }
+            return self.isStoppingCaptureHardware || (self.capture.map { $0.phase != .idle } ?? false)
+        }
 
         readinessSubscription = self.captureReadiness.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
@@ -168,6 +180,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             guard let finalizationID = finalization.beginCapture() else { return }
             defer { finalization.finishCapture(finalizationID) }
             guard let capture else { return }
+            // Before the handoff clears the capture, so a held output keeps waiting through the hardware stop.
+            isStoppingCaptureHardware = true
             let job = beginJob(stopping: capture, sendAfterPaste: sendAfterPaste)
             defer { if job.task == nil { endJob(job) } }
             let fileBeingStopped = job.audioURL
@@ -189,6 +203,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             } else {
                 await recorder.stopRecording(playStopTone: playStopTone)
             }
+            isStoppingCaptureHardware = false
             recordClosedAudioTiming(preparation?.timing)
             preparation?.startSoundPlayback = startSoundPlayback()
 
@@ -266,11 +281,18 @@ class VoiceInkEngine: NSObject, ObservableObject {
             await previousPreparation?.finish()
             guard startRequest == startRequestGeneration, recordingState == .idle, !Task.isCancelled else { return }
             job?.context?.cancel()
-            if let job { residency.relinquish(job.dictationID) }
+            if let job {
+                residency.relinquish(job.dictationID)
+                outputQueue.skip(job.sequence)
+                outputQueue.withdraw(job.dictationID)
+            }
             job = nil
             capture?.delivery?.cancel()
             capture?.context?.cancel()
-            if let capture { residency.relinquish(capture.dictationID) }
+            if let capture {
+                residency.relinquish(capture.dictationID)
+                outputQueue.withdraw(capture.dictationID)
+            }
             capture = nil
             recordingError = nil
             clearRecordingNotice()
@@ -288,6 +310,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
             let preparation = RecordingTranscriptionPreparation(timing: capturedDelivery.timing)
             let startID = preparation.recordingID
+            guard outputQueue.admit(startID) else {
+                logger.notice("admission=rejected pending=\(self.outputQueue.admittedCount, privacy: .public)")
+                capturedDelivery.cancel()
+                await recorderUIManager?.dismissRecorderPanel()
+                return
+            }
             let realtimeAudioGate = RealtimeAudioChunkGate()
             let capture = DictationCapture(
                 startID: startID, delivery: capturedDelivery, preparation: preparation,
@@ -525,9 +553,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let preparation = capture.preparation
         preparation?.timing.mark(.stopReceived)
         preparation?.freezeModeSelection()
-        lastJobSequence += 1
         let job = DictationJob(
-            sequence: lastJobSequence, capture: capture, sendAfterPaste: sendAfterPaste,
+            sequence: outputQueue.assignSequence(), capture: capture, sendAfterPaste: sendAfterPaste,
             didChangePhase: { [weak self] in self?.refreshRecordingState() }
         )
         capture.startID = nil
@@ -541,10 +568,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private func endJob(_ job: DictationJob) {
         job.delivery?.completePipeline()
         job.context?.cancel()
+        outputQueue.skip(job.sequence)
+        outputQueue.withdraw(job.dictationID)
         if self.job === job { self.job = nil }
     }
 
     private func refreshRecordingState() {
+        // A capture that ends releases an output held behind it.
+        defer { outputQueue.releaseHeldOutputs() }
         guard !isSyncingRecordingState else { return }
         let derived: RecordingState
         if let capture, capture.phase != .idle {
@@ -1004,6 +1035,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
             await finishActiveRecorderCancellation()
             shouldFinishSessionImmediately = false
         case .transcribing, .enhancing:
+            if job?.outputStarted == true {
+                logger.notice("cancel=refused output=committed")
+                return
+            }
             guard let finalizationID = finalization.beginCapture() else { return }
             defer { finalization.finishCapture(finalizationID) }
             let job = self.job
@@ -1063,18 +1098,24 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     private func requestRecordingCancellation() {
         capture?.preparation?.cancel()
-        job?.preparation?.cancel()
         capture?.delivery?.cancel()
-        job?.delivery?.cancel()
         capture?.cancelRequested = true
-        job?.cancelRequested = true
+        capture?.session?.cancel()
+        capture?.session = nil
+        capture?.sessionConfiguration = nil
 
+        // A job past its commit point finishes its output.
+        guard let job, job.delivery?.cancelBeforeOutput() ?? true else { return }
+        job.preparation?.cancel()
+        job.cancelRequested = true
+        outputQueue.skip(job.sequence)
         if recordingState == .transcribing || recordingState == .enhancing {
-            job?.context?.cancel()
-            job?.context = nil
+            job.context?.cancel()
+            job.context = nil
         }
-
-        cancelCurrentSession()
+        job.session?.cancel()
+        job.session = nil
+        job.sessionConfiguration = nil
     }
 
     /// Ends the capture, or a job still inside its Stop, as a canceled History entry.
@@ -1280,7 +1321,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
         if self.capture?.preparation === recordingPreparation { self.capture?.preparation = nil }
         if self.job?.preparation === pipelinePreparation { self.job?.preparation = nil }
         self.capture?.startID = nil
-        if let ended = self.capture, ended.phase == .idle { self.capture = nil }
+        if let ended = self.capture, ended.phase == .idle {
+            outputQueue.withdraw(ended.dictationID)
+            self.capture = nil
+        }
         await residency.release(owners)
     }
 

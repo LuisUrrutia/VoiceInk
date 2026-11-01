@@ -51,6 +51,8 @@ final class RecordingDeliverySession {
     let destination: PasteDestination
     let timing: RecordingTimingTrace
     private(set) var isCancelled = false
+    /// Set at the first clipboard write or typed chunk, after which a user cancellation is refused.
+    private(set) var hasCommittedOutput = false
     private(set) var feedback = DictationFeedback()
     private var completedPipeline = false
     private var cancelPendingTask: (() -> Void)?
@@ -110,6 +112,21 @@ final class RecordingDeliverySession {
     func completePipeline() {
         if !isCancelled { completedPipeline = true }
         cancel()
+    }
+
+    /// The commit point: false once the session is canceled, so a canceled dictation inserts nothing.
+    func commitOutput() -> Bool {
+        guard !isCancelled else { return false }
+        hasCommittedOutput = true
+        return true
+    }
+
+    /// A user's Cancel, which stops a dictation only before its output begins; teardown uses `cancel()`.
+    @discardableResult
+    func cancelBeforeOutput() -> Bool {
+        guard !hasCommittedOutput else { return false }
+        cancel()
+        return true
     }
 
     func cancel() {

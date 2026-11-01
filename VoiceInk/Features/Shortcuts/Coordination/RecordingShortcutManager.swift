@@ -159,6 +159,9 @@ class RecordingShortcutManager: ObservableObject {
             heldRecordingShortcut: { shortcutModeHandler.heldRecordingShortcut }
         )
         self.shortcutModeHandler = shortcutModeHandler
+        engine.outputQueue.isRecordingShortcutHeld = {
+            shortcutModeHandler.heldRecordingShortcut?.isCurrentlyPressed == true
+        }
         self.primaryRecordingShortcutModeSource = primaryRecordingShortcutModeSource
         self.modeShortcutManager = ModeShortcutManager(
             modeProvider: {

@@ -27,6 +27,7 @@ class TranscriptionPipeline {
     private let enhancementService: DictationEnhancing?
     private let delivery: TranscriptionDelivery
     let lane: TranscriptionLane
+    let outputQueue: DictationOutputQueue
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionPipeline")
 
     init(
@@ -34,13 +35,15 @@ class TranscriptionPipeline {
         serviceRegistry: TranscriptionServiceRegistry,
         enhancementService: DictationEnhancing?,
         delivery: TranscriptionDelivery? = nil,
-        lane: TranscriptionLane? = nil
+        lane: TranscriptionLane? = nil,
+        outputQueue: DictationOutputQueue? = nil
     ) {
         self.modelContext = modelContext
         self.serviceRegistry = serviceRegistry
         self.enhancementService = enhancementService
         self.delivery = delivery ?? TranscriptionDelivery()
         self.lane = lane ?? TranscriptionLane()
+        self.outputQueue = outputQueue ?? DictationOutputQueue(capacity: 1)
     }
 
     /// Run the full pipeline for a given transcription record.
@@ -51,7 +54,8 @@ class TranscriptionPipeline {
     ///   - modeSnapshot: This dictation's formatting, enhancement and output settings; only its trigger word replaces it.
     ///   - session: An active streaming session if one was prepared, otherwise nil.
     ///   - vocabularyPreparation: Saved vocabulary plus any screen names ready by transcription completion.
-    ///   - laneSequence: The dictation's sequence, which admits its transcription through `lane`; nil bypasses it.
+    ///   - laneSequence: The dictation's sequence, which admits its transcription through `lane` and orders its delivery
+    ///     through `outputQueue`; nil bypasses both.
     ///   - onStateChange: Called when the pipeline moves to a new recording state (e.g. `.enhancing`).
     ///   - shouldCancel: Returns true if the user requested cancellation.
     ///   - onCancel: Called when cancellation is detected to cancel active session state.
@@ -336,25 +340,41 @@ class TranscriptionPipeline {
         }
 
         deliverySession?.timing.mark(.deliveryStarted)
-        await delivery.deliver(
-            TranscriptionDelivery.Request(
-                transcription: transcription,
-                text: finalText,
-                output: outputForDelivery ?? modeSnapshot.output,
-                responseConfig: responseConfig,
-                responseError: responseError,
-                isAssistantFollowUp: assistant.isFollowUp,
-                sendAfterPaste: sendAfterPaste,
-                deliverySession: deliverySession
-            ),
-            actions: TranscriptionDelivery.Actions(
-                setState: onStateChange,
-                dismiss: onDismiss,
-                sendFollowUp: assistant.sendFollowUp,
-                showResponse: assistant.showResponse,
-                failResponse: assistant.failResponse
-            )
+        let request = TranscriptionDelivery.Request(
+            transcription: transcription,
+            text: finalText,
+            output: outputForDelivery ?? modeSnapshot.output,
+            responseConfig: responseConfig,
+            responseError: responseError,
+            isAssistantFollowUp: assistant.isFollowUp,
+            sendAfterPaste: sendAfterPaste,
+            deliverySession: deliverySession
         )
+        let actions = TranscriptionDelivery.Actions(
+            setState: onStateChange,
+            dismiss: onDismiss,
+            sendFollowUp: assistant.sendFollowUp,
+            showResponse: assistant.showResponse,
+            failResponse: assistant.failResponse
+        )
+        if let laneSequence {
+            let delivered = await outputQueue.deliver(
+                sequence: laneSequence, destination: deliverySession?.destination
+            ) { [delivery] in
+                await delivery.deliver(request, actions: actions)
+            }
+            guard delivered else {
+                // Skipped before its turn: nothing reached the destination.
+                let phases: [RecordingTimingTrace.Phase] = [
+                    .destinationReady, .clipboardSettled, .pasteCommandPosted, .deliveryFinished,
+                ]
+                for phase in phases { deliverySession?.timing.mark(phase, outcome: .canceled) }
+                await finishCanceledTranscription()
+                return
+            }
+        } else {
+            await delivery.deliver(request, actions: actions)
+        }
         deliverySession?.timing.mark(.deliveryFinished, outcome: shouldCancel() ? .canceled : .completed)
 
         saveTranscriptionAndPostCompletion()
