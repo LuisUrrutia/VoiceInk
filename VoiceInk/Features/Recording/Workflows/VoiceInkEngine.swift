@@ -31,7 +31,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         recorder: recorder,
         canStart: { [weak self] in
             guard let self else { return false }
-            return self.recordingState == .idle && !self.recordingFinalization.isRunning
+            return self.recordingState == .idle && !self.finalization.isRunning
         },
         captureIssue: { [weak self] in
             self?.captureReadiness.refreshSnapshot()
@@ -45,7 +45,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
         didSet { refreshRecordingState() }
     }
     private var lastJobSequence: UInt64 = 0
-    private let recordingFinalization = RecordingFinalization()
+    private let finalization = DictationFinalization()
+    /// Releases shared models and enhancement state once no dictation owns them.
+    private(set) lazy var residency = TranscriptionResidency { [weak self] in
+        await self?.releaseSharedResources()
+    }
     private let recordingContextCapture = RecordingContextCapture()
     private var voiceInkRefinePreparationTask: Task<Void, Never>?
 
@@ -148,7 +152,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         preRollPressNanoseconds: UInt64? = nil
     ) async {
         let capturedDelivery = deliverySession ?? RecordingDeliverySession.capture()
-        await recordingFinalization.waitUntilFinished()
+        await finalization.waitUntilFinished()
         guard !Task.isCancelled else { return }
         guard !microphoneDiagnostic.isBusy else {
             await recorderUIManager?.dismissRecorderPanel()
@@ -160,8 +164,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
 
         if recordingState == .recording {
-            guard let finalizationID = recordingFinalization.begin() else { return }
-            defer { recordingFinalization.finish(finalizationID) }
+            guard let finalizationID = finalization.beginCapture() else { return }
+            defer { finalization.finishCapture(finalizationID) }
             guard let capture else { return }
             let job = beginJob(stopping: capture, sendAfterPaste: sendAfterPaste)
             defer { if job.task == nil { endJob(job) } }
@@ -217,7 +221,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     }
 
                     job.transcriptionID = transcription.id
-                    recordingFinalization.finish(finalizationID)
+                    finalization.finishCapture(finalizationID)
                     // Read now, as when the pipeline ran inline: a reset may clear them before the task starts.
                     let inputs = PipelineInputs(
                         audioURL: recordedFile, context: job.context, deliverySession: delivery,
@@ -259,9 +263,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
             await previousPreparation?.finish()
             guard recordingState == .idle, !Task.isCancelled else { return }
             job?.context?.cancel()
+            if let job { residency.relinquish(job.dictationID) }
             job = nil
             capture?.delivery?.cancel()
             capture?.context?.cancel()
+            if let capture { residency.relinquish(capture.dictationID) }
             capture = nil
             recordingError = nil
             clearRecordingNotice()
@@ -284,6 +290,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 didChangePhase: { [weak self] in self?.refreshRecordingState() }
             )
             self.capture = capture
+            residency.acquire(capture.dictationID)
             capturedDelivery.preventIdleSleep(idleSleepPrevention.begin())
             capturedDelivery.holdModelUse(serviceRegistry.beginModelUse())
             let modeManager = ModeManager.shared
@@ -320,8 +327,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     preparation.cancel()
                     self.endFailedRecordingDelivery(capturedDelivery)
                     if self.activeRecordingStartID == startID {
-                        guard let finalizationID = self.recordingFinalization.begin() else { return }
-                        defer { self.recordingFinalization.finish(finalizationID) }
+                        guard let finalizationID = self.finalization.beginCapture() else { return }
+                        defer { self.finalization.finishCapture(finalizationID) }
                         await self.recorder.stopRecording()
                         if self.shouldCancelRecording {
                             await self.finishActiveRecorderCancellation()
@@ -375,12 +382,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
                             await AutoLearnService.shared.recordingDidStart()
                         }
                     },
-                    prepareModel: { configuration in
+                    prepareModel: { [residency] configuration in
+                        await residency.waitForPendingRelease()
                         try await registry.prepareForRecording(
                             configuration, recordingID: startID, whisperModelManager: whisper
                         )
                     },
-                    prepareSession: { [weak self] configuration in
+                    prepareSession: { [weak self, residency] configuration in
+                        await residency.waitForPendingRelease()
                         guard let session = await registry.makeRealtimeSession(
                             for: configuration,
                             onPartialTranscript: { [weak self] partial in
@@ -438,8 +447,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         actionButton: (failure.actionLabel, failure.action), playsSound: false
                     )
                     self.endFailedRecordingDelivery(capturedDelivery)
-                    guard let finalizationID = self.recordingFinalization.begin() else { return }
-                    defer { self.recordingFinalization.finish(finalizationID) }
+                    guard let finalizationID = self.finalization.beginCapture() else { return }
+                    defer { self.finalization.finishCapture(finalizationID) }
                     await self.recorder.stopRecording()
                     self.recordClosedAudioTiming(preparation.timing)
                     if self.shouldCancelRecording {
@@ -467,8 +476,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 // Ending the delivery silences it, so a start failure plays its error tone first.
                 if !self.shouldCancelRecording { capturedDelivery.dictationFailed() }
                 self.endFailedRecordingDelivery(capturedDelivery)
-                guard let finalizationID = self.recordingFinalization.begin() else { return }
-                defer { self.recordingFinalization.finish(finalizationID) }
+                guard let finalizationID = self.finalization.beginCapture() else { return }
+                defer { self.finalization.finishCapture(finalizationID) }
                 self.logger.error("Recording failed to start: \(error, privacy: .public)")
                 let audioFailure = self.recordingAudioFailure(for: error)
                 if audioFailure == nil {
@@ -765,6 +774,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 context?.cancelCapture()
             },
             sendAfterPaste: job.sendAfterPaste,
+            laneSequence: job.sequence,
             deliverySession: deliverySession,
             preparation: preparation,
             onStateChange: { [weak self] state in
@@ -827,15 +837,15 @@ class VoiceInkEngine: NSObject, ObservableObject {
         _ job: DictationJob, transcriptionID: UUID, outcome: RecordingTimingTrace.Outcome,
         preparation: RecordingTranscriptionPreparation?
     ) async -> Bool {
-        await recordingFinalization.waitUntilFinished()
+        await finalization.waitForCapture()
         let didFinishActivePipeline = isActive(transcriptionID)
         if didFinishActivePipeline {
             if outcome == .failed {
                 recordingError = String(localized: "Transcription failed. Check the model or provider in Models.")
             }
-            guard let finalizationID = recordingFinalization.begin() else { return false }
-            defer { recordingFinalization.finish(finalizationID) }
-            await cleanupResources()
+            guard finalization.beginFinish(of: job.dictationID) else { return false }
+            defer { finalization.endFinish(of: job.dictationID) }
+            await releaseResources(of: job)
             job.transcriptionID = nil
             job.session = nil
             job.sessionConfiguration = nil
@@ -964,7 +974,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let timing = (capture?.preparation ?? job?.preparation)?.timing
         timing?.mark(.cancelReceived)
         defer {
-            if recordingState == .idle, !recordingFinalization.isRunning {
+            if recordingState == .idle, !finalization.isRunning {
                 timing?.mark(.idle, outcome: .canceled)
             }
         }
@@ -973,22 +983,22 @@ class VoiceInkEngine: NSObject, ObservableObject {
             await microphoneDiagnostic.cancel()
             return
         }
-        if recordingFinalization.isRunning {
+        if finalization.isRunning {
             requestRecordingCancellation()
-            await recordingFinalization.waitUntilFinished()
+            await finalization.waitUntilFinished()
             return
         }
         let shouldFinishSessionImmediately: Bool
         switch recordingState {
         case .starting, .recording:
-            guard let finalizationID = recordingFinalization.begin() else { return }
-            defer { recordingFinalization.finish(finalizationID) }
+            guard let finalizationID = finalization.beginCapture() else { return }
+            defer { finalization.finishCapture(finalizationID) }
             requestRecordingCancellation()
             await finishActiveRecorderCancellation()
             shouldFinishSessionImmediately = false
         case .transcribing, .enhancing:
-            guard let finalizationID = recordingFinalization.begin() else { return }
-            defer { recordingFinalization.finish(finalizationID) }
+            guard let finalizationID = finalization.beginCapture() else { return }
+            defer { finalization.finishCapture(finalizationID) }
             let job = self.job
             requestRecordingCancellation()
             await job?.preparation?.finish()
@@ -1004,18 +1014,19 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
 
         if shouldFinishSessionImmediately {
-            guard let finalizationID = recordingFinalization.begin() else { return }
-            defer { recordingFinalization.finish(finalizationID) }
-            await finishRecorderSession()
+            guard let finalizationID = finalization.beginCapture() else { return }
+            defer { finalization.finishCapture(finalizationID) }
+            // Enhancement state that another dictation owns stays until that dictation releases it.
+            if !residency.isOwned { await finishRecorderSession() }
         }
     }
 
     func resetRecordingSession() async {
         await microphoneDiagnostic.cancel()
         recordingError = nil
-        await recordingFinalization.waitUntilFinished()
-        guard let finalizationID = recordingFinalization.begin() else { return }
-        defer { recordingFinalization.finish(finalizationID) }
+        await finalization.waitUntilFinished()
+        guard let finalizationID = finalization.beginCapture() else { return }
+        defer { finalization.finishCapture(finalizationID) }
         let capture = self.capture
         let job = self.job
         capture?.preparation?.cancel()
@@ -1239,7 +1250,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     /// Capture and finalization that hold no model lease still keep the idle timer from unloading.
     var isUsingTranscriptionModels: Bool {
-        recordingState != .idle || microphoneDiagnostic.isBusy || recordingFinalization.isRunning
+        recordingState != .idle || microphoneDiagnostic.isBusy || finalization.isRunning
     }
 
     func unloadIdleModels() async {
@@ -1247,9 +1258,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
         await serviceRegistry.unloadIdleModels()
     }
 
+    /// Ends the current capture's and job's preparations and releases their residency.
     func cleanupResources() async {
         let capture = self.capture
         let job = self.job
+        let owners = [capture?.dictationID, job?.dictationID].compactMap { $0 }
         let recordingPreparation = capture?.preparation
         let pipelinePreparation = job?.preparation
         recordingPreparation?.cancel()
@@ -1258,9 +1271,22 @@ class VoiceInkEngine: NSObject, ObservableObject {
         await pipelinePreparation?.finish()
         if self.capture?.preparation === recordingPreparation { self.capture?.preparation = nil }
         if self.job?.preparation === pipelinePreparation { self.job?.preparation = nil }
-        logger.notice("cleanupResources: releasing model resources")
         self.capture?.startID = nil
         if let ended = self.capture, ended.phase == .idle { self.capture = nil }
+        await residency.release(owners)
+    }
+
+    /// A job's own finish: its preparation, VAD lease and share of the residency.
+    private func releaseResources(of job: DictationJob) async {
+        let preparation = job.preparation
+        preparation?.cancel()
+        await preparation?.finish()
+        if job.preparation === preparation { job.preparation = nil }
+        await residency.release([job.dictationID])
+    }
+
+    private func releaseSharedResources() async {
+        logger.notice("cleanupResources: releasing model resources")
         await finishRecorderSession()
         await whisperModelManager.cleanupResources()
         await serviceRegistry.cleanup()

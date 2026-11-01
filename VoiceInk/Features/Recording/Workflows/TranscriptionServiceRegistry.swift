@@ -31,6 +31,7 @@ class TranscriptionServiceRegistry {
 
     private let idleUnload: IdleModelUnloadCoordinator
     private let activity: IdleModelUnloadCoordinator.Activity
+    private let modelLoads = SingleFlightModelLoads()
 
     init(
         modelProvider: any WhisperModelProvider, modelsDirectory: URL, modelContext: ModelContext,
@@ -115,17 +116,20 @@ class TranscriptionServiceRegistry {
         await waitForPendingUnload()
         try Task.checkCancellation()
         let model = configuration.model
+        let key = SingleFlightModelLoads.Key(provider: model.provider, modelName: model.name)
         if model.provider == .whisper {
             if let localModel = whisperModelManager.availableModels.first(where: { $0.name == model.name }),
                 whisperModelManager.whisperContext == nil
             {
-                try await whisperModelManager.loadModel(localModel)
+                try await modelLoads.run(key) { try await whisperModelManager.loadModel(localModel) }
             }
         } else if let model = model as? FluidAudioModel, !configuration.isRealtimeEnabled {
             // Streaming owns its ASR manager; avoid preparing an unused batch manager concurrently.
-            try await fluidAudioTranscriptionService.loadModel(for: model)
+            let service = fluidAudioTranscriptionService
+            try await modelLoads.run(key) { try await service.loadModel(for: model) }
         } else if let model = model as? TranscribeCppModel {
-            try await transcribeCppTranscriptionService.loadModel(for: model)
+            let service = transcribeCppTranscriptionService
+            try await modelLoads.run(key) { try await service.loadModel(for: model) }
         }
         try Task.checkCancellation()
         if model.provider == .fluidAudio {
@@ -154,5 +158,40 @@ class TranscriptionServiceRegistry {
     func unloadIdleModels() async {
         await fluidAudioTranscriptionService.unloadIdleModels()
         cachedTranscribeCppTranscriptionService?.unloadIdleModel()
+    }
+}
+
+/// Concurrent preparations of one provider's model never load it twice.
+///
+/// The first caller runs the load itself, so its cancellation reaches the load as before; later callers wait
+/// for it to end. After a successful load they skip it; after a failed or canceled one the next caller loads.
+@MainActor
+final class SingleFlightModelLoads {
+    struct Key: Hashable {
+        let provider: ModelProvider
+        let modelName: String
+    }
+
+    private final class Load {
+        var succeeded = false
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private var loads: [Key: Load] = [:]
+
+    func run(_ key: Key, _ operation: @MainActor () async throws -> Void) async throws {
+        while let inFlight = loads[key] {
+            await withCheckedContinuation { inFlight.waiters.append($0) }
+            try Task.checkCancellation()
+            if inFlight.succeeded { return }
+        }
+        let load = Load()
+        loads[key] = load
+        defer {
+            loads[key] = nil
+            load.waiters.forEach { $0.resume() }
+        }
+        try await operation()
+        load.succeeded = true
     }
 }
