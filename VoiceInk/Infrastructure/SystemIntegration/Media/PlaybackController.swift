@@ -15,7 +15,6 @@ protocol NowPlayingMediaControlling: AnyObject {
     var onStateReceived: ((NowPlayingState?) -> Void)? { get set }
     func startListening()
     func stopListening()
-    func play()
     func pause()
     func fetchState(_ onReceive: @escaping (NowPlayingState?) -> Void)
 }
@@ -109,7 +108,7 @@ class PlaybackController: ObservableObject {
             mediaController: adapter,
             browserMediaPauser: BrowserMediaPauser(
                 permission: TCCSystemAudioRecordingPermission(),
-                commands: NowPlayingBrowserMediaCommands(mediaController: adapter),
+                commands: MediaRemoteCommandSender(),
                 makeListener: { CoreAudioBrowserAudioListener($0) }
             ),
             sendPlayPauseKey: sendMediaPlayPauseKey,
@@ -337,7 +336,7 @@ class PlaybackController: ObservableObject {
 
 /// MediaRemoteAdapter's listener process, reduced to the state PlaybackController reads.
 private final class MediaRemoteNowPlaying: NowPlayingMediaControlling {
-    let adapter = MediaRemoteAdapter.MediaController()
+    private let adapter = MediaRemoteAdapter.MediaController()
 
     var onStateReceived: ((NowPlayingState?) -> Void)? {
         didSet {
@@ -351,7 +350,6 @@ private final class MediaRemoteNowPlaying: NowPlayingMediaControlling {
 
     func startListening() { adapter.startListening() }
     func stopListening() { adapter.stopListening() }
-    func play() { adapter.play() }
     func pause() { adapter.pause() }
     func fetchState(_ onReceive: @escaping (NowPlayingState?) -> Void) {
         adapter.getTrackInfo { onReceive(Self.state($0)) }
@@ -362,16 +360,27 @@ private final class MediaRemoteNowPlaying: NowPlayingMediaControlling {
     }
 }
 
-/// MediaRemote's explicit play and pause through the adapter's listener process.
-private struct NowPlayingBrowserMediaCommands: BrowserMediaCommandSending, @unchecked Sendable {
-    // The adapter serializes commands on its own queue.
-    let mediaController: MediaRemoteNowPlaying
+/// MediaRemote's explicit play and pause, sent synchronously so the browser sequence starts
+/// confirming after the command and sees a refusal. The adapter's queued commands report neither.
+struct MediaRemoteCommandSender: BrowserMediaCommandSending, @unchecked Sendable {
+    typealias SendCommand = @convention(c) (UInt32, CFDictionary?) -> UInt8
 
+    private static let resolved: SendCommand? = {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY),
+            let symbol = dlsym(handle, "MRMediaRemoteSendCommand")
+        else { return nil }
+        return unsafeBitCast(symbol, to: SendCommand.self)
+    }()
+
+    private let sendCommand: SendCommand?
+
+    init(sendCommand: SendCommand? = MediaRemoteCommandSender.resolved) {
+        self.sendCommand = sendCommand
+    }
+
+    /// `kMRPlay` is 0 and `kMRPause` is 1; a missing symbol refuses every command.
     func send(_ command: BrowserMediaCommand) -> Bool {
-        switch command {
-        case .play: mediaController.play()
-        case .pause: mediaController.pause()
-        }
-        return true
+        guard let sendCommand else { return false }
+        return sendCommand(command == .play ? 0 : 1, nil) != 0
     }
 }

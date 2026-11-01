@@ -244,7 +244,12 @@ final class BrowserMediaPauser {
         let gate = BrowserMediaCommandGate()
         await withTaskCancellationHandler {
             guard !Task.isCancelled else { return }
-            let task = startWork(gate: gate) { [commands, makeListener] in
+            let task = startWork(gate: gate) { [permission, commands, makeListener] in
+                // Consent revoked since the pause: VoiceInk cannot hear the browser, so it sends no play.
+                guard permission.authorization() == .granted else {
+                    Self.logger.info("Sent no play: System Audio Recording is no longer allowed")
+                    return BrowserMediaSequence.ResumeOutcome.leftAlone
+                }
                 let audio = makeListener(.all)
                 defer { audio.close() }
                 return await BrowserMediaSequence.resume(audio, commands: commands, gate: gate)

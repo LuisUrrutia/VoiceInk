@@ -166,6 +166,14 @@ struct GeneralBackup: Codable {
         }
     }
 
+    /// A backup without the field keeps the current choice.
+    @MainActor
+    func restoreBrowserMediaPausing(in playback: PlaybackController) {
+        if let isPauseBrowserMediaEnabled {
+            playback.isPauseBrowserMediaEnabled = isPauseBrowserMediaEnabled
+        }
+    }
+
     func restoreMicrophonePreferences(in devices: AudioDeviceManager = .shared) {
         if let avoidsBluetoothDefaultMicrophone {
             devices.setAvoidsBluetoothDefaultMicrophone(avoidsBluetoothDefaultMicrophone)

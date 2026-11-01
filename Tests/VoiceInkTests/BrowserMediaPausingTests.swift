@@ -523,7 +523,6 @@ private final class FakeNowPlaying: NowPlayingMediaControlling {
 
     func startListening() { isListening = true }
     func stopListening() { isListening = false }
-    func play() { commands.append(.play) }
     func pause() { commands.append(.pause) }
     func fetchState(_ onReceive: @escaping (NowPlayingState?) -> Void) { onReceive(current) }
 
@@ -733,5 +732,102 @@ final class SystemAudioRecordingPermissionModelTests: XCTestCase {
             XCTAssertFalse(model.isWaitingForAnswer, "\(state)")
             XCTAssertEqual(permission.requests, 0, "\(state)")
         }
+    }
+}
+
+private struct TapStartFailure: Error {}
+
+private final class SilentLevel: BrowserOutputLevel {
+    func waitForFirstCycle() async {}
+    func peakDBFS(over window: Duration) async -> Float? { nil }
+}
+
+final class BrowserTapFailureTests: XCTestCase {
+    private let closedChrome = FixedProcessList(list: [process(1, "com.google.Chrome", output: false)])
+
+    func testAFailedTapCannotAuthorizePlayForAClosedOutput() async {
+        let listener = CoreAudioBrowserAudioListener(.all, processList: closedChrome, startTap: { _ in throw TapStartFailure() })
+        let commands = RecordingCommands()
+
+        let outcome = await BrowserMediaSequence.resume(listener, commands: commands, gate: BrowserMediaCommandGate())
+
+        XCTAssertEqual(outcome, .leftAlone)
+        XCTAssertEqual(commands.sent, [])
+        XCTAssertFalse(listener.isBrowserOutputClosed())
+    }
+
+    func testAStartedTapOnAClosedOutputStillAllowsPlay() async {
+        let listener = CoreAudioBrowserAudioListener(.all, processList: closedChrome, startTap: { _ in SilentLevel() })
+
+        let peak = await listener.peakDBFS(over: .milliseconds(1))
+
+        XCTAssertNil(peak)
+        XCTAssertTrue(listener.isBrowserOutputClosed())
+    }
+}
+
+@MainActor
+final class BrowserMediaResumeConsentTests: XCTestCase {
+    func testRevokedConsentSendsNoPlayAndGivesUpThePause() async {
+        let permission = ScriptedPermission(.granted)
+        let commands = RecordingCommands()
+        let queue = ListenerQueue([ScriptedBrowserAudio(playing + [-200, -200]), ScriptedBrowserAudio([-200, -25])])
+        let pauser = BrowserMediaPauser(permission: permission, commands: commands, makeListener: { queue.next($0) })
+        await pauser.pause()
+
+        permission.answer(false)
+        await pauser.resume()
+
+        XCTAssertEqual(commands.sent, [.pause])
+        XCTAssertEqual(queue.requested, [.playing])
+        XCTAssertFalse(pauser.ownsPause)
+    }
+}
+
+private var sentMediaRemoteCommands: [UInt32] = []
+
+final class MediaRemoteCommandSenderTests: XCTestCase {
+    func testExplicitCommandsAndTheirResultReachTheSequence() {
+        sentMediaRemoteCommands = []
+        let accepting = MediaRemoteCommandSender(sendCommand: { command, _ in
+            sentMediaRemoteCommands.append(command)
+            return 1
+        })
+        let refusing = MediaRemoteCommandSender(sendCommand: { _, _ in 0 })
+
+        XCTAssertTrue(accepting.send(.pause))
+        XCTAssertTrue(accepting.send(.play))
+        XCTAssertFalse(refusing.send(.pause))
+        XCTAssertFalse(MediaRemoteCommandSender(sendCommand: nil).send(.pause), "a missing symbol refuses")
+        XCTAssertEqual(sentMediaRemoteCommands, [1, 0], "kMRPause is 1 and kMRPlay is 0; never the toggle")
+    }
+}
+
+@MainActor
+final class BrowserMediaBackupRestoreTests: XCTestCase {
+    func testBackupRestoresPresentValuesAndKeepsTheCurrentOneWhenMissing() throws {
+        let suite = "BrowserMediaBackupRestoreTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: PlaybackController.pauseBrowserMediaKey)
+        let controller = PlaybackController(
+            mediaController: FakeNowPlaying(),
+            browserMediaPauser: BrowserMediaPauser(
+                permission: FixedPermission(state: .granted), commands: RecordingCommands(),
+                makeListener: { _ in ScriptedBrowserAudio([]) }
+            ),
+            defaults: defaults, sendPlayPauseKey: {}, isApplicationRunning: { _ in true }, resumptionDelay: { 0 }
+        )
+        func backup(_ json: String) throws -> GeneralBackup {
+            try JSONDecoder().decode(GeneralBackup.self, from: Data(json.utf8))
+        }
+
+        try backup(#"{"isPauseMediaEnabled":true}"#).restoreBrowserMediaPausing(in: controller)
+        let afterMissingField = controller.isPauseBrowserMediaEnabled
+        try backup(#"{"isPauseBrowserMediaEnabled":false}"#).restoreBrowserMediaPausing(in: controller)
+
+        XCTAssertTrue(afterMissingField)
+        XCTAssertFalse(controller.isPauseBrowserMediaEnabled)
+        XCTAssertEqual(defaults.object(forKey: PlaybackController.pauseBrowserMediaKey) as? Bool, false)
     }
 }
