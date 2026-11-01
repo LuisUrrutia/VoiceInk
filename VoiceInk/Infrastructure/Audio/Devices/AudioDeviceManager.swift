@@ -123,10 +123,15 @@ class AudioDeviceManager: ObservableObject {
 
     /// Resolves from `properties`, fetched for the current `availableDevices`, without querying CoreAudio.
     func resolveCurrentRecordingDevice(using properties: RecordingDeviceProperties) -> RecordingDeviceResolution {
+        withPrefetchedRoutingProperties(properties) { resolveCurrentRecordingDevice() }
+    }
+
+    /// Runs `body` with routing reading `properties` instead of CoreAudio.
+    func withPrefetchedRoutingProperties<T>(_ properties: RecordingDeviceProperties, _ body: () -> T) -> T {
         let previous = prefetchedRoutingProperties
         prefetchedRoutingProperties = properties
         defer { prefetchedRoutingProperties = previous }
-        return resolveCurrentRecordingDevice()
+        return body()
     }
 
     func getSystemDefaultDeviceName() -> String? {
@@ -298,7 +303,7 @@ class AudioDeviceManager: ObservableObject {
             DispatchQueue.main.async {
                 self.temporaryMicrophone = nil
                 self.selectedDeviceID = id
-                self.updateCustomDeviceHints(deviceID: id, uid: uid, modelUID: modelUID)
+                self.updateCustomDeviceHints(deviceID: id, uid: uid, name: deviceToSelect.name, modelUID: modelUID)
                 self.notifyDeviceChange()
             }
         } else {
@@ -316,7 +321,7 @@ class AudioDeviceManager: ObservableObject {
                 self.inputMode = .custom
                 self.selectedDeviceID = id
                 self.userDefaults.audioInputModeRawValue = AudioInputMode.custom.rawValue
-                self.updateCustomDeviceHints(deviceID: id, uid: uid, modelUID: modelUID)
+                self.updateCustomDeviceHints(deviceID: id, uid: uid, name: deviceToSelect.name, modelUID: modelUID)
                 self.notifyDeviceChange()
             }
         } else {
@@ -492,8 +497,9 @@ class AudioDeviceManager: ObservableObject {
             let savedUID = userDefaults.selectedAudioDeviceUID,
             let found = findAvailableDevice(uid: savedUID, modelUID: userDefaults.selectedAudioDeviceModelUID),
             found.uid != savedUID || userDefaults.selectedAudioDeviceModelUID == nil
+                || userDefaults.audioDeviceNamesByUID[found.uid] != found.name
         {
-            updateCustomDeviceHints(deviceID: found.id, uid: found.uid)
+            updateCustomDeviceHints(deviceID: found.id, uid: found.uid, name: found.name)
         }
         for saved in prioritizedDevices {
             guard let found = findAvailableDevice(uid: saved.id, modelUID: saved.modelUID),
@@ -599,8 +605,9 @@ class AudioDeviceManager: ObservableObject {
         savePrioritizedDevices()
     }
 
-    private func updateCustomDeviceHints(deviceID: AudioDeviceID, uid: String, modelUID: String? = nil) {
+    private func updateCustomDeviceHints(deviceID: AudioDeviceID, uid: String, name: String, modelUID: String? = nil) {
         userDefaults.selectedAudioDeviceUID = uid
+        userDefaults.audioDeviceNamesByUID[uid] = name
         userDefaults.selectedAudioDeviceModelUID = modelUID ?? getDeviceModelUID(deviceID: deviceID)
     }
 

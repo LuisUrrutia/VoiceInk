@@ -171,11 +171,14 @@ extension AudioDeviceManager {
     }
 
     var bluetoothDefaultSubstitution: BluetoothMicrophoneSubstitution? {
+        bluetoothDefaultSubstitution(currentDeviceID: getCurrentDevice())
+    }
+
+    func bluetoothDefaultSubstitution(currentDeviceID: AudioDeviceID) -> BluetoothMicrophoneSubstitution? {
         guard inputMode == .systemDefault, temporaryMicrophone == nil,
-            let defaultDeviceID = getSystemDefaultDevice(),
+            let defaultDeviceID = routingSystemDefaultDevice(),
             !bluetoothDefaultStandInIDs(for: defaultDeviceID).isEmpty
         else { return nil }
-        let currentDeviceID = getCurrentDevice()
         guard currentDeviceID != defaultDeviceID,
             let bluetoothName = availableDevices.first(where: { $0.id == defaultDeviceID })?.name,
             let standInName = availableDevices.first(where: { $0.id == currentDeviceID })?.name

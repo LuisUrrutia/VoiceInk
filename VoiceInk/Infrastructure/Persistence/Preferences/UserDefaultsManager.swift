@@ -5,6 +5,7 @@ extension UserDefaults {
         static let audioInputMode = "audioInputMode"
         static let selectedAudioDeviceUID = "selectedAudioDeviceUID"
         static let selectedAudioDeviceModelUID = "selectedAudioDeviceModelUID"
+        static let audioDeviceNamesByUID = "audioDeviceNamesByUID"
         static let prioritizedDevices = "prioritizedDevices"
         static let audioInputChannelsByDeviceUID = "audioInputChannelsByDeviceUID"
         static let avoidsBluetoothDefaultMicrophone = "AvoidBluetoothDefaultMicrophone"
@@ -47,6 +48,17 @@ extension UserDefaults {
     var selectedAudioDeviceModelUID: String? {
         get { string(forKey: Keys.selectedAudioDeviceModelUID) }
         set { setValue(newValue, forKey: Keys.selectedAudioDeviceModelUID) }
+    }
+
+    /// Names of chosen Custom microphones by device UID, so a disconnected one can still be named. Keyed by UID,
+    /// a selection changed without its name (such as a configuration edit) never shows another device's name.
+    var audioDeviceNamesByUID: [String: String] {
+        get { dictionary(forKey: Keys.audioDeviceNamesByUID) as? [String: String] ?? [:] }
+        set { set(newValue, forKey: Keys.audioDeviceNamesByUID) }
+    }
+
+    var selectedAudioDeviceName: String? {
+        selectedAudioDeviceUID.flatMap { audioDeviceNamesByUID[$0] }
     }
 
     var prioritizedDevicesData: Data? {

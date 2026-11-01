@@ -48,7 +48,7 @@ enum ConfigurationPreferences {
                 IdleModelUnloadSettings.minutesKey,
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
-            (.stringMap, ["CustomLanguagePrompts"]),
+            (.stringMap, ["CustomLanguagePrompts", UserDefaults.Keys.audioDeviceNamesByUID]),
             (.json, [
                 "modeConfigurationsV2", "customPrompts", "customCloudModels", "customAIProviders", "prioritizedDevices",
                 "audioInputChannelsByDeviceUID",

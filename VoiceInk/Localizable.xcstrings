@@ -155,6 +155,94 @@
         }
       }
     },
+    "%@ (Not Connected)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (nicht verbunden)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (non connecté)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@（未连接）"
+          }
+        }
+      }
+    },
+    "%@ is Bluetooth, so VoiceInk listens to %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ist Bluetooth, daher hört VoiceInk über %2$@ zu"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ est en Bluetooth, VoiceInk écoute donc %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 是蓝牙设备，因此 VoiceInk 使用 %2$@ 收音"
+          }
+        }
+      }
+    },
+    "%@ isn't connected, and no other microphone is available" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ ist nicht verbunden, und kein anderes Mikrofon ist verfügbar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ n’est pas connecté et aucun autre micro n’est disponible"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 未连接，且没有其他可用的麦克风"
+          }
+        }
+      }
+    },
+    "%@ isn't connected; using %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ist nicht verbunden; %2$@ wird verwendet"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ n’est pas connecté ; utilisation de %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 未连接；正在使用 %2$@"
+          }
+        }
+      }
+    },
     "%d minutes" : {
       "localizations" : {
         "de" : {
@@ -243,6 +331,28 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld of %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld von %2$lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld sur %2$lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld/%2$lld"
           }
         }
       }
@@ -2340,6 +2450,50 @@
         }
       }
     },
+    "Input in Use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verwendeter Eingang"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entrée utilisée"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在使用的输入"
+          }
+        }
+      }
+    },
+    "Input level" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eingangspegel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Niveau d’entrée"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入电平"
+          }
+        }
+      }
+    },
     "Labs" : {
       "localizations" : {
         "de" : {
@@ -2358,6 +2512,160 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "实验室"
+          }
+        }
+      }
+    },
+    "No microphone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Mikrofon"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun micro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无麦克风"
+          }
+        }
+      }
+    },
+    "Not listening" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hört nicht zu"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "N’écoute pas"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未在收音"
+          }
+        }
+      }
+    },
+    "Shows the input level while VoiceInk records, tests the microphone or keeps it ready. Opening this page never turns the microphone on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeigt den Eingangspegel, während VoiceInk aufnimmt, das Mikrofon testet oder es bereithält. Das Öffnen dieser Seite schaltet das Mikrofon nie ein."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Affiche le niveau d’entrée pendant que VoiceInk enregistre, teste le micro ou le garde prêt. Ouvrir cette page n’allume jamais le micro."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 VoiceInk 录音、测试麦克风或保持麦克风就绪时显示输入电平。打开此页面绝不会开启麦克风。"
+          }
+        }
+      }
+    },
+    "The lid is closed, and no other microphone is available" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Deckel ist geschlossen, und kein anderes Mikrofon ist verfügbar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’écran est rabattu et aucun autre micro n’est disponible"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕已合上，且没有其他可用的麦克风"
+          }
+        }
+      }
+    },
+    "The lid is closed, so VoiceInk listens to %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Deckel ist geschlossen, daher hört VoiceInk über %@ zu"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’écran est rabattu, VoiceInk écoute donc %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕已合上，因此 VoiceInk 使用 %@ 收音"
+          }
+        }
+      }
+    },
+    "The selected microphone isn't connected, and no other microphone is available" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das ausgewählte Mikrofon ist nicht verbunden, und kein anderes Mikrofon ist verfügbar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le micro sélectionné n’est pas connecté et aucun autre micro n’est disponible"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选麦克风未连接，且没有其他可用的麦克风"
+          }
+        }
+      }
+    },
+    "The selected microphone isn't connected; using %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das ausgewählte Mikrofon ist nicht verbunden; %@ wird verwendet"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le micro sélectionné n’est pas connecté ; utilisation de %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选麦克风未连接；正在使用 %@"
           }
         }
       }
@@ -3360,6 +3668,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "VoiceInk 会继续运行。从“应用程序”或 Spotlight 重新打开它以显示窗口。"
+          }
+        }
+      }
+    },
+    "VoiceInk switches to %@ after this recording" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk wechselt nach dieser Aufnahme zu %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoiceInk passera à %@ après cet enregistrement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次录音结束后，VoiceInk 将切换到 %@"
           }
         }
       }

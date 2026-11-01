@@ -461,6 +461,14 @@ class Recorder: NSObject, ObservableObject {
         return audioMeter
     }
 
+    /// The meter the render callback last published. Never creates, prepares or opens the hardware.
+    func inputLevelReading() -> MicrophoneLevelReading? {
+        guard let recorder else { return nil }
+        return MicrophoneLevelReading(
+            peakDBFS: recorder.peakPower, capturedThroughNanoseconds: recorder.capturedThroughNanoseconds
+        )
+    }
+
     /// Polls the meters the render callback already publishes; detection never runs on that callback.
     private func startInputSignalMonitoring(_ hardware: any RecordingHardware) {
         let monitoring = inputSignalMonitoring
