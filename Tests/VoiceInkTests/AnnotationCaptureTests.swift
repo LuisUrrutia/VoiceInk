@@ -88,6 +88,44 @@ import os
         XCTAssertFalse(fixture.recorder.isPenEnabled)
     }
 
+    func testScreenChangesSeenWhileRecordingAreSavedForKeyframes() async throws {
+        let fixture = makeFixture()
+        try await fixture.recorder.start()
+        let id = try XCTUnwrap(fixture.recorder.activeAnnotation?.id)
+        let onFrame = try XCTUnwrap(fixture.screen.onFrame, "the recorder samples the screen it records")
+        let start = fixture.clock.now
+
+        onFrame(try frame(gray: 20, at: start + 1_000_000_000))
+        onFrame(try frame(gray: 20, at: start + 1_300_000_000))
+        onFrame(try frame(gray: 230, at: start + 2_000_000_000))
+        let stopped = await fixture.recorder.stop()
+
+        XCTAssertEqual(stopped?.sceneChanges.map(\.t), [2])
+        XCTAssertEqual(try fixture.store.load(id: id).sceneChanges.count, 1)
+    }
+
+    /// A 128×72 BGRA frame of one gray level, stamped at `nanoseconds` on the uptime clock.
+    private func frame(gray: UInt8, at nanoseconds: UInt64) throws -> CMSampleBuffer {
+        var pixels: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 128, 72, kCVPixelFormatType_32BGRA, nil, &pixels)
+        let buffer = try XCTUnwrap(pixels)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        memset(CVPixelBufferGetBaseAddress(buffer), Int32(gray), CVPixelBufferGetBytesPerRow(buffer) * 72)
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        var format: CMVideoFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: buffer, formatDescriptionOut: &format)
+        var timing = CMSampleTimingInfo(
+            duration: .invalid, presentationTimeStamp: CMTime(value: CMTimeValue(nanoseconds), timescale: 1_000_000_000),
+            decodeTimeStamp: .invalid
+        )
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: nil, imageBuffer: buffer, formatDescription: try XCTUnwrap(format), sampleTiming: &timing,
+            sampleBufferOut: &sample
+        )
+        return try XCTUnwrap(sample)
+    }
+
     func testCancelDiscardsTheAnnotation() async throws {
         let fixture = makeFixture()
         var recorded = 0
