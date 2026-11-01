@@ -9,8 +9,8 @@ struct PermissionSnapshot: Equatable {
     var screenRecording: Bool
 }
 
-struct PermissionClient {
-    var read: () -> PermissionSnapshot
+struct PermissionClient: Sendable {
+    var read: @Sendable () -> PermissionSnapshot
 
     static let live = PermissionClient {
         let microphone: CapturePermission
@@ -34,6 +34,10 @@ struct PermissionClient {
 @MainActor
 final class PermissionMonitor: ObservableObject {
     typealias RepeatingTimerFactory = @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> AnyCancellable
+    typealias ReadScheduler = @MainActor (
+        _ read: @escaping @Sendable () -> PermissionSnapshot,
+        _ deliver: @escaping @MainActor (PermissionSnapshot) -> Void
+    ) -> Void
 
     static let shared = PermissionMonitor()
     static let liveRefreshInterval: TimeInterval = 0.4
@@ -45,6 +49,9 @@ final class PermissionMonitor: ObservableObject {
 
     private let client: PermissionClient
     private let makeTimer: RepeatingTimerFactory
+    private let scheduleRead: ReadScheduler
+    private var isReading = false
+    private var readsAgain = false
     private var liveOwners: [ObjectIdentifier: WeakOwner] = [:]
     private var timer: AnyCancellable?
     private var activationSubscription: AnyCancellable?
@@ -52,10 +59,13 @@ final class PermissionMonitor: ObservableObject {
     init(
         client: PermissionClient = .live,
         makeTimer: @escaping RepeatingTimerFactory = PermissionMonitor.mainRunLoopTimer,
+        scheduleRead: @escaping ReadScheduler = PermissionMonitor.backgroundRead,
         observesActivation: Bool = true
     ) {
         self.client = client
         self.makeTimer = makeTimer
+        self.scheduleRead = scheduleRead
+        // One launch read, so the first frame and the grant-since-launch state need no placeholder.
         let initial = client.read()
         snapshot = initial
         hasObservedUntrustedAccessibility = !initial.accessibility
@@ -69,10 +79,24 @@ final class PermissionMonitor: ObservableObject {
 
     var isLiveRefreshing: Bool { timer != nil }
 
+    /// Reads off the main actor; a request made while a read runs coalesces into one further read.
     func refresh() {
-        let current = client.read()
+        guard !isReading else {
+            readsAgain = true
+            return
+        }
+        isReading = true
+        scheduleRead(client.read) { [weak self] current in self?.finishRead(current) }
+    }
+
+    private func finishRead(_ current: PermissionSnapshot) {
+        isReading = false
         if !current.accessibility { hasObservedUntrustedAccessibility = true }
         if current != snapshot { snapshot = current }
+        if readsAgain {
+            readsAgain = false
+            refresh()
+        }
     }
 
     /// Delivers each Accessibility change on the main queue, after `snapshot` holds the new value.
@@ -107,6 +131,22 @@ final class PermissionMonitor: ObservableObject {
             timer = nil
         } else if timer == nil {
             timer = makeTimer(Self.liveRefreshInterval) { [weak self] in self?.tick() }
+        }
+    }
+
+    private nonisolated static let readQueue = DispatchQueue(
+        label: "com.prakashjoshipax.voiceink.permissionMonitor", qos: .userInitiated
+    )
+
+    /// TCC checks are synchronous IPC that can take over a second when the daemons are busy.
+    static func backgroundRead(
+        _ read: @escaping @Sendable () -> PermissionSnapshot,
+        deliver: @escaping @MainActor (PermissionSnapshot) -> Void
+    ) {
+        nonisolated(unsafe) let deliver = deliver
+        readQueue.async {
+            let snapshot = read()
+            DispatchQueue.main.async { MainActor.assumeIsolated { deliver(snapshot) } }
         }
     }
 

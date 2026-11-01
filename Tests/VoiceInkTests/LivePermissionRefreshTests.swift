@@ -1,4 +1,5 @@
 import Combine
+import os
 import SwiftUI
 import XCTest
 
@@ -21,6 +22,7 @@ final class LivePermissionRefreshTests: XCTestCase {
         return PermissionMonitor(
             client: PermissionClient { permissions.read() },
             makeTimer: { interval, tick in timers.make(interval: interval, tick: tick) },
+            scheduleRead: { read, deliver in deliver(read()) },
             observesActivation: false
         )
     }
@@ -105,6 +107,56 @@ final class LivePermissionRefreshTests: XCTestCase {
 
         XCTAssertNil(cancellable)
         XCTAssertEqual(ticks, ticksAtCancel)
+    }
+
+    func testProductionReadsRunOffTheMainThreadAndPublishOnIt() async {
+        let reads = OSAllocatedUnfairLock(initialState: [Bool]())
+        let granted = OSAllocatedUnfairLock(initialState: false)
+        let monitor = PermissionMonitor(
+            client: PermissionClient {
+                reads.withLock { $0.append(Thread.isMainThread) }
+                return PermissionSnapshot(microphone: .granted, accessibility: granted.withLock { $0 }, screenRecording: false)
+            },
+            makeTimer: { _, _ in AnyCancellable {} }, observesActivation: false
+        )
+        let published = expectation(description: "grant published")
+        let subscription = monitor.$snapshot.dropFirst().sink { snapshot in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(snapshot.accessibility)
+            published.fulfill()
+        }
+        defer { subscription.cancel() }
+
+        granted.withLock { $0 = true }
+        monitor.refresh()
+        await fulfillment(of: [published], timeout: 3)
+
+        XCTAssertEqual(reads.withLock { $0 }, [true, false], "Only the launch read runs on the main thread")
+    }
+
+    func testRefreshesDuringASlowReadCoalesceIntoOneFurtherRead() {
+        var pending: [() -> Void] = []
+        var readCount = 0
+        let monitor = PermissionMonitor(
+            client: PermissionClient { PermissionSnapshot(microphone: .granted, accessibility: false, screenRecording: false) },
+            makeTimer: { _, _ in AnyCancellable {} },
+            scheduleRead: { read, deliver in
+                readCount += 1
+                pending.append { deliver(read()) }
+            },
+            observesActivation: false
+        )
+
+        monitor.refresh()
+        monitor.refresh()
+        monitor.refresh()
+        XCTAssertEqual(readCount, 1)
+
+        pending.removeFirst()()
+        XCTAssertEqual(readCount, 2)
+        pending.removeFirst()()
+        XCTAssertEqual(readCount, 2)
+        XCTAssertTrue(pending.isEmpty)
     }
 
     // MARK: Live grants
@@ -292,8 +344,10 @@ final class LivePermissionRefreshTests: XCTestCase {
         let center = NotificationCenter()
         var isMonitoring = false
         var published: [RecordingHotkeyAvailability] = []
+        permissions.snapshot.accessibility = true
+        monitor.refresh()
         let tracker = ShortcutPermissionTracker(
-            permissionMonitor: monitor, notificationCenter: center, accessibilityTrusted: { true },
+            permissionMonitor: monitor, notificationCenter: center,
             refreshMonitoring: {},
             availability: .init(
                 isMonitoring: { isMonitoring }, hasShortcut: { true }, publish: { published.append($0) }
@@ -321,7 +375,7 @@ final class LivePermissionRefreshTests: XCTestCase {
         var refreshes = 0
         var publishes = 0
         var tracker: ShortcutPermissionTracker? = ShortcutPermissionTracker(
-            permissionMonitor: monitor, notificationCenter: center, accessibilityTrusted: { true },
+            permissionMonitor: monitor, notificationCenter: center,
             refreshMonitoring: { refreshes += 1 },
             availability: .init(isMonitoring: { false }, hasShortcut: { true }, publish: { _ in publishes += 1 })
         )
@@ -512,7 +566,7 @@ private struct IssueRowView: View {
     }
 }
 
-private final class FakePermissions {
+private final class FakePermissions: @unchecked Sendable {
     var snapshot = PermissionSnapshot(microphone: .notDetermined, accessibility: false, screenRecording: false)
     private(set) var reads = 0
 

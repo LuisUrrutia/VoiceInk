@@ -1,4 +1,3 @@
-import ApplicationServices
 import Combine
 import Foundation
 
@@ -13,19 +12,16 @@ final class ShortcutPermissionTracker {
     }
 
     private let permissionMonitor: PermissionMonitor
-    private let accessibilityTrusted: () -> Bool
     private let availability: Availability?
     private var subscriptions: Set<AnyCancellable> = []
 
     init(
         permissionMonitor: PermissionMonitor,
         notificationCenter: NotificationCenter = .default,
-        accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
         refreshMonitoring: @escaping @MainActor () -> Void,
         availability: Availability? = nil
     ) {
         self.permissionMonitor = permissionMonitor
-        self.accessibilityTrusted = accessibilityTrusted
         self.availability = availability
         permissionMonitor.observeAccessibilityChanges { _ in refreshMonitoring() }
             .store(in: &subscriptions)
@@ -42,7 +38,8 @@ final class ShortcutPermissionTracker {
             RecordingHotkeyAvailability.resolve(
                 isMonitoring: availability.isMonitoring(),
                 hasShortcut: availability.hasShortcut(),
-                accessibilityTrusted: accessibilityTrusted(),
+                // The monitor's snapshot, so this main-actor path makes no TCC call.
+                accessibilityTrusted: permissionMonitor.snapshot.accessibility,
                 accessibilityGrantedSinceLaunch: permissionMonitor.hasObservedUntrustedAccessibility
             )
         )

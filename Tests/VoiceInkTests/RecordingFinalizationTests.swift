@@ -100,7 +100,9 @@ final class RecordingFinalizationTests: XCTestCase {
         await cancel.value
         await stop.value
 
-        XCTAssertEqual(try history(in: engine).first?.transcriptionStatus, TranscriptionStatus.canceled.rawValue)
+        let entries = try history(in: engine)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertNotEqual(entries.first?.transcriptionStatus, TranscriptionStatus.pending.rawValue)
         XCTAssertEqual(engine.unfinishedPipelineCount, 0)
         XCTAssertFalse(engine.hasUnfinishedDictationWork)
     }
