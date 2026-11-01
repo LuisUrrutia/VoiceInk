@@ -44,6 +44,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         didSet { refreshRecordingState() }
     }
     private var lastJobSequence: UInt64 = 0
+    /// A start waits for preflight before it owns a capture, so cancel, reset and a newer start supersede it here.
+    private var startRequestGeneration: UInt64 = 0
     private let finalization = DictationFinalization()
     /// Releases shared models and enhancement state once no dictation owns them.
     private(set) lazy var residency = TranscriptionResidency { [weak self] in
@@ -249,6 +251,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             }
         } else {
             guard recordingState == .idle else { return }
+            startRequestGeneration &+= 1
+            let startRequest = startRequestGeneration
             capturedDelivery.timing.mark(.engineStart)
             let pressNanoseconds = preRollPressNanoseconds ?? capturedDelivery.timing.originNanoseconds
             recorder.holdPreRoll(forPressAt: pressNanoseconds)
@@ -260,7 +264,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let previousPreparation = job?.preparation
             previousPreparation?.cancel()
             await previousPreparation?.finish()
-            guard recordingState == .idle, !Task.isCancelled else { return }
+            guard startRequest == startRequestGeneration, recordingState == .idle, !Task.isCancelled else { return }
             job?.context?.cancel()
             if let job { residency.relinquish(job.dictationID) }
             job = nil
@@ -276,8 +280,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 assistantSession.reset()
             }
 
-            guard await passesRecordingPreflight(delivery: capturedDelivery), !microphoneDiagnostic.isBusy,
-                recordingState == .idle, !Task.isCancelled
+            let readiness = await captureReadiness.refreshedSnapshot()
+            guard startRequest == startRequestGeneration, !Task.isCancelled,
+                await passesRecordingPreflight(readiness: readiness, delivery: capturedDelivery),
+                !microphoneDiagnostic.isBusy, recordingState == .idle
             else { return }
 
             let preparation = RecordingTranscriptionPreparation(timing: capturedDelivery.timing)
@@ -648,8 +654,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     /// Checks requirements that do not depend on asynchronous app and URL mode resolution.
     @MainActor
-    private func passesRecordingPreflight(delivery: RecordingDeliverySession) async -> Bool {
-        if let issue = await captureReadiness.refreshedSnapshot().issues(for: .microphoneTest).first {
+    private func passesRecordingPreflight(
+        readiness: CaptureReadiness, delivery: RecordingDeliverySession
+    ) async -> Bool {
+        if let issue = readiness.issues(for: .microphoneTest).first {
             await failRecordingPreflight(
                 title: issue.message,
                 actionLabel: String(localized: "Audio Settings"),
@@ -969,6 +977,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     // MARK: - Cancellation
 
     func cancelRecording() async {
+        startRequestGeneration &+= 1
         let timing = (capture?.preparation ?? job?.preparation)?.timing
         timing?.mark(.cancelReceived)
         defer {
@@ -1020,6 +1029,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     func resetRecordingSession() async {
+        startRequestGeneration &+= 1
         await microphoneDiagnostic.cancel()
         recordingError = nil
         await finalization.waitUntilFinished()

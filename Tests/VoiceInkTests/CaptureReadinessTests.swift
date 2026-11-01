@@ -176,28 +176,38 @@ final class CaptureReadinessTests: XCTestCase {
         defer { devices.release() }
         let models = makeModels()
         let readiness = CaptureReadinessController(models: models, devices: devices, permissionReader: { (.granted, true) })
-        // Model scans finishing later would request passes of their own.
-        let deadline = ContinuousClock.now + .seconds(3)
-        while !models.hasLoadedInstallationSnapshot || models.configuredCloudProviderKeys == nil {
-            guard ContinuousClock.now < deadline else { return XCTFail("Model state did not load") }
-            try await Task.sleep(for: .milliseconds(1))
-        }
-        _ = await readiness.refreshedSnapshot()
+        try await settle(readiness, models: models)
         devices.hold()
         let queriesBefore = devices.queryCount
         readiness.refreshSnapshot()
         await fulfillment(of: [devices.queryEntered], timeout: 3)
 
-        for _ in 0..<20 {
-            NotificationCenter.default.post(name: Notification.Name("AudioDeviceChanged"), object: nil)
-            devices.objectWillChange.send()
-            readiness.refreshSnapshot()
-        }
-        await drainMainActor()
+        for _ in 0..<20 { readiness.refreshSnapshot() }
         devices.release()
         _ = await readiness.refreshedSnapshot()
 
         XCTAssertEqual(devices.queryCount - queriesBefore, 2)
+    }
+
+    func testDeviceListChangeDuringAQueryIsFetchedAgainBeforeAWaiterResumes() async throws {
+        let devices = SlowQueryAudioDevices()
+        devices.lidClosed = true
+        defer { devices.release() }
+        let readiness = makeReadiness(devices: devices)
+        let initial = await readiness.refreshedSnapshot()
+        XCTAssertFalse(initial.hasMicrophone)
+        devices.hold()
+        let queriesBefore = devices.queryCount
+
+        let waiter = Task { await readiness.refreshedSnapshot() }
+        await fulfillment(of: [devices.queryEntered], timeout: 3)
+        devices.availableDevices = [(id: 92, uid: "usb-mic", name: "USB microphone")]
+        devices.release()
+        let snapshot = await waiter.value
+
+        XCTAssertTrue(snapshot.hasMicrophone)
+        XCTAssertGreaterThanOrEqual(devices.queryCount - queriesBefore, 2)
+        XCTAssertFalse(devices.queriedOnMainThread)
     }
 
     func testControllerReleasesItsObserversWithItsOwnerDuringAQuery() async throws {
@@ -213,13 +223,104 @@ final class CaptureReadinessTests: XCTestCase {
 
         XCTAssertNil(released)
         devices.release()
-        await drainMainActor()
+        let sentinelDevices = SlowQueryAudioDevices()
+        let sentinel = makeReadiness(devices: sentinelDevices)
+        _ = await sentinel.refreshedSnapshot()
         let queriesAfterRelease = devices.queryCount
+        let sentinelQueries = sentinelDevices.queryCount
+        devices.objectWillChange.send()
         NotificationCenter.default.post(name: Notification.Name("AudioDeviceChanged"), object: nil)
         NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
-        devices.objectWillChange.send()
-        await drainMainActor()
+        // The sentinel answering the same notifications shows that their deliveries have run.
+        let deadline = ContinuousClock.now + .seconds(3)
+        while sentinelDevices.queryCount == sentinelQueries {
+            guard ContinuousClock.now < deadline else { return XCTFail("Sentinel saw no notification") }
+            try await Task.sleep(for: .milliseconds(1))
+        }
         XCTAssertEqual(devices.queryCount, queriesAfterRelease)
+    }
+
+    func testCancelDuringPreflightQueryKeepsTheStartFromCapturing() async throws {
+        let (engine, devices, hardware) = try await makePreflightEngine()
+        devices.hold()
+        defer { devices.release() }
+
+        let start = Task { await engine.toggleRecord() }
+        await fulfillment(of: [devices.queryEntered], timeout: 3)
+        await engine.cancelRecording()
+        devices.release()
+        await start.value
+
+        XCTAssertEqual(hardware.startCount, 0)
+        XCTAssertNil(engine.capture)
+        XCTAssertNil(engine.recordingError)
+        XCTAssertEqual(engine.recordingState, .idle)
+    }
+
+    func testNewerStartSupersedesOneWaitingInPreflight() async throws {
+        let (engine, devices, hardware) = try await makePreflightEngine()
+        devices.hold()
+        defer { devices.release() }
+        let superseded = RecordingDeliverySession(destination: .currentApplication)
+        let newer = RecordingDeliverySession(destination: .currentApplication)
+
+        var startingDeliveries: [RecordingDeliverySession?] = []
+        let starting = engine.$recordingState.filter { $0 == .starting }.sink { _ in
+            startingDeliveries.append(engine.capture?.delivery)
+        }
+        defer { starting.cancel() }
+
+        let first = Task { await engine.toggleRecord(deliverySession: superseded) }
+        await fulfillment(of: [devices.queryEntered], timeout: 3)
+        await engine.cancelRecording()
+        let second = Task { await engine.toggleRecord(deliverySession: newer) }
+        devices.release()
+        await first.value
+        await second.value
+
+        XCTAssertEqual(startingDeliveries.count, 1)
+        XCTAssertTrue(startingDeliveries.first.flatMap { $0 } === newer)
+        XCTAssertEqual(hardware.startCount, 1)
+        await engine.cancelRecording()
+    }
+
+    private func makePreflightEngine() async throws -> (VoiceInkEngine, SlowQueryAudioDevices, ReadinessAudioHardware) {
+        let modes = ModeManager.shared
+        let originalModes = modes.configurations
+        let originalActiveMode = modes.activeConfiguration
+        modes.configurations = [ModeConfig(name: "Preflight Fixture", isAIEnhancementEnabled: false)]
+        modes.activeConfiguration = nil
+        addTeardownBlock { @MainActor in
+            ModeManager.shared.configurations = originalModes
+            ModeManager.shared.activeConfiguration = originalActiveMode
+        }
+        let devices = SlowQueryAudioDevices()
+        let hardware = ReadinessAudioHardware()
+        let models = makeModels()
+        let readiness = CaptureReadinessController(models: models, devices: devices, permissionReader: { (.granted, true) })
+        let container = try ModelContainer(
+            for: Transcription.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let engine = VoiceInkEngine(
+            modelContext: ModelContext(container), whisperModelManager: WhisperModelManager(
+                modelsDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            ),
+            transcriptionModelManager: models, recorder: Recorder(hardware: hardware, deviceManager: devices),
+            captureReadiness: readiness
+        )
+        engine.recorderUIManager = VisibleReadinessPanel()
+        try await settle(readiness, models: models)
+        return (engine, devices, hardware)
+    }
+
+    /// Model scans finishing later would request device passes of their own.
+    private func settle(_ readiness: CaptureReadinessController, models: TranscriptionModelManager) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !models.hasLoadedInstallationSnapshot || models.configuredCloudProviderKeys == nil {
+            guard ContinuousClock.now < deadline else { throw SettleTimeout() }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        _ = await readiness.refreshedSnapshot()
     }
 
     private func makeReadiness(devices: AudioDeviceManager) -> CaptureReadinessController {
@@ -231,11 +332,6 @@ final class CaptureReadinessTests: XCTestCase {
             modelsDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         )
         return TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
-    }
-
-    /// Lets notification deliveries and the tasks they schedule on the main actor run.
-    private func drainMainActor() async {
-        for _ in 0..<20 { await Task.yield() }
     }
 
     private func snapshot(permission: CapturePermission = .granted) -> CaptureReadiness {
@@ -312,8 +408,8 @@ private final class SlowQueryAudioDevices: AudioDeviceManager {
         return 91
     }
     override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
-    override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { true }
-    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .builtIn }
+    override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { deviceID == 91 }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { deviceID == 91 ? .builtIn : .other }
 
     func hold() { state.withLock { $0.isHeld = true } }
 
@@ -326,12 +422,23 @@ private final class SlowQueryAudioDevices: AudioDeviceManager {
     }
 }
 
+private struct SettleTimeout: Error {}
+
+private final class VisibleReadinessPanel: RecorderPanelPresenting {
+    var isRecorderPanelVisible = true
+    func dismissRecorderPanel() async {}
+}
+
 private final class ReadinessAudioHardware: RecordingHardware, @unchecked Sendable {
+    private let starts = OSAllocatedUnfairLock(initialState: 0)
+    var startCount: Int { starts.withLock { $0 } }
     var onAudioChunk: ((Data) -> Void)?
     var averagePower: Float { -60 }
     var peakPower: Float { -60 }
     func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
-    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
+    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
+        starts.withLock { $0 += 1 }
+    }
     func stopRecording() {}
     func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
     func invalidatePreparation() {}
