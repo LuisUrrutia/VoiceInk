@@ -60,6 +60,23 @@ enum ShortcutStore {
         )
     }
 
+    /// Applies bindings as one change: a key moving between these actions never collides with its previous holder.
+    /// A binding that still conflicts is rejected as by `setShortcut`, and its action keeps its previous binding.
+    static func setShortcuts(_ bindings: [(action: ShortcutAction, shortcut: Shortcut?)]) {
+        let changes = bindings.filter { shortcut(for: $0.action) != $0.shortcut }
+        let previous = Dictionary(changes.map { ($0.action, shortcut(for: $0.action)) }, uniquingKeysWith: { first, _ in first })
+        for change in changes where previous[change.action] != nil {
+            setShortcut(nil, for: change.action)
+        }
+        for change in changes {
+            guard let target = change.shortcut else { continue }
+            setShortcut(target, for: change.action)
+            if shortcut(for: change.action) != target, let old = previous[change.action] ?? nil {
+                setShortcut(old, for: change.action)
+            }
+        }
+    }
+
     static func seedShortcut(
         _ shortcut: Shortcut,
         for action: ShortcutAction,

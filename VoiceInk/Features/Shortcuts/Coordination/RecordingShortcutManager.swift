@@ -535,7 +535,7 @@ final class RecordingShortcutModeHandler {
         // Finish held recordings when monitoring resets.
         let state = recordingState()
         let shouldFinishHeldRecording = !preservingRecording && isRecorderVisible()
-            && wasHoldMode
+            && wasHoldMode && !isCaptureOwnedByOtherKind(activeRecordingShortcutAction)
             && (state == .starting || state == .recording || (state == .idle && activeShortcutCanCancelAccidentalStart))
         logDecision(activeRecordingShortcutAction, phase: "reset", result: shouldFinishHeldRecording ? "finish-held-recording" : "clear-press", detail: "preservingRecording=\(preservingRecording)")
         stateRevision &+= 1
@@ -559,7 +559,7 @@ final class RecordingShortcutModeHandler {
         modeId: UUID? = nil
     ) async {
         // The shortcut kind that started a capture owns it; the other kind neither finishes it nor double-taps.
-        if let owner = captureProcessing(), owner != action.dictationProcessing {
+        if isCaptureOwnedByOtherKind(action) {
             logDecision(action, phase: "down", result: "ignored-other-owner")
             clearPendingDoubleTap(for: action)
             return
@@ -675,6 +675,11 @@ final class RecordingShortcutModeHandler {
         activeShortcutCanCancelAccidentalStart = false
         activeShortcutIsDoubleTap = false
         let releaseRevision = stateRevision
+        // A press that outlived its capture (canceled from the panel, then another kind started) is retired.
+        guard !isCaptureOwnedByOtherKind(action) else {
+            logDecision(action, phase: "up", result: "ignored-other-owner")
+            return
+        }
 
         switch mode {
         case .toggle:
@@ -751,6 +756,12 @@ final class RecordingShortcutModeHandler {
 
         guard shortcutPressStartTime == pressedAt else { return }
 
+        if isCaptureOwnedByOtherKind(action) {
+            logDecision(action, phase: "interrupted", result: "ignored-other-owner")
+            resetShortcutStates(for: [action], preservingRecording: true)
+            return
+        }
+
         if activeShortcutIsDoubleTap {
             heldShortcut.withLock { $0 = nil }
             logDecision(action, phase: "interrupted", result: "clear-double-tap")
@@ -779,6 +790,10 @@ final class RecordingShortcutModeHandler {
         reset()
         retractStartSound()
         await cancelRecording()
+    }
+
+    private func isCaptureOwnedByOtherKind(_ action: ShortcutAction) -> Bool {
+        captureProcessing().map { $0 != action.dictationProcessing } ?? false
     }
 
     private func logDecision(_ action: ShortcutAction, phase: String, result: String, detail: String = "") {

@@ -129,12 +129,20 @@ struct GeneralBackup: Codable {
     /// Distinguishes an unbound Dictate Without Processing shortcut from an older backup without the field.
     var isRawRecordingShortcutUnbound: Bool? = nil
 
-    func restoreRawRecordingShortcut() {
-        if let rawRecordingShortcut {
-            ShortcutStore.setShortcut(rawRecordingShortcut.shortcut, for: .rawRecording)
-        } else if isRawRecordingShortcutUnbound == true {
-            ShortcutStore.setShortcut(nil, for: .rawRecording)
+    /// The backup's global bindings, where nil unbinds; a missing field is omitted and keeps the current binding.
+    var shortcutRestores: [(action: ShortcutAction, shortcut: Shortcut?)] {
+        let stored: [(ShortcutAction, ShortcutBackup?)] = [
+            (.primaryRecording, primaryRecordingShortcut), (.secondaryRecording, secondaryRecordingShortcut),
+            (.pasteLastTranscription, pasteLastTranscriptionShortcut), (.pasteLastEnhancement, pasteLastEnhancementShortcut),
+            (.retryLastTranscription, retryLastTranscriptionShortcut), (.cancelRecorder, cancelRecorderShortcut),
+            (.openQuickHistory, openHistoryWindowShortcut), (.quickAddToDictionary, quickAddToDictionaryShortcut),
+            (.rawRecording, rawRecordingShortcut),
+        ]
+        var restores = stored.compactMap { action, backup in backup.map { (action: action, shortcut: Optional($0.shortcut)) } }
+        if rawRecordingShortcut == nil, isRawRecordingShortcutUnbound == true {
+            restores.append((action: .rawRecording, shortcut: nil))
         }
+        return restores
     }
 
     func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {

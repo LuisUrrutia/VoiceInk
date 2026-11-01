@@ -1,5 +1,8 @@
+import AVFoundation
 import Carbon
+import CoreAudio
 import SwiftData
+import os
 import XCTest
 @testable import VoiceInk
 
@@ -106,6 +109,21 @@ final class RawDictationTests: XCTestCase {
         XCTAssertEqual(fixture.toggles, [.standard, .standard])
     }
 
+    func testAHeldPressOutlivingItsCaptureCannotFinishTheOtherKindsCapture() async {
+        for (held, replacement) in [(ShortcutAction.rawRecording, DictationProcessing.standard), (.primaryRecording, .raw)] {
+            let fixture = OwnershipFixture()
+            await fixture.press(held, at: 0, mode: .pushToTalk)
+            fixture.owner = nil  // Canceled from the recorder panel while the shortcut stays down.
+            fixture.owner = replacement  // Another kind starts from the menu bar or the other shortcut.
+
+            await fixture.handler.handleInterruption(action: held, pressedAt: 0)
+            await fixture.release(held, at: 2, mode: .pushToTalk)
+
+            XCTAssertEqual(fixture.toggles, [held.dictationProcessing], "\(held)")
+            XCTAssertEqual(fixture.owner, replacement, "\(held)")
+        }
+    }
+
     func testRawShortcutUsesThePrimaryModeForChordHandling() {
         for primary in RecordingShortcutManager.Mode.allCases {
             let delays = RecordingShortcutManager.chordBreakerDelays(primaryMode: primary, secondaryMode: .pushToTalk)
@@ -163,17 +181,46 @@ final class RawDictationTests: XCTestCase {
         let defaults = StoredShortcuts([.rawRecording])
         defer { defaults.restore() }
         let shortcut = Shortcut.key(keyCode: UInt16(kVK_F17), modifierFlags: [])
-        let bound = try decodeBackup(["rawRecordingShortcut": try JSONSerialization.jsonObject(
-            with: JSONEncoder().encode(ShortcutBackup(shortcut))
-        )])
 
-        bound.restoreRawRecordingShortcut()
+        ShortcutStore.setShortcuts(try decodeBackup(["rawRecordingShortcut": encoded(shortcut)]).shortcutRestores)
         XCTAssertEqual(ShortcutStore.shortcut(for: .rawRecording), shortcut)
-        try decodeBackup([:]).restoreRawRecordingShortcut()
+        ShortcutStore.setShortcuts(try decodeBackup([:]).shortcutRestores)
         XCTAssertEqual(ShortcutStore.shortcut(for: .rawRecording), shortcut)
-        try decodeBackup(["isRawRecordingShortcutUnbound": true]).restoreRawRecordingShortcut()
+        ShortcutStore.setShortcuts(try decodeBackup(["isRawRecordingShortcutUnbound": true]).shortcutRestores)
 
         XCTAssertNil(ShortcutStore.shortcut(for: .rawRecording))
+    }
+
+    func testBackupMovesAKeyFromTheRawShortcutWithoutATransientConflict() throws {
+        let defaults = StoredShortcuts([.rawRecording, .primaryRecording])
+        defer { defaults.restore() }
+        let f18 = Shortcut.key(keyCode: UInt16(kVK_F18), modifierFlags: [])
+        let f19 = Shortcut.key(keyCode: UInt16(kVK_F19), modifierFlags: [])
+        ShortcutStore.setShortcut(f19, for: .primaryRecording)
+        ShortcutStore.setShortcut(f18, for: .rawRecording)
+
+        ShortcutStore.setShortcuts(try decodeBackup([
+            "primaryRecordingShortcut": encoded(f18), "isRawRecordingShortcutUnbound": true,
+        ]).shortcutRestores)
+
+        XCTAssertEqual(ShortcutStore.shortcut(for: .primaryRecording), f18)
+        XCTAssertNil(ShortcutStore.shortcut(for: .rawRecording))
+    }
+
+    func testBackupSwapsRawAndPrimaryBindings() throws {
+        let defaults = StoredShortcuts([.rawRecording, .primaryRecording])
+        defer { defaults.restore() }
+        let f18 = Shortcut.key(keyCode: UInt16(kVK_F18), modifierFlags: [])
+        let f19 = Shortcut.key(keyCode: UInt16(kVK_F19), modifierFlags: [])
+        ShortcutStore.setShortcut(f18, for: .primaryRecording)
+        ShortcutStore.setShortcut(f19, for: .rawRecording)
+
+        ShortcutStore.setShortcuts(try decodeBackup([
+            "primaryRecordingShortcut": encoded(f19), "rawRecordingShortcut": encoded(f18),
+        ]).shortcutRestores)
+
+        XCTAssertEqual(ShortcutStore.shortcut(for: .primaryRecording), f19)
+        XCTAssertEqual(ShortcutStore.shortcut(for: .rawRecording), f18)
     }
 
     // MARK: - Pipeline
@@ -196,6 +243,77 @@ final class RawDictationTests: XCTestCase {
         XCTAssertEqual(run.pastes.map(\.text), ["the plan" + run.trailingSpace])
         XCTAssertEqual(run.pastes.map(\.sendKey), [FinishAndSendKey.enter])
         XCTAssertEqual(run.triggerWordChecks, 1)
+    }
+
+    func testRawDictationSkipsEnabledFormattingCorrectionAndEnhancement() async throws {
+        let text = Self.longTranscript + " We deploy to kubernetis today."
+        let raw = try await PipelineRun(
+            rawText: text, isRaw: true, formatting: true, vocabulary: ["Kubernetes"], enhancer: EnhancerFixture()
+        )
+        let standard = try await PipelineRun(
+            rawText: text, isRaw: false, formatting: true, vocabulary: ["Kubernetes"], enhancer: EnhancerFixture()
+        )
+
+        XCTAssertEqual(raw.transcription.text, text)
+        XCTAssertEqual(raw.pastes.map(\.text), [text + raw.trailingSpace])
+        XCTAssertEqual(raw.enhancer?.calls, 0)
+        XCTAssertNil(raw.transcription.enhancedText)
+        XCTAssertNotEqual(standard.transcription.text, text, "standard formatting or correction must change this fixture")
+        XCTAssertTrue(standard.transcription.text.contains("Kubernetes"))
+        XCTAssertTrue(standard.transcription.text.contains("\n"))
+        XCTAssertEqual(standard.enhancer?.calls, 1)
+        XCTAssertEqual(standard.pastes.map(\.text), [EnhancerFixture.output + standard.trailingSpace])
+    }
+
+    func testRawDictationPastesInsteadOfRespondingOrRunningACustomCommand() async throws {
+        for outputMode in [ModeOutputMode.respond, .customCommand] {
+            let run = try await PipelineRun(
+                rawText: "keep this", isRaw: true, outputMode: outputMode, enhancer: EnhancerFixture()
+            )
+
+            XCTAssertEqual(run.pastes.map(\.text), ["keep this" + run.trailingSpace], "\(outputMode)")
+            XCTAssertEqual(run.enhancer?.calls, 0, "\(outputMode)")
+        }
+    }
+
+    func testFinishAndSendStillSendsARawDictation() async throws {
+        let run = try await PipelineRun(rawText: "send this", isRaw: true, sendAfterPaste: true)
+
+        XCTAssertEqual(run.pastes.map(\.sendKey), [FinishAndSendSettings.selectedKey])
+    }
+
+    func testRawCaptureMarksItsStoppedAndCanceledHistoryRows() async throws {
+        let modes = ModeManager.shared
+        let originalModes = modes.configurations
+        let originalActiveMode = modes.activeConfiguration
+        // Apple Speech is usable without an installed model file; the WAV is silent, so its result does not matter.
+        modes.configurations = [ModeConfig(
+            name: "Raw boundary fixture", isAIEnhancementEnabled: false, selectedTranscriptionModelName: "apple-speech",
+            isRealtimeTranscriptionEnabled: false
+        )]
+        modes.activeConfiguration = nil
+        defer {
+            modes.configurations = originalModes
+            modes.activeConfiguration = originalActiveMode
+        }
+        let engine = try makeEngine()
+
+        await engine.toggleRecord(processing: .raw)
+        XCTAssertEqual(
+            engine.recordingState, .recording,
+            "error=\(engine.recordingError ?? "-") notice=\(engine.recordingNotice ?? "-") issues=\(engine.captureReadiness.snapshot.issues(for: .microphoneTest).map(\.message))"
+        )
+        await engine.toggleRecord()
+        await waitUntilIdle(engine)
+        await engine.toggleRecord(processing: .raw)
+        await engine.cancelRecording()
+        await engine.toggleRecord()
+        await engine.toggleRecord()
+        await waitUntilIdle(engine)
+
+        let rows = try engine.modelContext.fetch(FetchDescriptor<Transcription>(sortBy: [SortDescriptor(\.timestamp)]))
+        XCTAssertEqual(rows.map(\.isRawDictation), [true, true, false])
+        XCTAssertEqual(rows.dropFirst().first?.transcriptionStatus, TranscriptionStatus.canceled.rawValue)
     }
 
     // MARK: - History
@@ -266,6 +384,48 @@ final class RawDictationTests: XCTestCase {
         ))
     }
 
+    private func encoded(_ shortcut: Shortcut) throws -> Any {
+        try JSONSerialization.jsonObject(with: JSONEncoder().encode(ShortcutBackup(shortcut)))
+    }
+
+    private static let longTranscript = """
+        The first quarter closed with steady growth across every region we track. Our team shipped \
+        three releases and fixed most of the reported crashes. Support volume dropped after the onboarding \
+        changes went live. Hiring stayed slower than planned because two offers were declined. The budget for \
+        the next quarter still needs approval from finance. We will review the roadmap together on Friday \
+        morning.
+        """
+
+    private func makeEngine() throws -> VoiceInkEngine {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let whisper = WhisperModelManager(modelsDirectory: directory)
+        let models = TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
+        let recorder = Recorder(hardware: SilentRecordingHardware(), deviceManager: FixedInputAudioDevices())
+        let readiness = CaptureReadinessController(
+            models: models, devices: recorder.deviceManager, permissionReader: { (.granted, false) }
+        )
+        let container = try ModelContainer(for: Transcription.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let engine = VoiceInkEngine(
+            modelContext: ModelContext(container), whisperModelManager: whisper, transcriptionModelManager: models,
+            recorder: recorder, captureReadiness: readiness, speechDetector: nil, isNoSpeechGateEnabled: { false },
+            startSoundPlayback: { nil }
+        )
+        let panel = VisibleRecorderPanel()
+        engine.recorderUIManager = panel
+        addTeardownBlock { withExtendedLifetime(panel) {} }
+        return engine
+    }
+
+    private func waitUntilIdle(_ engine: VoiceInkEngine) async {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while engine.recordingState != .idle, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(engine.recordingState, .idle)
+    }
+
     private func decodeBackup(_ fields: [String: Any]) throws -> GeneralBackup {
         try JSONDecoder().decode(GeneralBackup.self, from: JSONSerialization.data(withJSONObject: fields))
     }
@@ -331,8 +491,13 @@ final class RawDictationTests: XCTestCase {
         private(set) var pastes: [(text: String, sendKey: FinishAndSendKey)] = []
         private(set) var triggerWordChecks = 0
         let trailingSpace = UserDefaults.standard.bool(forKey: "AppendTrailingSpace") ? " " : ""
+        let enhancer: EnhancerFixture?
 
-        init(rawText: String, isRaw: Bool) async throws {
+        init(
+            rawText: String, isRaw: Bool, formatting: Bool = false, vocabulary: [String] = [],
+            outputMode: ModeOutputMode = .paste, enhancer: EnhancerFixture? = nil, sendAfterPaste: Bool = false
+        ) async throws {
+            self.enhancer = enhancer
             let schema = Schema([Transcription.self, WordReplacement.self, SessionMetric.self])
             let container = try ModelContainer(
                 for: schema, configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -351,16 +516,27 @@ final class RawDictationTests: XCTestCase {
                 return Task { CursorPaster.PasteOutcome(result: .commandPosted, autoLearnGeneration: nil, target: nil) }
             }
             let pipeline = TranscriptionPipeline(
-                modelContext: context, serviceRegistry: registry, enhancementService: nil, delivery: delivery
+                modelContext: context, serviceRegistry: registry, enhancementService: enhancer, delivery: delivery
             )
-            let mode = ModeConfig(name: "Raw fixture", isAIEnhancementEnabled: false)
-
+            let mode = ModeConfig(name: "Raw fixture", isAIEnhancementEnabled: enhancer != nil)
+            let enhancement = enhancer.map { _ in
+                EnhancementRuntimeConfiguration(
+                    mode: mode, isEnabled: true, prompt: nil, provider: .ollama, modelName: "fixture",
+                    useClipboardContext: false, useSelectedTextContext: false, useScreenCaptureContext: false
+                )
+            }
             let snapshot = DictationModeSnapshot(
                 mode: mode,
-                formatting: TranscriptionFormattingConfiguration(mode: mode, isTextFormattingEnabled: false),
-                enhancement: nil,
-                output: OutputRuntimeConfiguration(mode: mode, outputMode: .paste, autoSendKey: .enter, customCommand: nil)
+                formatting: TranscriptionFormattingConfiguration(mode: mode, isTextFormattingEnabled: formatting),
+                enhancement: enhancement,
+                output: OutputRuntimeConfiguration(
+                    mode: mode, outputMode: outputMode, autoSendKey: outputMode == .paste ? .enter : .none,
+                    customCommand: outputMode == .customCommand ? ModeCustomCommand(command: "/usr/bin/true") : nil
+                )
             )
+            let correction = UserDefaults.standard.object(forKey: VocabularyCorrectionSettings.isEnabledKey)
+            UserDefaults.standard.set(true, forKey: VocabularyCorrectionSettings.isEnabledKey)
+            defer { UserDefaults.standard.set(correction, forKey: VocabularyCorrectionSettings.isEnabledKey) }
 
             await pipeline.run(
                 transcription: transcription,
@@ -375,13 +551,69 @@ final class RawDictationTests: XCTestCase {
                     self?.triggerWordChecks += 1
                     return nil
                 },
-                vocabularyPreparation: RecordingVocabularyPreparation(savedVocabulary: RecordingVocabulary(savedTerms: [])),
+                vocabularyPreparation: RecordingVocabularyPreparation(
+                    savedVocabulary: RecordingVocabulary(savedTerms: vocabulary)
+                ),
+                sendAfterPaste: sendAfterPaste,
                 onStateChange: { _ in },
                 shouldCancel: { false },
                 onCancel: {},
                 onDismiss: {}
             )
         }
+    }
+
+    @MainActor private final class EnhancerFixture: DictationEnhancing {
+        static let output = "ENHANCED"
+        private(set) var calls = 0
+
+        func isConfigured(for configuration: EnhancementRuntimeConfiguration) -> Bool { true }
+
+        func enhance(
+            _ text: String, configuration: EnhancementRuntimeConfiguration,
+            contextSnapshot: RecordingContextSnapshot?, vocabulary: RecordingVocabulary?
+        ) async throws -> AIEnhancementResult {
+            calls += 1
+            return AIEnhancementResult(text: Self.output, duration: 0, promptName: nil, systemMessage: nil, userMessage: nil)
+        }
+    }
+
+    @MainActor private final class VisibleRecorderPanel: RecorderPanelPresenting {
+        var isRecorderPanelVisible = true
+        func dismissRecorderPanel() async {}
+    }
+
+    /// Starts at once and writes a short silent 16 kHz WAV on stop.
+    private final class SilentRecordingHardware: RecordingHardware, @unchecked Sendable {
+        private let callback = OSAllocatedUnfairLock<((Data) -> Void)?>(initialState: nil)
+        private let file = OSAllocatedUnfairLock<URL?>(initialState: nil)
+        let averagePower: Float = -160
+        let peakPower: Float = -160
+        let recordingError: Error? = nil
+
+        var onAudioChunk: ((Data) -> Void)? {
+            get { callback.withLock { $0 } }
+            set { callback.withLock { $0 = newValue } }
+        }
+
+        func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
+            file.withLock { $0 = url }
+        }
+
+        func stopRecording() {
+            guard let url = file.withLock({ $0 }),
+                let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: false),
+                let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000),
+                let output = try? AVAudioFile(forWriting: url, settings: format.settings, commonFormat: .pcmFormatInt16, interleaved: false)
+            else { return }
+            buffer.frameLength = 8_000
+            try? output.write(from: buffer)
+        }
+
+        func prepare(deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
+        func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {}
+        func invalidatePreparation() {}
+        func teardown() {}
     }
 
     @MainActor private final class FixedTextSession: TranscriptionSession {
