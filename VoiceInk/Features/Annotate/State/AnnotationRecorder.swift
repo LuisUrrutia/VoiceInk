@@ -282,7 +282,19 @@ final class AnnotationRecorder: ObservableObject {
                 try? store.delete(id: id)
             case .removeMedia(let id):
                 guard var manifest = try? store.load(id: id), !manifest.mediaRemoved else { continue }
-                for file in AnnotationRetention.mediaFiles { try? FileManager.default.removeItem(at: store.url(for: id, file: file)) }
+                // A file that cannot be removed now leaves the media for the next pass.
+                let remaining = AnnotationRetention.mediaFiles.filter { file in
+                    let url = store.url(for: id, file: file)
+                    guard FileManager.default.fileExists(atPath: url.path) else { return false }
+                    do {
+                        try FileManager.default.removeItem(at: url)
+                        return false
+                    } catch {
+                        logger.error("Could not remove expired annotation media: \(error, privacy: .public)")
+                        return true
+                    }
+                }
+                guard remaining.isEmpty else { continue }
                 manifest.mediaRemoved = true
                 try? store.save(manifest)
             }

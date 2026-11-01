@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import XCTest
 
 @testable import VoiceInk
@@ -81,7 +82,61 @@ import XCTest
         let run = try XCTUnwrap(try fixture.store.load(id: fixture.id).agentRun)
         XCTAssertEqual(run.exitStatus, 0)
         XCTAssertNil(run.failure)
+        XCTAssertEqual(run.outputFile, "agent-output.txt")
         XCTAssertTrue(fixture.failures.values.isEmpty)
+    }
+
+    func testNoCommandStartsWhenAnnotateTurnsOffDuringProcessing() async throws {
+        let runner = FakeAgentRunner(status: 0, output: "")
+        let fixture = try makeProcessing(command: "my-agent", runner: runner)
+        fixture.copied.onAppend = { fixture.enabled.isOn = false }
+
+        fixture.processor.process(fixture.id)
+        await fixture.processor.waitUntilIdle()
+        await fixture.processor.waitForAgents()
+
+        XCTAssertEqual(fixture.copied.values.count, 1)
+        XCTAssertTrue(runner.commands.isEmpty)
+        XCTAssertNil(try fixture.store.load(id: fixture.id).agentRun)
+    }
+
+    func testTurningAnnotateOffOrQuittingStopsARunningCommand() async throws {
+        for quits in [false, true] {
+            let held = FakeAgentRunner(status: 0, output: "", holds: true)
+            let fixture = try makeProcessing(command: "my-agent", runner: held)
+            fixture.processor.process(fixture.id)
+            await fixture.processor.waitUntilIdle()
+            try await waitUntil { held.isHolding }
+
+            if quits {
+                await fixture.processor.stopAllAgents()
+            } else {
+                fixture.enabled.changes.send(false)
+                await fixture.processor.waitForAgents()
+            }
+
+            XCTAssertTrue(fixture.processor.agentIDs.isEmpty)
+            XCTAssertEqual(
+                try fixture.store.load(id: fixture.id).agentRun?.failure, String(localized: "The agent command was cancelled.")
+            )
+        }
+    }
+
+    func testAnOutputThatCannotBeSavedIsReportedAsAFailure() async throws {
+        let fixture = try makeProcessing(command: "my-agent", runner: FakeAgentRunner(status: 0, output: "answer"))
+        try FileManager.default.createDirectory(
+            at: fixture.store.url(for: fixture.id, file: "agent-output.txt"), withIntermediateDirectories: false
+        )
+
+        fixture.processor.process(fixture.id)
+        await fixture.processor.waitUntilIdle()
+        await fixture.processor.waitForAgents()
+
+        let run = try XCTUnwrap(try fixture.store.load(id: fixture.id).agentRun)
+        XCTAssertEqual(run.exitStatus, 0)
+        XCTAssertNotNil(run.failure)
+        XCTAssertNil(run.outputFile)
+        XCTAssertEqual(fixture.failures.values.count, 1)
     }
 
     func testAFailingOrCancelledCommandIsReportedAndKeepsTheBundleSafeMeanwhile() async throws {
@@ -172,6 +227,45 @@ import XCTest
         XCTAssertTrue(try store.load(id: manifest.id).mediaRemoved)
     }
 
+    func testAMovieThatCannotBeRemovedStaysUnmarkedAndIsRetried() throws {
+        let store = AnnotationStore(rootURL: root, movesToTrash: false)
+        var manifest = AnnotationManifest(createdAt: Date().addingTimeInterval(-10 * 86_400))
+        manifest.status = .ready
+        try store.createDirectory(for: manifest.id)
+        try store.save(manifest)
+        let movie = store.url(for: manifest.id, file: "recording.mp4")
+        FileManager.default.createFile(atPath: movie.path, contents: Data("x".utf8))
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: movie.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: movie.path) }
+        var dependencies = AnnotationRecorder.Dependencies()
+        dependencies.store = store
+        dependencies.defaults = defaults
+        let recorder = AnnotationRecorder(dependencies: dependencies)
+
+        recorder.applyRetention()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: movie.path))
+        XCTAssertFalse(try store.load(id: manifest.id).mediaRemoved)
+
+        try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: movie.path)
+        recorder.applyRetention()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: movie.path))
+        XCTAssertTrue(try store.load(id: manifest.id).mediaRemoved)
+    }
+
+    func testAnUnsupportedConfigurationRetentionKeepsTheCurrentPolicy() throws {
+        defaults.set(AnnotationRetention.forever.rawValue, forKey: AnnotationSettings.retentionKey)
+        let bogus: [String: ConfigurationValue] = [AnnotationSettings.retentionKey: .string("bogus")]
+
+        try ConfigurationPreferences.validate(bogus)
+        try ConfigurationPreferences.apply(bogus, to: defaults)
+
+        XCTAssertEqual(AnnotationRetention.current(in: defaults), .forever)
+        try ConfigurationPreferences.apply([AnnotationSettings.retentionKey: .string("month")], to: defaults)
+        XCTAssertEqual(AnnotationRetention.current(in: defaults), .month)
+    }
+
     func testAgentAndRetentionSettingsRoundTripThroughBackupsAndTheConfigurationFile() throws {
         defaults.set("claude -p", forKey: AnnotationSettings.agentCommandKey)
         defaults.set(600.0, forKey: AnnotationSettings.agentTimeoutKey)
@@ -196,7 +290,13 @@ import XCTest
     // MARK: - Fixtures
 
     private final class Values {
-        var values: [String] = []
+        var values: [String] = [] { didSet { onAppend() } }
+        var onAppend: () -> Void = {}
+    }
+
+    private final class EnabledSwitch {
+        var isOn = true
+        let changes = PassthroughSubject<Bool, Never>()
     }
 
     private struct ProcessingFixture {
@@ -206,6 +306,7 @@ import XCTest
         let id: UUID
         let copied: Values
         let failures: Values
+        let enabled: EnabledSwitch
     }
 
     private func makeProcessing(command: String?, runner: any AnnotationAgentRunning) throws -> ProcessingFixture {
@@ -220,17 +321,21 @@ import XCTest
         dependencies.defaults = defaults
         let recorder = AnnotationRecorder(dependencies: dependencies)
         let processor = AnnotationProcessor()
-        let copied = Values(), failures = Values()
+        let copied = Values(), failures = Values(), enabled = EnabledSwitch()
         processor.configure(
             environment: .init(
                 chooseModel: { nil }, makeTranscriber: { _ in fatalError("no model") },
                 requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { copied.values.append($0) },
                 notify: { _ in }, frameSource: { _, _ in NoFrames() }, agentCommand: { command }, agentTimeout: { 5 },
-                agentRunner: runner, notifyFailure: { failures.values.append($0) }
+                agentRunner: runner, notifyFailure: { failures.values.append($0) },
+                isEnabled: { enabled.isOn }, enabledChanges: enabled.changes.eraseToAnyPublisher()
             ),
             recorder: recorder
         )
-        return ProcessingFixture(processor: processor, recorder: recorder, store: store, id: manifest.id, copied: copied, failures: failures)
+        return ProcessingFixture(
+            processor: processor, recorder: recorder, store: store, id: manifest.id, copied: copied, failures: failures,
+            enabled: enabled
+        )
     }
 
     private func waitUntil(timeout: Duration = .seconds(2), _ condition: @MainActor () -> Bool) async throws {

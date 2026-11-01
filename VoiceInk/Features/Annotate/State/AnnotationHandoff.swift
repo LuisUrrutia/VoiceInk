@@ -81,6 +81,8 @@ struct AnnotationAgentRun: Codable, Equatable, Sendable {
     var exitStatus: Int32?
     var failure: String?
     var finishedAt: Date
+    /// The saved output, when it could be written.
+    var outputFile: String?
 }
 
 protocol AnnotationAgentRunning {

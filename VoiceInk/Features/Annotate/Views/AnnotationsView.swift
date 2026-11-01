@@ -102,9 +102,9 @@ private struct AnnotationRow: View {
                 }
                 if processor.agentIDs.contains(annotation.id) {
                     Button("Stop Agent") { processor.cancelAgent(annotation.id) }
-                } else if annotation.agentRun != nil {
+                } else if let output = annotation.agentRun?.outputFile {
                     Button("Agent Output") {
-                        NSWorkspace.shared.open(recorder.store.url(for: annotation.id, file: AnnotationAgentHandoff.outputFileName))
+                        NSWorkspace.shared.open(recorder.store.url(for: annotation.id, file: output))
                     }
                 }
                 Button {
