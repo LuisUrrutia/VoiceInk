@@ -113,6 +113,7 @@ struct GeneralBackup: Codable {
     /// Keyed by Labs feature identifier; see `Labs.restore`.
     var labsFeatures: [String: Bool]? = nil
     var meetings: MeetingSettings.Backup? = nil
+    var annotate: AnnotationSettings.Backup? = nil
 
     func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {
         if let keepMicrophoneReady {

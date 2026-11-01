@@ -196,6 +196,7 @@ enum BackupImporter {
         general.restoreMicrophoneReadiness()
         Labs.restore(general.labsFeatures)
         general.meetings?.restore()
+        general.annotate?.restore()
         if let experimentalEnabled = general.isExperimentalFeaturesEnabled {
             UserDefaults.standard.set(experimentalEnabled, forKey: "isExperimentalFeaturesEnabled")
             if experimentalEnabled == false {

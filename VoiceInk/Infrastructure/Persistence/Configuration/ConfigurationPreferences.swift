@@ -38,10 +38,11 @@ enum ConfigurationPreferences {
                 "customDoneSoundFilename", "customErrorSoundFilename",
                 "vocabularySortMode", "wordReplacementSortMode",
                 MeetingSettings.outputFolderKey,
+                AnnotationSettings.agentCommandKey, AnnotationSettings.retentionKey,
             ]),
             (.number, [
                 "clipboardRestoreDelay", "audioResumptionDelay", "systemAudioLoweringLevel", "localCLITimeoutSeconds",
-                "audioPlaybackRate",
+                "audioPlaybackRate", AnnotationSettings.agentTimeoutKey,
             ]),
             (.integer, [
                 "CloudTranscriptionTimeout", "ShortEnhancementWordThreshold", "EnhancementTimeoutSeconds",

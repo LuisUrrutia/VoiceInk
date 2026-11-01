@@ -5,6 +5,9 @@ import SwiftUI
 struct AnnotationsView: View {
     @ObservedObject private var recorder = AnnotationRecorder.shared
     @ObservedObject private var processor = AnnotationProcessor.shared
+    @AppStorage(AnnotationSettings.agentCommandKey) private var agentCommand = ""
+    @AppStorage(AnnotationSettings.agentTimeoutKey) private var agentTimeout = AnnotationSettings.defaultAgentTimeout
+    @AppStorage(AnnotationSettings.retentionKey) private var retention = AnnotationRetention.default.rawValue
 
     var body: some View {
         Form {
@@ -33,6 +36,25 @@ struct AnnotationsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Section {
+                TextField("Agent command", text: $agentCommand, prompt: Text("Optional"), axis: .vertical)
+                    .lineLimit(2...5)
+                    .font(.system(.body, design: .monospaced))
+                Stepper(value: $agentTimeout, in: 30...3_600, step: 30) {
+                    LabeledContent("Time limit", value: Duration.seconds(agentTimeout).formatted(.units(allowed: [.minutes, .seconds])))
+                }
+                .disabled(agentCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Picker("Keep annotations", selection: $retention) {
+                    ForEach(AnnotationRetention.allCases, id: \.rawValue) { Text($0.displayName).tag($0.rawValue) }
+                }
+                .onChange(of: retention) { recorder.applyRetention() }
+            } header: {
+                Text("After an annotation")
+            } footer: {
+                Text("The summary is always copied, for pasting into an agent that runs in a terminal. A command runs in your login shell with the summary on standard input and VOICEINK_ANNOTATION_DIR, VOICEINK_ANNOTATION_SUMMARY, VOICEINK_ANNOTATION_CONTACT_SHEET and VOICEINK_ANNOTATION_IMAGES set; it starts a new agent session, and its output is saved as agent-output.txt in the bundle. Examples are in docs/annotate.md.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Annotations") {
                 if recorder.annotations.isEmpty {
                     Text("No annotations yet.").foregroundStyle(.secondary)
@@ -52,6 +74,7 @@ private struct AnnotationRow: View {
     let annotation: AnnotationManifest
     let isProcessing: Bool
     @ObservedObject private var recorder = AnnotationRecorder.shared
+    @ObservedObject private var processor = AnnotationProcessor.shared
 
     var body: some View {
         LabeledContent {
@@ -67,6 +90,22 @@ private struct AnnotationRow: View {
                     }
                     .help("Copy for an agent")
                     .accessibilityLabel("Copy for an agent")
+                    if annotation.contactSheet != nil {
+                        Button {
+                            AnnotationAgentHandoff.copyContactSheet(of: annotation, store: recorder.store)
+                        } label: {
+                            Image(appSymbol: "camera.fill")
+                        }
+                        .help("Copy the contact sheet image, for chat apps")
+                        .accessibilityLabel("Copy contact sheet image")
+                    }
+                }
+                if processor.agentIDs.contains(annotation.id) {
+                    Button("Stop Agent") { processor.cancelAgent(annotation.id) }
+                } else if annotation.agentRun != nil {
+                    Button("Agent Output") {
+                        NSWorkspace.shared.open(recorder.store.url(for: annotation.id, file: AnnotationAgentHandoff.outputFileName))
+                    }
                 }
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([recorder.store.directory(for: annotation.id)])
@@ -89,6 +128,9 @@ private struct AnnotationRow: View {
     }
 
     private var detail: String {
+        let agent: String? = processor.agentIDs.contains(annotation.id)
+            ? String(localized: "Agent running") : annotation.agentRun?.failure
+        let media = annotation.mediaRemoved ? String(localized: "Movie removed") : nil
         let status: String = switch annotation.status {
         case .recording: String(localized: "Recording")
         case .processing: isProcessing ? String(localized: "Transcribing") : String(localized: "Waiting")
@@ -96,7 +138,7 @@ private struct AnnotationRow: View {
         case .failed: String(localized: "Failed")
         }
         let narration = annotation.narrationFailure.map { _ in String(localized: "Narration incomplete") }
-        return [MeetingMarkdown.timestamp(annotation.duration), status, narration, annotation.failure].compactMap { $0 }
+        return [MeetingMarkdown.timestamp(annotation.duration), status, narration, media, agent, annotation.failure].compactMap { $0 }
             .joined(separator: " · ")
     }
 }

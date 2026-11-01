@@ -52,10 +52,14 @@ struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
     var keyframes: [AnnotationKeyframe] = []
     /// `contact-sheet.png`, when keyframes were rendered.
     var contactSheet: String?
+    /// The last configured agent command run for this annotation.
+    var agentRun: AnnotationAgentRun?
+    /// The movie and narration were removed by retention; the images and text remain.
+    var mediaRemoved = false
 
     private enum CodingKeys: String, CodingKey {
         case version, id, createdAt, status, duration, display, videoOffset, narrationTimeline, transcript, transcriptModel,
-            failure, narrationFailure, strokes, marks, events, sceneChanges, keyframes, contactSheet
+            failure, narrationFailure, strokes, marks, events, sceneChanges, keyframes, contactSheet, agentRun, mediaRemoved
     }
 
     /// Fields added after the first version default when an older manifest lacks them.
@@ -79,6 +83,8 @@ struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
         sceneChanges = try container.decodeIfPresent([AnnotationSceneSampler.Change].self, forKey: .sceneChanges) ?? []
         keyframes = try container.decodeIfPresent([AnnotationKeyframe].self, forKey: .keyframes) ?? []
         contactSheet = try container.decodeIfPresent(String.self, forKey: .contactSheet)
+        agentRun = try container.decodeIfPresent(AnnotationAgentRun.self, forKey: .agentRun)
+        mediaRemoved = try container.decodeIfPresent(Bool.self, forKey: .mediaRemoved) ?? false
     }
 
     init(id: UUID = UUID(), createdAt: Date = Date()) {

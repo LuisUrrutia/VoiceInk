@@ -172,6 +172,7 @@ struct VoiceInkApp: App {
         MeetingTranscriptionCoordinator.shared.configure(engine: engine)
         AnnotationProcessor.shared.configure(engine: engine)
         AnnotationCapsuleController.shared.start()
+        AnnotationRecorder.shared.startMaintenance()
         MeetingIndicatorController.shared.start()
 
         let menuBarManager = MenuBarManager()
