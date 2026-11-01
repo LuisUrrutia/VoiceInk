@@ -13,6 +13,8 @@ struct ScreenRecordingResult: Equatable, Sendable {
 
 /// Records one display to a movie, without VoiceInk's own windows.
 protocol ScreenRecording: AnyObject {
+    /// Each captured frame, on a background queue; set before `start`.
+    var onFrame: ((CMSampleBuffer) -> Void)? { get set }
     func start(displayID: CGDirectDisplayID, writingTo url: URL) async throws -> AnnotationManifest.Display
     func stop() async throws -> ScreenRecordingResult
 }

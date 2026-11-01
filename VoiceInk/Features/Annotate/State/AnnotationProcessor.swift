@@ -17,6 +17,7 @@ final class AnnotationProcessor: ObservableObject {
             NSPasteboard.general.setString(text, forType: .string)
         }
         var notify: @MainActor (String) -> Void = { NotificationManager.shared.showNotification(title: $0, type: .success) }
+        var frameSource: (_ movie: URL, _ offset: TimeInterval) -> any AnnotationFrameSource = { MovieFrameSource(url: $0, offset: $1) }
     }
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AnnotationProcessor")
@@ -74,6 +75,48 @@ final class AnnotationProcessor: ObservableObject {
         }
     }
 
+    /// Chooses keyframes, renders them with ink and clicks into `frames/` and the contact sheet. A movie that cannot be
+    /// read leaves the bundle without images; the summary then lists the narration instead.
+    private func renderKeyframes(
+        _ manifest: inout AnnotationManifest, store: AnnotationStore,
+        frameSource: (URL, TimeInterval) -> any AnnotationFrameSource
+    ) async {
+        var keyframes = AnnotationKeyframes.keyframes(manifest, sceneChanges: manifest.sceneChanges)
+        let source = frameSource(store.url(for: manifest.id, file: AnnotationManifest.videoFileName), manifest.videoOffset ?? 0)
+        guard !keyframes.isEmpty, let images = try? await source.images(at: keyframes.map(\.t)) else {
+            manifest.keyframes = []
+            return
+        }
+        let folder = store.directory(for: manifest.id).appendingPathComponent(AnnotationManifest.framesDirectoryName, isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var rendered: [(image: CGImage, label: String)] = []
+        for index in keyframes.indices {
+            guard index < images.count, let image = images[index],
+                let annotated = AnnotationRenderer.annotate(image, keyframe: keyframes[index], manifest: manifest),
+                let file = keyframes[index].file
+            else {
+                keyframes[index].file = nil
+                continue
+            }
+            let url = store.directory(for: manifest.id).appendingPathComponent(file)
+            do {
+                try AnnotationRenderer.writePNG(annotated, to: url)
+                store.protect(url)
+                rendered.append((annotated, "#\(keyframes[index].index) \(MeetingMarkdown.timestamp(keyframes[index].t))"))
+            } catch {
+                keyframes[index].file = nil
+            }
+        }
+        manifest.keyframes = keyframes.filter { $0.file != nil }
+        if let sheet = AnnotationRenderer.contactSheet(rendered) {
+            let url = store.url(for: manifest.id, file: AnnotationManifest.contactSheetFileName)
+            if (try? AnnotationRenderer.writePNG(sheet, to: url)) != nil {
+                store.protect(url)
+                manifest.contactSheet = AnnotationManifest.contactSheetFileName
+            }
+        }
+    }
+
     private func run(_ id: UUID) async {
         guard let environment, let recorder, var manifest = try? recorder.store.load(id: id) else { return }
         processingID = id
@@ -96,6 +139,8 @@ final class AnnotationProcessor: ObservableObject {
         } else {
             manifest.failure = TimedTranscriptionError.unsupportedModel.localizedDescription
         }
+
+        await renderKeyframes(&manifest, store: store, frameSource: environment.frameSource)
 
         // The bundle can be trashed while its narration transcribes; then nothing is written or copied.
         guard FileManager.default.fileExists(atPath: store.directory(for: id).path) else {
@@ -133,10 +178,28 @@ enum AnnotationSummary {
             "- `\(AnnotationManifest.videoFileName)`: \(String(localized: "the screen recording"))",
             "- `\(AnnotationManifest.narrationFileName)`: \(String(localized: "the narration audio"))",
             "- `\(AnnotationManifest.fileName)`: \(String(localized: "timestamps and the transcript with word times"))",
-            "",
-            "## \(String(localized: "Narration"))",
-            "",
         ]
+        if !manifest.keyframes.isEmpty {
+            if let sheet = manifest.contactSheet {
+                lines.append("- `\(sheet)`: \(String(localized: "every keyframe in order, numbered"))")
+            }
+            lines.append("- `\(AnnotationManifest.framesDirectoryName)/`: \(String(localized: "each keyframe at full size, with the ink and clicks drawn"))")
+            lines += [
+                "",
+                // As Hex's summary does: the marks and words only make sense on the images.
+                "Open \(manifest.contactSheet ?? AnnotationManifest.contactSheetFileName) and \(AnnotationManifest.framesDirectoryName)/ in that folder before changing anything: the marks and words only make sense on the images, which can show more than the text does.",
+                "",
+                "## \(String(localized: "Keyframes"))",
+                "",
+            ]
+            for keyframe in manifest.keyframes {
+                var line = "- #\(keyframe.index) (\(MeetingMarkdown.timestamp(keyframe.t)))"
+                if let said = keyframe.said { line += " “\(said)”" }
+                if let event = keyframe.event { line += " [\(event)]" }
+                lines.append(line)
+            }
+        }
+        lines += ["", "## \(String(localized: "Narration"))", ""]
         if manifest.transcript.isEmpty {
             lines.append("_\(String(localized: "No narration was transcribed."))_")
         } else {
