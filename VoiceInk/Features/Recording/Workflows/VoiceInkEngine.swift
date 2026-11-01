@@ -180,6 +180,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             guard let finalizationID = finalization.beginCapture() else { return }
             defer { finalization.finishCapture(finalizationID) }
             guard let capture else { return }
+            // Before the handoff clears the capture, so a held output keeps waiting through the hardware stop.
+            isStoppingCaptureHardware = true
             let job = beginJob(stopping: capture, sendAfterPaste: sendAfterPaste)
             defer { if job.task == nil { endJob(job) } }
             let fileBeingStopped = job.audioURL
@@ -190,7 +192,6 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 guard let self, !job.cancelRequested, self.recorder.recordingError == nil else { return }
                 delivery?.recordingStopped()
             }
-            isStoppingCaptureHardware = true
             if let releaseTail {
                 preparation?.timing.mark(.shortcutReleased, at: releaseTail.releasedAtNanoseconds)
                 let outcome = await recorder.stopRecording(

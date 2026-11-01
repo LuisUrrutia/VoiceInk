@@ -68,6 +68,38 @@ final class DictationJobLifecycleTests: XCTestCase {
         XCTAssertTrue(delivered)
     }
 
+    func testHeldOutputWaitsThroughTheStoppedCapturesHardwareStop() async throws {
+        let fixture = try makeFixture()
+        let queue = fixture.engine.outputQueue
+        queue.capacity = 2
+        queue.frontmost = { PasteApplication(processID: 4343, bundleIdentifier: "com.example.other") }
+        let earlier = queue.assignSequence()
+        try fixture.fabricateCapture()
+        var delivered = false
+        let heldOutput = Task { @MainActor in
+            await queue.deliver(
+                sequence: earlier,
+                destination: .originalApplication(PasteApplication(processID: 4242, bundleIdentifier: "com.example.editor"))
+            ) { delivered = true }
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(delivered)
+
+        let stop = Task { await fixture.engine.toggleRecord() }
+        await fulfillment(of: [fixture.hardware.stopEntered], timeout: 3)
+        XCTAssertNil(fixture.engine.capture)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(delivered, "The handoff from capture to job must not release the held output")
+
+        fixture.hardware.releaseStop()
+        let result = await heldOutput.value
+        XCTAssertTrue(result)
+        XCTAssertTrue(delivered)
+        await fulfillment(of: [fixture.session.transcribeEntered], timeout: 3)
+        await fixture.engine.cancelRecording()
+        await stop.value
+    }
+
     func testCancelAfterTheCommitPointIsRefused() async throws {
         let fixture = try makeFixture()
         try fixture.fabricateCapture()
