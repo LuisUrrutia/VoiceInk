@@ -337,6 +337,7 @@ private final class DiagnosticAudioDevices: AudioDeviceManager {
     override func getSystemDefaultDevice() -> AudioDeviceID? { 91 }
     override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
     override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { false }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .other }
 }
 
 private final class DiagnosticWAVHardware: RecordingHardware, @unchecked Sendable {

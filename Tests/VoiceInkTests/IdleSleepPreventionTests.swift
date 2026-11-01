@@ -483,6 +483,7 @@ private final class SleepTestAudioDevices: AudioDeviceManager {
     override func getSystemDefaultDevice() -> AudioDeviceID? { 92 }
     override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
     override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { false }
+    override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport { .other }
 }
 
 private final class SleepTestHardware: RecordingHardware, @unchecked Sendable {

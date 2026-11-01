@@ -65,7 +65,7 @@ final class RecordingReleaseTailTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("tail.wav")
         let hardware = try StreamingTailHardware(url: url)
-        let recorder = Recorder(hardware: hardware)
+        let recorder = Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         let tail = RecordingReleaseTail.now()
         var toneAt: UInt64?
 
@@ -86,7 +86,7 @@ final class RecordingReleaseTailTests: XCTestCase {
 
     func testRecorderStopsStalledStreamAfterTailPlusGrace() async throws {
         let hardware = try StreamingTailHardware(stalled: true)
-        let recorder = Recorder(hardware: hardware)
+        let recorder = Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         let tail = RecordingReleaseTail.now()
 
         let outcome = await recorder.stopRecording(
@@ -100,7 +100,7 @@ final class RecordingReleaseTailTests: XCTestCase {
 
     func testProgrammaticStopHasNoTail() async throws {
         let hardware = try StreamingTailHardware()
-        let recorder = Recorder(hardware: hardware)
+        let recorder = Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         let requestedAt = DispatchTime.now().uptimeNanoseconds
 
         await recorder.stopRecording()
@@ -303,7 +303,7 @@ final class RecordingReleaseTailTests: XCTestCase {
         )
         let engine = VoiceInkEngine(
             modelContext: ModelContext(container), whisperModelManager: whisper,
-            transcriptionModelManager: models, recorder: Recorder(hardware: hardware)
+            transcriptionModelManager: models, recorder: Recorder(hardware: hardware, deviceManager: FixedInputAudioDevices())
         )
         let timing = RecordingTimingTrace()
         let preparation = RecordingTranscriptionPreparation(timing: timing)
