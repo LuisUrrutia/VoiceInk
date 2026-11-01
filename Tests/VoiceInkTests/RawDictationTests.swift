@@ -223,6 +223,42 @@ final class RawDictationTests: XCTestCase {
         XCTAssertEqual(ShortcutStore.shortcut(for: .rawRecording), f18)
     }
 
+    func testRejectedBatchKeepsEveryPreviousBinding() throws {
+        let defaults = StoredShortcuts([.rawRecording, .primaryRecording, .pasteLastTranscription])
+        defer { defaults.restore() }
+        let f18 = Shortcut.key(keyCode: UInt16(kVK_F18), modifierFlags: [])
+        let f19 = Shortcut.key(keyCode: UInt16(kVK_F19), modifierFlags: [])
+        let f20 = Shortcut.key(keyCode: UInt16(kVK_F20), modifierFlags: [])
+        ShortcutStore.setShortcut(f18, for: .primaryRecording)
+        ShortcutStore.setShortcut(f19, for: .rawRecording)
+        ShortcutStore.setShortcut(f20, for: .pasteLastTranscription)
+
+        let applied = ShortcutStore.setShortcuts(try decodeBackup([
+            "primaryRecordingShortcut": encoded(f19), "rawRecordingShortcut": encoded(f20),
+        ]).shortcutRestores)
+
+        XCTAssertFalse(applied)
+        XCTAssertEqual(ShortcutStore.shortcut(for: .primaryRecording), f18)
+        XCTAssertEqual(ShortcutStore.shortcut(for: .rawRecording), f19)
+        XCTAssertEqual(ShortcutStore.shortcut(for: .pasteLastTranscription), f20)
+    }
+
+    func testBackupMovesTheSecondaryKeyToRawWhenTheSecondarySelectionIsNone() throws {
+        let defaults = StoredShortcuts([.rawRecording, .secondaryRecording])
+        defer { defaults.restore() }
+        let f18 = Shortcut.key(keyCode: UInt16(kVK_F18), modifierFlags: [])
+        let f19 = Shortcut.key(keyCode: UInt16(kVK_F19), modifierFlags: [])
+        ShortcutStore.setShortcut(f18, for: .secondaryRecording)
+        ShortcutStore.setShortcut(f19, for: .rawRecording)
+
+        ShortcutStore.setShortcuts(try decodeBackup([
+            "secondaryRecordingShortcutRawValue": "none", "rawRecordingShortcut": encoded(f18),
+        ]).shortcutRestores)
+
+        XCTAssertNil(ShortcutStore.shortcut(for: .secondaryRecording))
+        XCTAssertEqual(ShortcutStore.shortcut(for: .rawRecording), f18)
+    }
+
     // MARK: - Pipeline
 
     func testRawDictationPastesTheTrimmedTranscriptWithoutProcessing() async throws {

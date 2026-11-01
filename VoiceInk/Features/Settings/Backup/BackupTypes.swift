@@ -142,6 +142,11 @@ struct GeneralBackup: Codable {
         if rawRecordingShortcut == nil, isRawRecordingShortcutUnbound == true {
             restores.append((action: .rawRecording, shortcut: nil))
         }
+        // The importer applies a "none" secondary selection by clearing its key, so free it inside the batch.
+        if secondaryRecordingShortcutRawValue == RecordingShortcutManager.ShortcutSelection.none.rawValue {
+            restores.removeAll { $0.action == .secondaryRecording }
+            restores.append((action: .secondaryRecording, shortcut: nil))
+        }
         return restores
     }
 
