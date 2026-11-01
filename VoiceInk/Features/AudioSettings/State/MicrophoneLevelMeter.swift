@@ -8,8 +8,8 @@ struct MicrophoneLevelReading: Equatable {
 }
 
 /// Level bars for the input in use. Adapted from Hex's settings meter (https://github.com/anomalyco/hex, MIT):
-/// the peak follows with a gain of 3 and falls by at most 0.12 per reading, shown in six steps; a meter that
-/// received no audio for 250 ms is idle and flat.
+/// the peak follows with a gain of 3 and falls by at most 0.12 per reading, shown in six steps; a meter whose
+/// newest captured audio is older than 250 ms is idle and flat.
 struct MicrophoneLevelMeter {
     struct Display: Equatable {
         var isReceiving = false
@@ -21,22 +21,18 @@ struct MicrophoneLevelMeter {
 
     private(set) var display = Display()
     private var level: Float = 0
-    private var lastCapturedThrough: UInt64?
-    private var lastDeliveryAt: UInt64?
 
     /// True while the bars stand above rest, so they need frequent readings to follow the voice.
     var isMoving: Bool { display.isReceiving && display.step > 0 }
 
-    /// Takes the latest reading; returns whether the displayed step or idle state changed. Audio counts as
-    /// received only when `capturedThroughNanoseconds` advanced, so a stale meter of a closed input reads idle.
+    /// Takes the latest reading; returns whether the displayed step or idle state changed. Freshness uses the
+    /// captured endpoint's age in the uptime clock, so a closed or stalled input reads idle however late it is polled.
     mutating func observe(_ reading: MicrophoneLevelReading?, at now: UInt64) -> Bool {
         let before = display
-        let capturedThrough = reading?.capturedThroughNanoseconds
-        if let capturedThrough, let lastCapturedThrough, capturedThrough != lastCapturedThrough {
-            lastDeliveryAt = now
-        }
-        lastCapturedThrough = capturedThrough
-        let isReceiving = lastDeliveryAt.map { now &- $0 <= Self.freshNanoseconds } ?? false
+        // The render callback clamps the endpoint to its delivery time, so it is never later than `now`.
+        let isReceiving = reading?.capturedThroughNanoseconds.map {
+            now >= $0 && now - $0 <= Self.freshNanoseconds
+        } ?? false
         if isReceiving, let reading {
             let peak = min(max(pow(10, reading.peakDBFS / 20) * 3, 0), 1)
             level = max(peak, level - 0.12)

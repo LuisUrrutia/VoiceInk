@@ -198,15 +198,25 @@ import os
         var meter = MicrophoneLevelMeter()
 
         XCTAssertFalse(meter.observe(nil, at: ms(0)))
-        XCTAssertFalse(meter.observe(reading(-10, capturedThrough: 500), at: ms(10)))
-        XCTAssertFalse(meter.observe(reading(-10, capturedThrough: 500), at: ms(260)))
+        XCTAssertFalse(meter.observe(reading(-10, capturedThrough: 0), at: ms(260)))
+        XCTAssertFalse(meter.observe(reading(-10, capturedThrough: 0), at: ms(1_000)))
 
         XCTAssertEqual(meter.display, MicrophoneLevelMeter.Display(isReceiving: false, step: 0))
     }
 
+    func testAudioThatAdvancedBeforeAStopIsIdleWhenFirstPolledLate() {
+        var meter = MicrophoneLevelMeter()
+        XCTAssertTrue(meter.observe(reading(-10, capturedThrough: 0), at: ms(0)))
+
+        XCTAssertTrue(meter.observe(reading(-10, capturedThrough: 1), at: ms(252)))
+        XCTAssertEqual(meter.display, MicrophoneLevelMeter.Display(isReceiving: false, step: 0))
+
+        var delayed = MicrophoneLevelMeter()
+        XCTAssertFalse(delayed.observe(reading(-10, capturedThrough: 1), at: ms(1_000)))
+    }
+
     func testDeliveredAudioIsShownInQuantizedStepsAndBecomesIdleAfterAQuarterSecond() {
         var meter = MicrophoneLevelMeter()
-        _ = meter.observe(reading(-120, capturedThrough: 0), at: ms(0))
 
         XCTAssertTrue(meter.observe(reading(-10, capturedThrough: 33), at: ms(33)))
         XCTAssertEqual(meter.display, MicrophoneLevelMeter.Display(isReceiving: true, step: 6))
@@ -215,19 +225,20 @@ import os
         XCTAssertTrue(meter.observe(reading(-120, capturedThrough: 66), at: ms(66)))
         XCTAssertEqual(meter.display.step, 5, "a falling level steps down gradually")
 
-        XCTAssertTrue(meter.observe(reading(-120, capturedThrough: 66), at: ms(400)))
+        _ = meter.observe(reading(-120, capturedThrough: 66), at: ms(316))
+        XCTAssertTrue(meter.display.isReceiving, "an endpoint 250 ms old is still fresh")
+        XCTAssertTrue(meter.observe(reading(-120, capturedThrough: 66), at: ms(317)))
         XCTAssertEqual(meter.display, MicrophoneLevelMeter.Display(isReceiving: false, step: 0))
     }
 
     func testQuietRoomNoiseNeverChangesTheDisplayAfterItStartsReceiving() {
         var meter = MicrophoneLevelMeter()
-        _ = meter.observe(reading(-66.6, capturedThrough: 0), at: ms(0))
-        XCTAssertTrue(meter.observe(reading(-66.6, capturedThrough: 250), at: ms(250)))
+        XCTAssertTrue(meter.observe(reading(-66.6, capturedThrough: 0), at: ms(0)))
 
         var changes = 0
-        for time in stride(from: 500, through: 10_000, by: 250) {
+        for time in stride(from: 250, through: 10_000, by: 250) {
             let peak: Float = time.isMultiple(of: 500) ? -70 : -60
-            if meter.observe(reading(peak, capturedThrough: time), at: ms(time)) { changes += 1 }
+            if meter.observe(reading(peak, capturedThrough: time - 10), at: ms(time)) { changes += 1 }
         }
 
         XCTAssertEqual(changes, 0)
