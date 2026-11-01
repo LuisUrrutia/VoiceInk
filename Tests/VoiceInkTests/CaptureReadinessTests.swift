@@ -119,8 +119,8 @@ final class CaptureReadinessTests: XCTestCase {
         let devices = ReadinessAudioDevices(userDefaults: defaults, notificationCenter: NotificationCenter())
         let whisper = WhisperModelManager(modelsDirectory: directory)
         let models = TranscriptionModelManager(whisperModelManager: whisper, fluidAudioModelManager: FluidAudioModelManager())
-        var permissions: (microphone: CapturePermission, accessibility: Bool) = (.granted, false)
-        let readiness = CaptureReadinessController(models: models, devices: devices, permissionReader: { permissions })
+        let permissions = HeldPermissions(.granted, accessibility: false)
+        let readiness = CaptureReadinessController(models: models, devices: devices, permissionReader: permissions.read)
         let container = try ModelContainer(
             for: Transcription.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
@@ -129,6 +129,7 @@ final class CaptureReadinessTests: XCTestCase {
             transcriptionModelManager: models,
             recorder: Recorder(hardware: ReadinessAudioHardware(), deviceManager: devices), captureReadiness: readiness
         )
+        try await settle(readiness, models: models)
         var presentationChanges = 0
         let presentation = engine.objectWillChange.sink { presentationChanges += 1 }
         defer { presentation.cancel() }
@@ -140,10 +141,11 @@ final class CaptureReadinessTests: XCTestCase {
         }
         defer { subscription.cancel() }
 
-        permissions = (.denied, true)
+        permissions.set(.denied, accessibility: true)
         NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
         await fulfillment(of: [refreshed], timeout: 3)
 
+        XCTAssertFalse(permissions.wasReadOnMainThread)
         XCTAssertGreaterThan(presentationChanges, 0)
         XCTAssertEqual(readiness.snapshot.issues(for: .microphoneTest), [.microphonePermission(.denied)])
         XCTAssertEqual(engine.recordingState, .idle)
@@ -162,13 +164,35 @@ final class CaptureReadinessTests: XCTestCase {
         await fulfillment(of: [mainActorTurn], timeout: 1)
 
         XCTAssertFalse(devices.queriedOnMainThread)
-        XCTAssertTrue(readiness.snapshot.hasMicrophone, "the previous resolution stands until the query returns")
+        XCTAssertTrue(readiness.snapshot.hasMicrophone, "no input is reported missing before the query answers")
         let published = expectation(description: "closed-lid resolution published")
         let subscription = readiness.$snapshot.first { !$0.hasMicrophone }.sink { _ in published.fulfill() }
         defer { subscription.cancel() }
         devices.release()
         await fulfillment(of: [published], timeout: 3)
         XCTAssertEqual(readiness.snapshot.issues(for: .microphoneTest), [.microphoneUnavailable])
+    }
+
+    func testSlowPermissionCheckLeavesTheMainActorResponsive() async throws {
+        let devices = SlowQueryAudioDevices()
+        let permissions = HeldPermissions(.denied, accessibility: false)
+        permissions.hold()
+        defer { permissions.release() }
+        let readiness = CaptureReadinessController(
+            models: makeModels(), devices: devices, permissionReader: permissions.read
+        )
+
+        await fulfillment(of: [permissions.readEntered], timeout: 3)
+        let mainActorTurn = expectation(description: "main actor ran while the permission check was held")
+        Task { @MainActor in mainActorTurn.fulfill() }
+        await fulfillment(of: [mainActorTurn], timeout: 1)
+
+        XCTAssertFalse(permissions.wasReadOnMainThread)
+        XCTAssertEqual(readiness.snapshot.issues(for: .microphoneTest), [], "no access is reported missing before a check answers")
+        XCTAssertEqual(readiness.snapshot.model, .checking)
+        permissions.release()
+        let snapshot = await readiness.refreshedSnapshot()
+        XCTAssertEqual(snapshot.issues(for: .microphoneTest), [.microphonePermission(.denied)])
     }
 
     func testDeviceChangeBurstCoalescesIntoOneFurtherPass() async throws {
@@ -423,6 +447,56 @@ private final class SlowQueryAudioDevices: AudioDeviceManager {
 }
 
 private struct SettleTimeout: Error {}
+
+/// A permission source whose check can be held, standing in for a stalled tccd.
+private final class HeldPermissions: @unchecked Sendable {
+    private struct State {
+        var permissions: CaptureReadinessController.Permissions
+        var isHeld = false
+        var wasReadOnMainThread = false
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+    private let gate = DispatchSemaphore(value: 0)
+    let readEntered: XCTestExpectation = {
+        let expectation = XCTestExpectation(description: "held permission check entered")
+        expectation.assertForOverFulfill = false
+        return expectation
+    }()
+
+    var wasReadOnMainThread: Bool { state.withLock { $0.wasReadOnMainThread } }
+
+    init(_ microphone: CapturePermission, accessibility: Bool) {
+        state = OSAllocatedUnfairLock(initialState: State(permissions: (microphone, accessibility)))
+    }
+
+    func set(_ microphone: CapturePermission, accessibility: Bool) {
+        state.withLock { $0.permissions = (microphone, accessibility) }
+    }
+
+    func hold() { state.withLock { $0.isHeld = true } }
+
+    func release() {
+        let wasHeld = state.withLock { state in
+            defer { state.isHeld = false }
+            return state.isHeld
+        }
+        if wasHeld { gate.signal() }
+    }
+
+    @Sendable func read() -> CaptureReadinessController.Permissions {
+        let isHeld = state.withLock { state in
+            if Thread.isMainThread { state.wasReadOnMainThread = true }
+            return state.isHeld
+        }
+        if isHeld {
+            readEntered.fulfill()
+            // Bounded so that a check on the main thread fails the test instead of hanging it.
+            _ = gate.wait(timeout: .now() + 2)
+        }
+        return state.withLock { $0.permissions }
+    }
+}
 
 private final class VisibleReadinessPanel: RecorderPanelPresenting {
     var isRecorderPanelVisible = true

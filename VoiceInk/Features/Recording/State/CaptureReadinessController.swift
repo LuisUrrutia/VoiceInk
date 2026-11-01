@@ -5,6 +5,8 @@ import CoreAudio
 
 @MainActor
 final class CaptureReadinessController: ObservableObject {
+    typealias Permissions = (microphone: CapturePermission, accessibility: Bool)
+
     @Published private(set) var snapshot = CaptureReadiness(
         microphonePermission: .notDetermined, hasMicrophone: false,
         accessibilityGranted: false, model: .checking, usesPaste: true
@@ -12,27 +14,28 @@ final class CaptureReadinessController: ObservableObject {
 
     private let models: TranscriptionModelManager
     private let devices: AudioDeviceManager
-    private let permissionReader: (() -> (microphone: CapturePermission, accessibility: Bool))?
+    private let permissionReader: @Sendable () -> Permissions
     private var subscriptions: Set<AnyCancellable> = []
-    private var hasMicrophone: Bool
-    private var requestedDevicePass = 0
-    private var startedDevicePass = 0
-    private var completedDevicePass = 0
-    private var devicePassTask: Task<Void, Never>?
-    private var devicePassWaiters: [(pass: Int, continuation: CheckedContinuation<Void, Never>)] = []
-    private nonisolated static let deviceQueue = DispatchQueue(
+    /// Until the first pass answers, readiness reports a check in progress rather than missing access or input.
+    private var hasResolvedSystemState = false
+    private var permissions: Permissions = (.granted, true)
+    private var hasMicrophone = true
+    private var requestedPass = 0
+    private var startedPass = 0
+    private var completedPass = 0
+    private var passTask: Task<Void, Never>?
+    private var passWaiters: [(pass: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private nonisolated static let systemQueue = DispatchQueue(
         label: "com.prakashjoshipax.voiceink.captureReadiness", qos: .userInitiated
     )
 
     init(
         models: TranscriptionModelManager, devices: AudioDeviceManager,
-        permissionReader: (() -> (microphone: CapturePermission, accessibility: Bool))? = nil
+        permissionReader: @escaping @Sendable () -> Permissions = { CaptureReadinessController.readPermissions() }
     ) {
         self.models = models
         self.devices = devices
         self.permissionReader = permissionReader
-        // The manager's last resolution stands in until the first device pass completes.
-        hasMicrophone = devices.selectedDeviceID != nil
         for publisher in [models.objectWillChange, devices.objectWillChange, ModeManager.shared.objectWillChange] {
             publisher.sink { [weak self] in
                 Task { @MainActor in self?.refreshSnapshot() }
@@ -60,80 +63,98 @@ final class CaptureReadinessController: ObservableObject {
         refreshSnapshot()
     }
 
-    /// Schedules a device pass. Requests made while one runs coalesce into a single further pass.
+    /// Schedules a pass that reads permissions and device properties off the main actor. Requests made while one
+    /// runs coalesce into a single further pass.
     func refreshSnapshot() {
-        requestedDevicePass += 1
-        guard devicePassTask == nil else { return }
+        requestedPass += 1
+        guard passTask == nil else { return }
         // Holds the controller weakly across each query, so it is released with its owner even while one runs.
-        devicePassTask = Task { [weak self] in
-            while let pass = self?.beginDevicePass() {
-                let properties = await Self.fetchProperties(of: pass.devices, for: pass.deviceIDs)
-                self?.finishDevicePass(properties)
+        passTask = Task { [weak self] in
+            while let pass = self?.beginPass() {
+                let state = await Self.readSystemState(pass)
+                self?.finishPass(state)
             }
         }
     }
 
-    /// The snapshot from a device pass requested by this call.
+    /// The snapshot from a pass requested by this call.
     func refreshedSnapshot() async -> CaptureReadiness {
         refreshSnapshot()
-        let pass = requestedDevicePass
-        await withCheckedContinuation { devicePassWaiters.append((pass, $0)) }
+        let pass = requestedPass
+        await withCheckedContinuation { passWaiters.append((pass, $0)) }
         return snapshot
     }
 
-    /// Current permissions and model state with the last resolved microphone availability; schedules a device pass.
+    /// Current model state with the last read permissions and microphone availability; schedules a pass.
     func currentSnapshot() -> CaptureReadiness {
         publishSnapshot()
         refreshSnapshot()
         return snapshot
     }
 
-    private func beginDevicePass() -> (devices: AudioDeviceManager, deviceIDs: [AudioDeviceID])? {
-        guard startedDevicePass < requestedDevicePass else {
-            devicePassTask = nil
-            return nil
-        }
-        startedDevicePass = requestedDevicePass
-        return (devices, devices.availableDevices.map(\.id))
+    private struct PassRequest {
+        let devices: AudioDeviceManager
+        let deviceIDs: [AudioDeviceID]
+        let permissionReader: @Sendable () -> Permissions
     }
 
-    private func finishDevicePass(_ properties: RecordingDeviceProperties) {
-        guard properties.deviceIDs == devices.availableDevices.map(\.id) else {
+    private struct SystemState {
+        let properties: RecordingDeviceProperties
+        let permissions: Permissions
+    }
+
+    private func beginPass() -> PassRequest? {
+        guard startedPass < requestedPass else {
+            passTask = nil
+            return nil
+        }
+        startedPass = requestedPass
+        return PassRequest(devices: devices, deviceIDs: devices.availableDevices.map(\.id), permissionReader: permissionReader)
+    }
+
+    private func finishPass(_ state: SystemState) {
+        guard state.properties.deviceIDs == devices.availableDevices.map(\.id) else {
             // The device list changed during the query, so its properties may describe other devices.
-            requestedDevicePass += 1
+            requestedPass += 1
             return
         }
-        hasMicrophone = devices.resolveCurrentRecordingDevice(using: properties).deviceID != nil
-        completedDevicePass = startedDevicePass
+        permissions = state.permissions
+        hasMicrophone = devices.resolveCurrentRecordingDevice(using: state.properties).deviceID != nil
+        hasResolvedSystemState = true
+        completedPass = startedPass
         publishSnapshot()
-        let satisfied = devicePassWaiters.filter { $0.pass <= completedDevicePass }
-        devicePassWaiters.removeAll { $0.pass <= completedDevicePass }
+        let satisfied = passWaiters.filter { $0.pass <= completedPass }
+        passWaiters.removeAll { $0.pass <= completedPass }
         satisfied.forEach { $0.continuation.resume() }
     }
 
-    private nonisolated static func fetchProperties(
-        of devices: AudioDeviceManager, for deviceIDs: [AudioDeviceID]
-    ) async -> RecordingDeviceProperties {
-        // The queried properties are CoreAudio reads, which are safe on any thread.
-        nonisolated(unsafe) let devices = devices
+    /// TCC permission checks and CoreAudio property reads are synchronous IPC that can each take over a second
+    /// when the daemons are busy.
+    private nonisolated static func readSystemState(_ request: PassRequest) async -> SystemState {
+        // The device properties are CoreAudio reads, which are safe on any thread.
+        nonisolated(unsafe) let request = request
         return await withCheckedContinuation { continuation in
-            deviceQueue.async { continuation.resume(returning: devices.fetchRecordingDeviceProperties(for: deviceIDs)) }
+            systemQueue.async {
+                continuation.resume(returning: SystemState(
+                    properties: request.devices.fetchRecordingDeviceProperties(for: request.deviceIDs),
+                    permissions: request.permissionReader()
+                ))
+            }
         }
     }
 
     private func publishSnapshot() {
-        let permissions = permissionReader?() ?? Self.readPermissions()
         let next = CaptureReadiness(
             microphonePermission: permissions.microphone,
             hasMicrophone: hasMicrophone,
             accessibilityGranted: permissions.accessibility,
-            model: modelReadiness(),
+            model: hasResolvedSystemState ? modelReadiness() : .checking,
             usesPaste: ModeManager.shared.currentEffectiveConfiguration?.outputMode == .paste
         )
         if next != snapshot { snapshot = next }
     }
 
-    private static func readPermissions() -> (microphone: CapturePermission, accessibility: Bool) {
+    nonisolated static func readPermissions() -> Permissions {
         let permission: CapturePermission
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: permission = .granted
