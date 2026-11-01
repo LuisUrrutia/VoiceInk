@@ -54,6 +54,7 @@ enum AppDefaults {
             MediaController.loweringLevelKey: MediaController.defaultLoweringLevel,
             "audioResumptionDelay": 0.0,
             "isPauseMediaEnabled": false,
+            PlaybackController.pauseBrowserMediaKey: false,
             UserDefaults.Keys.keepMicrophoneReady: false,
             UserDefaults.Keys.avoidsBluetoothDefaultMicrophone: true,
             CustomSoundManager.SoundType.start.builtInSoundKey: CustomSoundManager.SoundType.start.defaultBuiltInSound

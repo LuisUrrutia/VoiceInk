@@ -105,6 +105,7 @@ struct GeneralBackup: Codable {
     var pinPasteTargetToRecordStart: Bool? = nil
     var remoteClipboardPushCommand: String? = nil
     var avoidsBluetoothDefaultMicrophone: Bool? = nil
+    var isPauseBrowserMediaEnabled: Bool? = nil
     /// Keyed by `CustomSoundManager.SoundType`; a missing type keeps its current sound.
     var feedbackSounds: [String: CustomSoundManager.SoundBackup]? = nil
     let isAutoLearnDictionaryEnabled: Bool?
@@ -162,6 +163,14 @@ struct GeneralBackup: Codable {
         }
         if let remoteClipboardPushCommand {
             defaults.set(remoteClipboardPushCommand, forKey: PasteTargetSettings.remoteClipboardPushCommandKey)
+        }
+    }
+
+    /// A backup without the field keeps the current choice.
+    @MainActor
+    func restoreBrowserMediaPausing(in playback: PlaybackController) {
+        if let isPauseBrowserMediaEnabled {
+            playback.isPauseBrowserMediaEnabled = isPauseBrowserMediaEnabled
         }
     }
 

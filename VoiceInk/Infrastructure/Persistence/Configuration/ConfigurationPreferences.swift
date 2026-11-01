@@ -11,7 +11,7 @@ enum ConfigurationPreferences {
             (.boolean, [
                 "enableAnnouncements", "VoiceInkChecksForUpdatesOnLaunch", "IsMenuBarOnly", "ShowMenuBarIcon", "ShowLiveTranscript",
                 "PinPasteTargetToRecordStart", "restoreClipboardAfterPaste", "isSystemMuteEnabled", "isSystemAudioLoweringEnabled",
-                "isPauseMediaEnabled", "IsTextFormattingEnabled", "IsVADEnabled", "AppendTrailingSpace",
+                "isPauseMediaEnabled", PlaybackController.pauseBrowserMediaKey, "IsTextFormattingEnabled", "IsVADEnabled", "AppendTrailingSpace",
                 "PrewarmModelOnWake", "SkipShortEnhancement", "EnhancementRetryOnTimeout",
                 "IsAutoLearnDictionaryEnabled", "IsTranscriptionCleanupEnabled", "IsAudioCleanupEnabled",
                 "isExperimentalFeaturesEnabled", "useClipboardContext", "useSelectedTextContext",

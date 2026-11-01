@@ -118,8 +118,10 @@ generated file to keep the complete structure and stable UUIDs.
   retains the selected mode. `userAddedEmojis` retains custom icons.
 - **Audio:** input mode, saved microphone UID/model UID, `prioritizedDevices`
   including microphone/application requirements, per-device input channels, recording sound selections,
-  mute/pause preferences and resume delay. Temporary microphone overrides remain
-  temporary.
+  mute/pause preferences, `isPauseBrowserMediaEnabled` (Also Pause the Browser,
+  which applies only with Pause Media) and resume delay. Loading the file does not
+  request the System Audio Recording permission; allow it in Audio settings.
+  Temporary microphone overrides remain temporary.
 - **Shortcuts:** primary/secondary selections and recording modes, plus
   `Shortcut_<action>` and `Shortcut_mode_<UUID>` objects. `_cleared` flags preserve
   explicitly cleared shortcuts. Bindings use the editor's typing/reserved-key

@@ -171,6 +171,7 @@ enum BackupImporter {
         if let pauseMedia = general.isPauseMediaEnabled {
             playbackController.isPauseMediaEnabled = pauseMedia
         }
+        general.restoreBrowserMediaPausing(in: playbackController)
         if let audioDelay = general.audioResumptionDelay {
             mediaController.audioResumptionDelay = audioDelay
         }
