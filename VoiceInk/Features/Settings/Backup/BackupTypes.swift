@@ -125,6 +125,31 @@ struct GeneralBackup: Codable {
         }
     }
 
+    var rawRecordingShortcut: ShortcutBackup? = nil
+    /// Distinguishes an unbound Dictate Without Processing shortcut from an older backup without the field.
+    var isRawRecordingShortcutUnbound: Bool? = nil
+
+    /// The backup's global bindings, where nil unbinds; a missing field is omitted and keeps the current binding.
+    var shortcutRestores: [(action: ShortcutAction, shortcut: Shortcut?)] {
+        let stored: [(ShortcutAction, ShortcutBackup?)] = [
+            (.primaryRecording, primaryRecordingShortcut), (.secondaryRecording, secondaryRecordingShortcut),
+            (.pasteLastTranscription, pasteLastTranscriptionShortcut), (.pasteLastEnhancement, pasteLastEnhancementShortcut),
+            (.retryLastTranscription, retryLastTranscriptionShortcut), (.cancelRecorder, cancelRecorderShortcut),
+            (.openQuickHistory, openHistoryWindowShortcut), (.quickAddToDictionary, quickAddToDictionaryShortcut),
+            (.rawRecording, rawRecordingShortcut),
+        ]
+        var restores = stored.compactMap { action, backup in backup.map { (action: action, shortcut: Optional($0.shortcut)) } }
+        if rawRecordingShortcut == nil, isRawRecordingShortcutUnbound == true {
+            restores.append((action: .rawRecording, shortcut: nil))
+        }
+        // The importer applies a "none" secondary selection by clearing its key, so free it inside the batch.
+        if secondaryRecordingShortcutRawValue == RecordingShortcutManager.ShortcutSelection.none.rawValue {
+            restores.removeAll { $0.action == .secondaryRecording }
+            restores.append((action: .secondaryRecording, shortcut: nil))
+        }
+        return restores
+    }
+
     func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {
         if let keepMicrophoneReady {
             defaults.keepMicrophoneReady = keepMicrophoneReady

@@ -2450,6 +2450,94 @@
         }
       }
     },
+    "Clear Dictate Without Processing shortcut" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kurzbefehl für Diktieren ohne Verarbeitung entfernen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Effacer le raccourci Dicter sans traitement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除“不经处理直接听写”快捷键"
+          }
+        }
+      }
+    },
+    "Clear shortcut" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kurzbefehl entfernen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Effacer le raccourci"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除快捷键"
+          }
+        }
+      }
+    },
+    "Dictate Without Processing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Verarbeitung diktieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dicter sans traitement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不经处理直接听写"
+          }
+        }
+      }
+    },
+    "Dictated without processing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Verarbeitung diktiert"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dicté sans traitement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未经处理的听写"
+          }
+        }
+      }
+    },
     "Done Sound" : {
       "localizations" : {
         "de" : {
@@ -2840,6 +2928,28 @@
         }
       }
     },
+    "None (raw)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine (roh)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun (brut)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无（原始）"
+          }
+        }
+      }
+    },
     "Pick another mic?" : {
       "localizations" : {
         "de" : {
@@ -2884,6 +2994,72 @@
         }
       }
     },
+    "Processing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verarbeitung"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Traitement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "处理"
+          }
+        }
+      }
+    },
+    "Raw" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Roh"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brut"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原始"
+          }
+        }
+      }
+    },
+    "Raw transcription" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rohe Transkription"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcription brute"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原始转写"
+          }
+        }
+      }
+    },
     "Recommended for %@" : {
       "localizations" : {
         "de" : {
@@ -2902,6 +3078,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "推荐用于 %@"
+          }
+        }
+      }
+    },
+    "Records like the primary shortcut, in its mode, and pastes the transcript as heard: no filler-word or tag cleanup, vocabulary correction, formatting, word replacements, trigger words or AI enhancement." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nimmt wie der primäre Kurzbefehl in dessen Modus auf und fügt das Transkript so ein, wie es gehört wurde: ohne Entfernen von Füllwörtern oder Tags, Vokabelkorrektur, Formatierung, Wortersetzungen, Auslösewörter oder KI-Verbesserung."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistre comme le raccourci principal, dans son mode, et colle la transcription telle qu’elle a été entendue : sans suppression des mots de remplissage ni des balises, correction du vocabulaire, mise en forme, remplacements de mots, mots déclencheurs ni amélioration par IA."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以主快捷键的模式录音，并按原样粘贴转写文本：不清理填充词或标签，不进行词汇校正、格式化、词语替换、触发词或 AI 增强。"
           }
         }
       }

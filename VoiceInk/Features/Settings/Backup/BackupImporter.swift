@@ -102,31 +102,12 @@ enum BackupImporter {
             return
         }
 
-        if let shortcut = general.primaryRecordingShortcut {
-            ShortcutStore.setShortcut(shortcut.shortcut, for: .primaryRecording)
+        ShortcutStore.setShortcuts(general.shortcutRestores)
+        if general.primaryRecordingShortcut != nil {
             recordingShortcutManager.primaryRecordingShortcut = .custom
         }
-        if let shortcut2 = general.secondaryRecordingShortcut {
-            ShortcutStore.setShortcut(shortcut2.shortcut, for: .secondaryRecording)
+        if general.secondaryRecordingShortcut != nil {
             recordingShortcutManager.secondaryRecordingShortcut = .custom
-        }
-        if let pasteShortcut = general.pasteLastTranscriptionShortcut {
-            ShortcutStore.setShortcut(pasteShortcut.shortcut, for: .pasteLastTranscription)
-        }
-        if let pasteEnhancementShortcut = general.pasteLastEnhancementShortcut {
-            ShortcutStore.setShortcut(pasteEnhancementShortcut.shortcut, for: .pasteLastEnhancement)
-        }
-        if let retryShortcut = general.retryLastTranscriptionShortcut {
-            ShortcutStore.setShortcut(retryShortcut.shortcut, for: .retryLastTranscription)
-        }
-        if let cancelShortcut = general.cancelRecorderShortcut {
-            ShortcutStore.setShortcut(cancelShortcut.shortcut, for: .cancelRecorder)
-        }
-        if let historyShortcut = general.openHistoryWindowShortcut {
-            ShortcutStore.setShortcut(historyShortcut.shortcut, for: .openQuickHistory)
-        }
-        if let dictionaryShortcut = general.quickAddToDictionaryShortcut {
-            ShortcutStore.setShortcut(dictionaryShortcut.shortcut, for: .quickAddToDictionary)
         }
 
         if let shortcutRawValue = general.primaryRecordingShortcutRawValue,

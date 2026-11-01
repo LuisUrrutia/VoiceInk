@@ -34,6 +34,8 @@ final class Transcription {
     @Attribute(originalName: "powerModeEmoji")
     var modeEmoji: String?
     var transcriptionStatus: String?
+    /// Dictated without processing: the text is the trimmed transcript, without cleanup, replacements or enhancement.
+    var isRawDictation: Bool = false
 
     init(
         text: String,
@@ -49,7 +51,8 @@ final class Transcription {
         aiRequestUserMessage: String? = nil,
         modeName: String? = nil,
         modeEmoji: String? = nil,
-        transcriptionStatus: TranscriptionStatus = .pending
+        transcriptionStatus: TranscriptionStatus = .pending,
+        isRawDictation: Bool = false
     ) {
         self.id = UUID()
         self.text = text
@@ -67,6 +70,7 @@ final class Transcription {
         self.modeName = modeName
         self.modeEmoji = modeEmoji
         self.transcriptionStatus = transcriptionStatus.rawValue
+        self.isRawDictation = isRawDictation
     }
 
     func markAsCanceledTranscription(

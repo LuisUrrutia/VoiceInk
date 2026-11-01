@@ -60,6 +60,39 @@ enum ShortcutStore {
         )
     }
 
+    /// Applies bindings as one change: a key moving between these actions never collides with its previous holder.
+    /// When any binding is still rejected, every action in the batch keeps its previous storage.
+    @discardableResult
+    static func setShortcuts(_ bindings: [(action: ShortcutAction, shortcut: Shortcut?)]) -> Bool {
+        let changes = bindings.filter { shortcut(for: $0.action) != $0.shortcut }
+        guard !changes.isEmpty else { return true }
+        let defaults = UserDefaults.standard
+        let snapshot = changes.map { change in
+            (
+                action: change.action,
+                data: defaults.object(forKey: change.action.userDefaultsKey),
+                cleared: defaults.object(forKey: clearedUserDefaultsKey(for: change.action))
+            )
+        }
+        for change in changes where shortcut(for: change.action) != nil {
+            setShortcut(nil, for: change.action)
+        }
+        for change in changes {
+            if let target = change.shortcut {
+                setShortcut(target, for: change.action)
+            }
+        }
+        guard changes.contains(where: { shortcut(for: $0.action) != $0.shortcut }) else { return true }
+
+        for entry in snapshot {
+            defaults.set(entry.data, forKey: entry.action.userDefaultsKey)
+            defaults.set(entry.cleared, forKey: clearedUserDefaultsKey(for: entry.action))
+            NotificationCenter.default.post(name: shortcutDidChange, object: entry.action)
+        }
+        ShortcutDiagnostics.notice("store batch=\(changes.map(\.action.storageName)) result=rejected")
+        return false
+    }
+
     static func seedShortcut(
         _ shortcut: Shortcut,
         for action: ShortcutAction,

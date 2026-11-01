@@ -183,6 +183,10 @@ struct HistoryTranscriptionRow: View {
                     .lineLimit(isCompact ? 1 : 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                if transcription.isRawDictation {
+                    HistoryRawDictationBadge()
+                }
+
                 Text(transcription.timestamp, format: .relative(presentation: .named))
                     .font(.system(size: isCompact ? 10 : 11))
                     .foregroundStyle(AppTheme.Text.secondary)
@@ -194,13 +198,33 @@ struct HistoryTranscriptionRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(transcription.hasEnhancedHistoryText ? "Enhanced transcription" : "Original transcription")
+        .accessibilityLabel(rowAccessibilityLabel)
         .accessibilityValue(transcription.preferredHistoryText)
         .accessibilityHint(
             onPaste == nil
                 ? "Opens transcription details."
                 : "Selects this transcription. Double-click to paste."
         )
+    }
+
+    private var rowAccessibilityLabel: LocalizedStringKey {
+        if transcription.hasEnhancedHistoryText { return "Enhanced transcription" }
+        return transcription.isRawDictation ? "Raw transcription" : "Original transcription"
+    }
+}
+
+struct HistoryRawDictationBadge: View {
+    var body: some View {
+        Text("Raw")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(AppTheme.Text.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(AppTheme.Surface.subtle))
+            .help("Dictated without processing")
+            .accessibilityHidden(true)
     }
 }
 

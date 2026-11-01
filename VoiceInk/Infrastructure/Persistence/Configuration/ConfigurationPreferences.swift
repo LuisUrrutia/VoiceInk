@@ -83,7 +83,7 @@ enum ConfigurationPreferences {
     }
 
     private static func shortcutAction(for key: String) -> ShortcutAction? {
-        if let action = ShortcutAction.legacyKeyboardShortcutActions.first(where: { $0.userDefaultsKey == key }) { return action }
+        if let action = ShortcutAction.storedGlobalActions.first(where: { $0.userDefaultsKey == key }) { return action }
         if key.hasPrefix("Shortcut_mode_"), let id = UUID(uuidString: String(key.dropFirst(14))) {
             let action = ShortcutAction.mode(id)
             return action.userDefaultsKey == key ? action : nil
@@ -137,7 +137,7 @@ enum ConfigurationPreferences {
             let data = current ?? defaults?.data(forKey: "powerModeConfigurationsV2")
             modes = data.flatMap { try? JSONDecoder().decode([ModeConfig].self, from: $0) } ?? []
         }
-        let actions = ShortcutAction.legacyKeyboardShortcutActions + modes.map { ShortcutAction.mode($0.id) }
+        let actions = ShortcutAction.storedGlobalActions + modes.map { ShortcutAction.mode($0.id) }
         func effectiveKey(_ key: String, legacy: String?) -> String {
             let isPresent = values[key].map { $0 != .null } ?? (defaults?.object(forKey: key) != nil)
             return isPresent ? key : legacy ?? key

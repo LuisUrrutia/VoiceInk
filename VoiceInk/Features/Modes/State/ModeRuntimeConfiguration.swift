@@ -68,6 +68,16 @@ struct DictationModeSnapshot {
         return (mode.name, mode.icon.value)
     }
 
+    /// Dictate Without Processing: the same mode without formatting, enhancement, Respond, custom command or Auto Send.
+    var withoutProcessing: DictationModeSnapshot {
+        DictationModeSnapshot(
+            mode: mode,
+            formatting: TranscriptionFormattingConfiguration(mode: formatting.mode, isTextFormattingEnabled: false),
+            enhancement: nil,
+            output: OutputRuntimeConfiguration(mode: output.mode, outputMode: .paste, autoSendKey: .none, customCommand: nil)
+        )
+    }
+
     /// Resolves the latest settings of `modeID`, or of the current mode when it is absent or no longer enabled.
     @MainActor
     static func resolve(

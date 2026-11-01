@@ -130,6 +130,10 @@ generated file to keep the complete structure and stable UUIDs.
   Set `Shortcut_mode_<UUID>_cleared` to `true` to disable a mode shortcut. Setting
   its binding or clear flag to `null` removes the current override, allowing an
   older profile's legacy binding or flag to return during migration.
+  `Shortcut_rawRecording` binds Dictate Without Processing. It is absent by
+  default (unbound), records in the primary shortcut's mode and must not
+  conflict with any other binding; set it to `null` with
+  `Shortcut_rawRecording_cleared` set to `true` to unbind it.
 - **Other settings:** appearance/language, Dock/menu-bar visibility, recorder
   style/live text, paste method and original target, clipboard restoration,
   smart punctuation and remote push command, Auto Send, Auto Learn and its

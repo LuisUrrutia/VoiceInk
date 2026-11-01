@@ -28,8 +28,9 @@ class RecordingShortcutManager: ObservableObject {
             UserDefaults.standard.set(primaryRecordingShortcutMode.rawValue, forKey: "primaryRecordingShortcutMode")
             ShortcutDiagnostics.notice("configuration action=primaryRecording mode=\(primaryRecordingShortcutMode.rawValue)")
             primaryRecordingShortcutModeSource.primaryMode = primaryRecordingShortcutMode
-            shortcutModeHandler.resetShortcutState(for: .primaryRecording)
-            shortcutMonitor.resetShortcutStates(for: [.primaryRecording])
+            // Dictate Without Processing records with the primary shortcut's mode.
+            shortcutModeHandler.resetShortcutStates(for: [.primaryRecording, .rawRecording])
+            shortcutMonitor.resetShortcutStates(for: [.primaryRecording, .rawRecording])
             modeShortcutManager.recordingModeDidChange()
             updateStandaloneModifierActions()
         }
@@ -43,6 +44,8 @@ class RecordingShortcutManager: ObservableObject {
             updateStandaloneModifierActions()
         }
     }
+    /// Unbound by default; set only through `ShortcutStore`.
+    @Published private(set) var rawRecordingShortcut: Shortcut?
     private var engine: VoiceInkEngine
     private var recorderUIManager: RecorderUIManager
     private var recorderPanelShortcutManager: RecorderPanelShortcutManager
@@ -133,12 +136,15 @@ class RecordingShortcutManager: ObservableObject {
             finishHeldRecording: {
                 recorderUIManager.finishHeldShortcutRecording()
             },
-            toggleRecorderPanel: { modeId, eventTime in
+            toggleRecorderPanel: { modeId, eventTime, processing in
                 // Every handler stop is a release or finishing press that transcribes.
                 await recorderUIManager.toggleRecorderPanel(
-                    modeId: modeId, keepsReleaseTail: true,
+                    modeId: modeId, processing: processing, keepsReleaseTail: true,
                     preRollPressNanoseconds: UInt64(eventTime * 1_000_000_000)
                 )
+            },
+            captureProcessing: {
+                recorderUIManager.captureProcessing
             },
             cancelRecording: {
                 await recorderUIManager.cancelRecording()
@@ -152,6 +158,7 @@ class RecordingShortcutManager: ObservableObject {
             primaryMode: primaryRecordingShortcutMode
         )
 
+        self.rawRecordingShortcut = ShortcutStore.shortcut(for: .rawRecording)
         self.engine = engine
         self.recorderUIManager = recorderUIManager
         self.recorderPanelShortcutManager = RecorderPanelShortcutManager(
@@ -173,7 +180,9 @@ class RecordingShortcutManager: ObservableObject {
         engine.recorder.setPreRollObserverProvider { [weak self] in
             guard let self else { return false }
             let availability = [
-                self.shortcutMonitor.earlyCaptureAvailability(for: [.primaryRecording, .secondaryRecording]),
+                self.shortcutMonitor.earlyCaptureAvailability(
+                    for: [.primaryRecording, .secondaryRecording, .rawRecording]
+                ),
                 self.modeShortcutManager.earlyCaptureAvailability,
             ].compactMap { $0 }
             return !availability.isEmpty && availability.allSatisfy { $0 }
@@ -194,7 +203,7 @@ class RecordingShortcutManager: ObservableObject {
         ShortcutDiagnostics.logSessionStart()
         ShortcutDiagnostics.setRecordingContext { [weak self] in
             guard let self else { return "unavailable" }
-            return "state=\(self.engine.recordingState) visible=\(self.recorderUIManager.isRecorderPanelVisible) primarySelection=\(self.primaryRecordingShortcut.rawValue) primaryMode=\(self.primaryRecordingShortcutMode.rawValue) secondarySelection=\(self.secondaryRecordingShortcut.rawValue) secondaryMode=\(self.secondaryRecordingShortcutMode.rawValue) \(self.shortcutModeHandler.diagnosticSummary)"
+            return "state=\(self.engine.recordingState) visible=\(self.recorderUIManager.isRecorderPanelVisible) primarySelection=\(self.primaryRecordingShortcut.rawValue) primaryMode=\(self.primaryRecordingShortcutMode.rawValue) secondarySelection=\(self.secondaryRecordingShortcut.rawValue) secondaryMode=\(self.secondaryRecordingShortcutMode.rawValue) rawBound=\(self.rawRecordingShortcut != nil) \(self.shortcutModeHandler.diagnosticSummary)"
         }
         ShortcutDiagnostics.notice("configuration primarySelection=\(self.primaryRecordingShortcut.rawValue) primaryMode=\(self.primaryRecordingShortcutMode.rawValue) secondarySelection=\(self.secondaryRecordingShortcut.rawValue) secondaryMode=\(self.secondaryRecordingShortcutMode.rawValue)")
         ShortcutDiagnostics.observeEnvironment(reason: "startup", force: true)
@@ -233,6 +242,12 @@ class RecordingShortcutManager: ObservableObject {
         if let secondaryShortcut {
             shortcuts[.secondaryRecording] = secondaryShortcut
             interruptibleRecordingActions.insert(.secondaryRecording)
+        }
+
+        rawRecordingShortcut = ShortcutStore.shortcut(for: .rawRecording)
+        if let rawRecordingShortcut {
+            shortcuts[.rawRecording] = rawRecordingShortcut
+            interruptibleRecordingActions.insert(.rawRecording)
         }
 
         shortcutMonitor.start(
@@ -275,13 +290,12 @@ class RecordingShortcutManager: ObservableObject {
                 self?.shortcutModeHandler.recoverMissedRelease(for: action)
             },
             onPressCaptured: { [preRollPress = engine.recorder.preRollPress] action, eventTime in
-                guard action == .primaryRecording || action == .secondaryRecording else { return }
+                guard Self.recordingActions.contains(action) else { return }
                 preRollPress.hold(at: eventTime)
             },
             reason: reason
         )
-        let recordingActions: [ShortcutAction] = [.primaryRecording, .secondaryRecording]
-        if recordingActions.contains(where: shortcutMonitor.isMonitoring) {
+        if [ShortcutAction.primaryRecording, .secondaryRecording].contains(where: shortcutMonitor.isMonitoring) {
             hotkeyAvailability = .available
         } else if primaryShortcut == nil && secondaryShortcut == nil {
             hotkeyAvailability = .unconfigured
@@ -291,20 +305,30 @@ class RecordingShortcutManager: ObservableObject {
     }
 
     private var standaloneModifierActions: Set<ShortcutAction> {
+        Self.standaloneModifierActions(primaryMode: primaryRecordingShortcutMode, secondaryMode: secondaryRecordingShortcutMode)
+    }
+
+    private var chordBreakerDelays: [ShortcutAction: TimeInterval] {
+        Self.chordBreakerDelays(primaryMode: primaryRecordingShortcutMode, secondaryMode: secondaryRecordingShortcutMode)
+    }
+
+    /// Dictate Without Processing follows the primary shortcut's mode.
+    static func standaloneModifierActions(primaryMode: Mode, secondaryMode: Mode) -> Set<ShortcutAction> {
         var actions = Set<ShortcutAction>()
-        if primaryRecordingShortcutMode == .toggle || primaryRecordingShortcutMode == .doubleTap {
-            actions.insert(.primaryRecording)
+        if primaryMode == .toggle || primaryMode == .doubleTap {
+            actions.formUnion([.primaryRecording, .rawRecording])
         }
-        if secondaryRecordingShortcutMode == .toggle || secondaryRecordingShortcutMode == .doubleTap {
+        if secondaryMode == .toggle || secondaryMode == .doubleTap {
             actions.insert(.secondaryRecording)
         }
         return actions
     }
 
-    private var chordBreakerDelays: [ShortcutAction: TimeInterval] {
+    static func chordBreakerDelays(primaryMode: Mode, secondaryMode: Mode) -> [ShortcutAction: TimeInterval] {
         var delays: [ShortcutAction: TimeInterval] = [:]
-        delays[.primaryRecording] = primaryRecordingShortcutMode.chordBreakerDelay
-        delays[.secondaryRecording] = secondaryRecordingShortcutMode.chordBreakerDelay
+        delays[.primaryRecording] = primaryMode.chordBreakerDelay
+        delays[.rawRecording] = primaryMode.chordBreakerDelay
+        delays[.secondaryRecording] = secondaryMode.chordBreakerDelay
         return delays
     }
 
@@ -314,7 +338,7 @@ class RecordingShortcutManager: ObservableObject {
 
     private func recordingMode(for action: ShortcutAction) -> Mode? {
         switch action {
-        case .primaryRecording:
+        case .primaryRecording, .rawRecording:
             return primaryRecordingShortcutMode
         case .secondaryRecording:
             return secondaryRecordingShortcutMode
@@ -322,6 +346,8 @@ class RecordingShortcutManager: ObservableObject {
             return nil
         }
     }
+
+    private nonisolated static let recordingActions: Set<ShortcutAction> = [.primaryRecording, .secondaryRecording, .rawRecording]
 
     private func handleGlobalShortcut(_ action: ShortcutAction) async {
         ShortcutDiagnostics.notice("utility action=\(action.storageName) result=requested")
@@ -412,7 +438,8 @@ final class RecordingShortcutModeHandler {
     private let recordingState: @MainActor () -> RecordingState
     private let isShortcutHeld: @MainActor (ShortcutAction) -> Bool
     private let finishHeldRecording: @MainActor () -> Void
-    private let toggleRecorderPanel: @MainActor (UUID?, TimeInterval) async -> Void
+    private let toggleRecorderPanel: @MainActor (UUID?, TimeInterval, DictationProcessing) async -> Void
+    private let captureProcessing: @MainActor () -> DictationProcessing?
     private let cancelRecording: @MainActor () async -> Void
     private let retractStartSound: @MainActor () -> Void
 
@@ -441,7 +468,8 @@ final class RecordingShortcutModeHandler {
         recordingState: @escaping @MainActor () -> RecordingState,
         isShortcutHeld: @escaping @MainActor (ShortcutAction) -> Bool,
         finishHeldRecording: @escaping @MainActor () -> Void,
-        toggleRecorderPanel: @escaping @MainActor (UUID?, TimeInterval) async -> Void,
+        toggleRecorderPanel: @escaping @MainActor (UUID?, TimeInterval, DictationProcessing) async -> Void,
+        captureProcessing: @escaping @MainActor () -> DictationProcessing? = { nil },
         cancelRecording: @escaping @MainActor () async -> Void,
         retractStartSound: @escaping @MainActor () -> Void = {},
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
@@ -452,6 +480,7 @@ final class RecordingShortcutModeHandler {
         self.isShortcutHeld = isShortcutHeld
         self.finishHeldRecording = finishHeldRecording
         self.toggleRecorderPanel = toggleRecorderPanel
+        self.captureProcessing = captureProcessing
         self.cancelRecording = cancelRecording
         self.retractStartSound = retractStartSound
         self.now = now
@@ -506,7 +535,7 @@ final class RecordingShortcutModeHandler {
         // Finish held recordings when monitoring resets.
         let state = recordingState()
         let shouldFinishHeldRecording = !preservingRecording && isRecorderVisible()
-            && wasHoldMode
+            && wasHoldMode && !isCaptureOwnedByOtherKind(activeRecordingShortcutAction)
             && (state == .starting || state == .recording || (state == .idle && activeShortcutCanCancelAccidentalStart))
         logDecision(activeRecordingShortcutAction, phase: "reset", result: shouldFinishHeldRecording ? "finish-held-recording" : "clear-press", detail: "preservingRecording=\(preservingRecording)")
         stateRevision &+= 1
@@ -529,6 +558,13 @@ final class RecordingShortcutModeHandler {
         mode: RecordingShortcutManager.Mode,
         modeId: UUID? = nil
     ) async {
+        // The shortcut kind that started a capture owns it; the other kind neither finishes it nor double-taps.
+        if isCaptureOwnedByOtherKind(action) {
+            logDecision(action, phase: "down", result: "ignored-other-owner")
+            clearPendingDoubleTap(for: action)
+            return
+        }
+
         if mode != .doubleTap, let lastTrigger = lastShortcutPressTime,
             now() - lastTrigger < shortcutPressCooldown
         {
@@ -576,7 +612,7 @@ final class RecordingShortcutModeHandler {
                 return
             }
             logDecision(action, phase: "down", result: "toggle-recorder", detail: "mode=toggle")
-            await toggleRecorderPanel(modeId, eventTime)
+            await toggleRecorderPanel(modeId, eventTime, action.dictationProcessing)
 
         case .hybrid:
             if isHandsFreeRecording {
@@ -586,7 +622,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "down", result: "stop-hands-free", detail: "mode=\(mode.rawValue)")
-                await toggleRecorderPanel(modeId, eventTime)
+                await toggleRecorderPanel(modeId, eventTime, action.dictationProcessing)
                 return
             }
 
@@ -596,7 +632,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "down", result: "start-recording", detail: "mode=\(mode.rawValue)")
-                await toggleRecorderPanel(modeId, eventTime)
+                await toggleRecorderPanel(modeId, eventTime, action.dictationProcessing)
             } else {
                 logDecision(action, phase: "down", result: "wait-for-release", detail: "mode=\(mode.rawValue)")
             }
@@ -608,7 +644,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "down", result: "start-recording", detail: "mode=pushToTalk")
-                await toggleRecorderPanel(modeId, eventTime)
+                await toggleRecorderPanel(modeId, eventTime, action.dictationProcessing)
             } else {
                 logDecision(action, phase: "down", result: "recorder-already-visible", detail: "mode=pushToTalk")
             }
@@ -639,6 +675,11 @@ final class RecordingShortcutModeHandler {
         activeShortcutCanCancelAccidentalStart = false
         activeShortcutIsDoubleTap = false
         let releaseRevision = stateRevision
+        // A press that outlived its capture (canceled from the panel, then another kind started) is retired.
+        guard !isCaptureOwnedByOtherKind(action) else {
+            logDecision(action, phase: "up", result: "ignored-other-owner")
+            return
+        }
 
         switch mode {
         case .toggle:
@@ -659,7 +700,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "up", result: "stop-recording", detail: "mode=pushToTalk")
-                await toggleRecorderPanel(modeId, eventTime)
+                await toggleRecorderPanel(modeId, eventTime, action.dictationProcessing)
             } else {
                 logDecision(action, phase: "up", result: "recorder-hidden", detail: "mode=pushToTalk")
             }
@@ -671,7 +712,7 @@ final class RecordingShortcutModeHandler {
                     return
                 }
                 logDecision(action, phase: "up", result: "stop-recording", detail: "mode=hybrid duration=\(String(format: "%.3f", pressDuration))")
-                await toggleRecorderPanel(modeId, eventTime)
+                await toggleRecorderPanel(modeId, eventTime, action.dictationProcessing)
             } else {
                 logDecision(action, phase: "up", result: "hands-free", detail: "mode=hybrid duration=\(String(format: "%.3f", pressDuration))")
                 isHandsFreeRecording = true
@@ -691,7 +732,7 @@ final class RecordingShortcutModeHandler {
                 eventTime - firstRelease <= doubleTapThreshold
             {
                 logDecision(action, phase: "up", result: "double-tap-triggered", detail: "interval=\(String(format: "%.3f", eventTime - firstRelease))")
-                await toggleRecorderPanel(modeId, pressedAt)
+                await toggleRecorderPanel(modeId, pressedAt, action.dictationProcessing)
                 if stateRevision == releaseRevision {
                     isHandsFreeRecording = isRecorderVisible()
                 }
@@ -714,6 +755,12 @@ final class RecordingShortcutModeHandler {
         }
 
         guard shortcutPressStartTime == pressedAt else { return }
+
+        if isCaptureOwnedByOtherKind(action) {
+            logDecision(action, phase: "interrupted", result: "ignored-other-owner")
+            resetShortcutStates(for: [action], preservingRecording: true)
+            return
+        }
 
         if activeShortcutIsDoubleTap {
             heldShortcut.withLock { $0 = nil }
@@ -743,6 +790,10 @@ final class RecordingShortcutModeHandler {
         reset()
         retractStartSound()
         await cancelRecording()
+    }
+
+    private func isCaptureOwnedByOtherKind(_ action: ShortcutAction) -> Bool {
+        captureProcessing().map { $0 != action.dictationProcessing } ?? false
     }
 
     private func logDecision(_ action: ShortcutAction, phase: String, result: String, detail: String = "") {
