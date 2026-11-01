@@ -1,10 +1,13 @@
 import Foundation
 
-/// Keeps shared transcription resources (the Whisper context, registry caches and VAD, transcribe.cpp,
-/// enhancement captured contexts and the VoiceInk Refine model) resident while any dictation owns them.
+/// Defers the global release of shared transcription resources (the Whisper context, `serviceRegistry.cleanup()`
+/// with its VAD cache cleanup, transcribe.cpp, enhancement captured contexts and the VoiceInk Refine model)
+/// until no dictation owns them.
 ///
 /// Each dictation acquires ownership at capture start; the global release runs only when the last owner releases.
-/// Idle unloading is separate: the residency holds no idle-unload lease, so it never keeps models alive against it.
+/// Per-recording VAD leases stay with each preparation, and the VAD cache holds one lease, so a newer preparation
+/// takes it over. Idle unloading is separate: the residency holds no idle-unload lease, so it never keeps models
+/// alive against it.
 @MainActor
 final class TranscriptionResidency {
     private let releaseResources: @MainActor () async -> Void

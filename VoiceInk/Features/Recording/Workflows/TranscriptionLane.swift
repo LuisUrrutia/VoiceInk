@@ -40,6 +40,8 @@ final class TranscriptionLane {
         let kind: Kind = provider.transcribesLocally ? .local : .cloud
         try await admit(kind, sequence: sequence)
         defer { leave(kind) }
+        // A slot handed over in the same turn as the cancellation still admits; the canceled entry must not run.
+        try Task.checkCancellation()
         return try await operation()
     }
 

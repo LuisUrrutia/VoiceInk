@@ -266,6 +266,34 @@ final class TranscriptionResidencyTests: XCTestCase {
         XCTAssertEqual(ran, [1, 3])
     }
 
+    func testEntryCanceledAsItsSlotOpensDoesNotRunAndTheNextEntryDoes() async throws {
+        let lane = TranscriptionLane()
+        let gate = ResidencyGate()
+        var canceled: Task<Void, Error>?
+        var ran: [UInt64] = []
+        let first = Task { @MainActor in
+            try await lane.run(sequence: 1, provider: .whisper) {
+                ran.append(1)
+                await gate.wait()
+                canceled?.cancel()
+            }
+        }
+        await waitUntil { ran == [1] }
+        canceled = Task { @MainActor in try await lane.run(sequence: 2, provider: .whisper) { ran.append(2) } }
+        let later = Task { @MainActor in try await lane.run(sequence: 3, provider: .whisper) { ran.append(3) } }
+        await waitUntil { lane.waitingCount(local: true) == 2 }
+
+        gate.open()
+        try await first.value
+        let canceledResult = await canceled!.result
+        try await later.value
+
+        XCTAssertThrowsError(try canceledResult.get()) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(ran, [1, 3])
+        XCTAssertEqual(lane.runningCount(local: true), 0)
+        XCTAssertEqual(lane.waitingCount(local: true), 0)
+    }
+
     func testCanceledRecordingEndsItsLaneWaitThroughThePreparation() async throws {
         let lane = TranscriptionLane()
         let gate = ResidencyGate()
@@ -291,6 +319,54 @@ final class TranscriptionResidencyTests: XCTestCase {
         XCTAssertFalse(transcribed)
         gate.open()
         try await blocker.value
+    }
+
+    // MARK: - Finalization
+
+    func testCaptureBarrierAndJobFinishesExcludeEachOtherAndIgnoreStaleIDs() throws {
+        let finalization = DictationFinalization()
+        let stale = try XCTUnwrap(finalization.beginCapture())
+        XCTAssertNil(finalization.beginCapture())
+        XCTAssertFalse(finalization.beginFinish(of: UUID()), "no job finish begins during the capture barrier")
+        finalization.finishCapture(stale)
+        let current = try XCTUnwrap(finalization.beginCapture())
+
+        finalization.finishCapture(stale)
+        XCTAssertTrue(finalization.isRunning, "a stale capture ID cannot end the current barrier")
+        finalization.finishCapture(current)
+        let job = UUID()
+        XCTAssertTrue(finalization.beginFinish(of: job))
+
+        XCTAssertFalse(finalization.beginFinish(of: job), "one job finishes once at a time")
+        XCTAssertNil(finalization.beginCapture(), "no capture barrier begins while a job finishes")
+        finalization.endFinish(of: UUID())
+        XCTAssertTrue(finalization.isRunning, "an unknown job cannot end another job's finish")
+        finalization.endFinish(of: job)
+        XCTAssertFalse(finalization.isRunning)
+    }
+
+    func testJobsFinishIndependentlyAndCaptureWaitersSkipJobFinishes() async throws {
+        let finalization = DictationFinalization()
+        let a = UUID()
+        let b = UUID()
+        XCTAssertTrue(finalization.beginFinish(of: a))
+        XCTAssertTrue(finalization.beginFinish(of: b))
+        var events: [String] = []
+
+        await finalization.waitForCapture()
+        events.append("capture clear")
+        let all = Task { @MainActor in
+            await finalization.waitUntilFinished()
+            events.append("all finished")
+        }
+        await waitUntil(timeout: .milliseconds(100)) { events.count > 1 }
+        finalization.endFinish(of: a)
+        await waitUntil(timeout: .milliseconds(100)) { events.count > 1 }
+        XCTAssertEqual(events, ["capture clear"], "waiting for every finish outlasts A")
+        finalization.endFinish(of: b)
+        await all.value
+
+        XCTAssertEqual(events, ["capture clear", "all finished"])
     }
 
     // MARK: - Idle unload
