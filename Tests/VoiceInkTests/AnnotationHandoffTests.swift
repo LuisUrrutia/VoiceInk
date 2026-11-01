@@ -122,6 +122,27 @@ import XCTest
         }
     }
 
+    func testQuittingStartsNoCommandForAnAnnotationStillProcessing() async throws {
+        let held = FakeAgentRunner(status: 0, output: "", holds: true)
+        let frames = GatedFrames()
+        let fixture = try makeProcessing(command: "my-agent", runner: held, frames: frames)
+        let later = try fixture.addAnnotation()
+        fixture.processor.process(fixture.id)
+        try await waitUntil { held.isHolding }
+        fixture.processor.process(later)
+        try await waitUntil { frames.isWaiting }
+
+        // Runs once stopAllAgents suspends, after it has closed command admission.
+        Task { @MainActor in frames.open() }
+        await fixture.processor.stopAllAgents()
+        await fixture.processor.waitUntilIdle()
+
+        XCTAssertEqual(held.commands.count, 1)
+        XCTAssertNil(try fixture.store.load(id: later).agentRun)
+        XCTAssertEqual(try fixture.store.load(id: later).status, .ready)
+        XCTAssertTrue(fixture.processor.agentIDs.isEmpty)
+    }
+
     func testAnOutputThatCannotBeSavedIsReportedAsAFailure() async throws {
         let fixture = try makeProcessing(command: "my-agent", runner: FakeAgentRunner(status: 0, output: "answer"))
         try FileManager.default.createDirectory(
@@ -307,9 +328,20 @@ import XCTest
         let copied: Values
         let failures: Values
         let enabled: EnabledSwitch
+
+        func addAnnotation() throws -> UUID {
+            var manifest = AnnotationManifest()
+            manifest.status = .processing
+            manifest.duration = 3
+            try store.createDirectory(for: manifest.id)
+            try store.save(manifest)
+            return manifest.id
+        }
     }
 
-    private func makeProcessing(command: String?, runner: any AnnotationAgentRunning) throws -> ProcessingFixture {
+    private func makeProcessing(
+        command: String?, runner: any AnnotationAgentRunning, frames: (any AnnotationFrameSource)? = nil
+    ) throws -> ProcessingFixture {
         let store = AnnotationStore(rootURL: root, movesToTrash: false)
         var manifest = AnnotationManifest()
         manifest.status = .processing
@@ -326,7 +358,7 @@ import XCTest
             environment: .init(
                 chooseModel: { nil }, makeTranscriber: { _ in fatalError("no model") },
                 requestContext: { _ in TranscriptionRequestContext(languages: ["en"]) }, copy: { copied.values.append($0) },
-                notify: { _ in }, frameSource: { _, _ in NoFrames() }, agentCommand: { command }, agentTimeout: { 5 },
+                notify: { _ in }, frameSource: { _, _ in frames ?? NoFrames() }, agentCommand: { command }, agentTimeout: { 5 },
                 agentRunner: runner, notifyFailure: { failures.values.append($0) },
                 isEnabled: { enabled.isOn }, enabledChanges: enabled.changes.eraseToAnyPublisher()
             ),
@@ -349,6 +381,24 @@ import XCTest
 
 private struct NoFrames: AnnotationFrameSource {
     func images(at times: [TimeInterval]) async throws -> [CGImage?] { throw CocoaError(.fileReadNoSuchFile) }
+}
+
+/// Lets the first annotation through, then holds the next one's decoding until opened.
+private final class GatedFrames: AnnotationFrameSource, @unchecked Sendable {
+    private var calls = 0
+    private var waiter: CheckedContinuation<Void, Never>?
+    var isWaiting: Bool { waiter != nil }
+
+    func images(at times: [TimeInterval]) async throws -> [CGImage?] {
+        calls += 1
+        if calls > 1 { await withCheckedContinuation { waiter = $0 } }
+        throw CocoaError(.fileReadNoSuchFile)
+    }
+
+    func open() {
+        waiter?.resume()
+        waiter = nil
+    }
 }
 
 @MainActor
