@@ -67,6 +67,26 @@ import os
         XCTAssertTrue(fixture.power.live.isEmpty)
     }
 
+    func testInkAndClicksAreSavedWithMarksAndThePenFollowsTheCapsule() async throws {
+        let fixture = makeFixture()
+        try await fixture.recorder.start()
+        XCTAssertEqual(fixture.input.startedDisplay, 7)
+        fixture.recorder.setPenEnabled(true)
+        XCTAssertTrue(fixture.input.isPenEnabled)
+        XCTAssertTrue(fixture.recorder.isPenEnabled)
+        fixture.input.strokes = [AnnotationStroke(points: [.init(x: 0.2, y: 0.6, t: 1), .init(x: 0.8, y: 0.6, t: 1.4)])]
+        fixture.input.events = [AnnotationEvent(kind: .click, t: 2, x: 0.4, y: 0.4)]
+
+        let stopped = await fixture.recorder.stop()
+
+        let manifest = try XCTUnwrap(stopped)
+        XCTAssertEqual(manifest.strokes.count, 1)
+        XCTAssertEqual(manifest.events, fixture.input.events)
+        XCTAssertEqual(manifest.marks.map(\.shape), [.underline])
+        XCTAssertEqual(fixture.input.stopCount, 1)
+        XCTAssertFalse(fixture.recorder.isPenEnabled)
+    }
+
     func testCancelDiscardsTheAnnotation() async throws {
         let fixture = makeFixture()
         var recorded = 0
@@ -78,6 +98,7 @@ import os
         XCTAssertTrue(fixture.store.loadAll().isEmpty)
         XCTAssertEqual(fixture.screen.stopCount, 1)
         XCTAssertEqual(fixture.microphone.stopCount, 1)
+        XCTAssertEqual(fixture.input.stopCount, 1)
         XCTAssertEqual(recorded, 0)
         XCTAssertFalse(fixture.recorder.isRecording)
     }
@@ -516,6 +537,7 @@ import os
         let recorder: AnnotationRecorder
         let store: AnnotationStore
         let screen: FakeScreenRecording
+        let input: FakeAnnotationInput
         let microphone: FakeMeetingMicrophoneHardware
         let power: AnnotationPowerAssertions
         let sleepQueue: DispatchQueue
@@ -528,6 +550,7 @@ import os
     ) -> Fixture {
         let store = AnnotationStore(rootURL: root, movesToTrash: false)
         let screen = FakeScreenRecording()
+        let input = FakeAnnotationInput()
         let hardware = FakeMeetingMicrophoneHardware()
         let devices = MeetingAudioDevices(userDefaults: defaults)
         let power = AnnotationPowerAssertions()
@@ -542,12 +565,13 @@ import os
         dependencies.isMicrophoneAuthorized = { isMicrophoneAuthorized }
         dependencies.isMeetingRecording = meetingBusy ?? { meeting }
         dependencies.displayUnderPointer = { 7 }
+        dependencies.makeInput = { input }
         dependencies.idleSleep = IdleSleepPrevention(client: power, queue: sleepQueue)
         dependencies.now = { clock.now }
         dependencies.defaults = defaults
         dependencies.maximumDuration = maximumDuration
         return Fixture(
-            recorder: AnnotationRecorder(dependencies: dependencies), store: store, screen: screen, microphone: hardware,
+            recorder: AnnotationRecorder(dependencies: dependencies), store: store, screen: screen, input: input, microphone: hardware,
             power: power, sleepQueue: sleepQueue, clock: clock
         )
     }
@@ -719,4 +743,22 @@ private final class WordTranscriber: TimedSpeechTranscribing {
 
     func speechRegions(in samples: [Float]) async throws -> [Range<Int>]? { nil }
     func releaseResources() async {}
+}
+
+@MainActor
+final class FakeAnnotationInput: AnnotationInputCapturing {
+    var strokes: [AnnotationStroke] = []
+    var events: [AnnotationEvent] = []
+    var displaySize = CGSize(width: 1_512, height: 982)
+    private(set) var startedDisplay: CGDirectDisplayID?
+    private(set) var stopCount = 0
+    private(set) var isPenEnabled = false
+
+    func start(displayID: CGDirectDisplayID, startNanoseconds: UInt64) { startedDisplay = displayID }
+    func setPenEnabled(_ isEnabled: Bool) { isPenEnabled = isEnabled }
+
+    func stop() -> (strokes: [AnnotationStroke], events: [AnnotationEvent], displaySize: CGSize) {
+        stopCount += 1
+        return (strokes, events, displaySize)
+    }
 }
