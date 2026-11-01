@@ -10,7 +10,7 @@ import XCTest
         XCTAssertEqual(Set(destinations), Set(available))
         XCTAssertEqual(destinations.count, available.count)
         XCTAssertEqual(ViewType.sidebarGroups.first, [.dashboard, .modes, .dictionary])
-        XCTAssertEqual(ViewType.allCases.count, 10)
+        XCTAssertEqual(ViewType.allCases.count, 11)
     }
 
     func testMeetingsAppearsWithHistoryOnlyWhileItsLabsSwitchIsOn() {
@@ -25,6 +25,11 @@ import XCTest
 
         XCTAssertTrue(ViewType.meetings.isAvailable(defaults: defaults))
         XCTAssertEqual(ViewType.sidebarGroups(labsFeatures: LabsFeature.all, defaults: defaults)[2], [.history, .transcribeAudio, .meetings])
+        Labs.setEnabled(true, for: .annotate, in: defaults)
+        XCTAssertEqual(
+            ViewType.sidebarGroups(labsFeatures: LabsFeature.all, defaults: defaults)[2], [.history, .transcribeAudio, .meetings, .annotations]
+        )
+        XCTAssertEqual(ViewType.annotations.labsFeature, .annotate)
         XCTAssertFalse(ViewType.meetings.isAvailable(labsFeatures: [], defaults: defaults))
     }
 

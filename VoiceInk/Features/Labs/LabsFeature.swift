@@ -23,7 +23,7 @@ extension LabsFeature: Hashable {
 
 extension LabsFeature {
     /// Every Labs feature, in page order.
-    static let all: [LabsFeature] = [.meetings]
+    static let all: [LabsFeature] = [.meetings, .annotate]
 }
 
 enum Labs {

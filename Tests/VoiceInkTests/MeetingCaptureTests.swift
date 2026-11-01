@@ -392,12 +392,12 @@ import os
         Labs.setEnabled(false, for: .meetings, in: defaults)
 
         XCTAssertFalse(ShortcutAction.activeGlobalUtilityActions(defaults: defaults).contains(.toggleMeeting))
-        XCTAssertEqual(
-            ShortcutAction.activeGlobalUtilityActions(defaults: defaults),
-            ShortcutAction.globalUtilityActions.filter { $0 != .toggleMeeting }
+        XCTAssertTrue(
+            Set(ShortcutAction.globalUtilityActions.filter { $0.labsFeature == nil })
+                .isSubset(of: ShortcutAction.activeGlobalUtilityActions(defaults: defaults))
         )
         Labs.setEnabled(true, for: .meetings, in: defaults)
-        XCTAssertEqual(ShortcutAction.activeGlobalUtilityActions(defaults: defaults), ShortcutAction.globalUtilityActions)
+        XCTAssertTrue(ShortcutAction.activeGlobalUtilityActions(defaults: defaults).contains(.toggleMeeting))
     }
 
     func testDictationLeavesOutputAndMediaAloneOnlyWhileAMeetingRecords() async throws {
@@ -635,6 +635,13 @@ final class FakeMeetingMicrophoneHardware: RecordingHardware, @unchecked Sendabl
         get { state.withLock { $0.failStart } }
         set { state.withLock { $0.failStart = newValue } }
     }
+    /// What the writer reports after Stop, as a converter or file failure would.
+    private let stopError = OSAllocatedUnfairLock<Error?>(initialState: nil)
+    var failureAfterStop: Error? {
+        get { stopError.withLock { $0 } }
+        set { stopError.withLock { $0 = newValue } }
+    }
+    var recordingError: Error? { failureAfterStop }
 
     /// Delivers one input block: its converted PCM in `chunks` callbacks, then its capture progress.
     func emit(frames: Int, capturedThrough: UInt64, chunks: Int = 1) {
@@ -663,7 +670,19 @@ final class FakeMeetingMicrophoneHardware: RecordingHardware, @unchecked Sendabl
         }
     }
 
-    func stopRecording() { state.withLock { $0.stopCount += 1 } }
+    /// When set, `stopRecording` blocks the microphone queue until `releaseStop()`.
+    let stopGate = DispatchSemaphore(value: 0)
+    private let holdsStopFlag = OSAllocatedUnfairLock(initialState: false)
+    var holdStop: Bool {
+        get { holdsStopFlag.withLock { $0 } }
+        set { holdsStopFlag.withLock { $0 = newValue } }
+    }
+    func releaseStop() { stopGate.signal() }
+
+    func stopRecording() {
+        if holdStop { stopGate.wait() }
+        state.withLock { $0.stopCount += 1 }
+    }
 
     func switchDevice(to deviceID: AudioDeviceID, selectedInputChannels: [UInt32]?) throws {
         state.withLock { $0.switchedDevices.append(deviceID) }

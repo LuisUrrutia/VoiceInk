@@ -10,6 +10,7 @@ enum ViewType: String, CaseIterable, Identifiable {
     case dictionary = "Dictionary"
     case settings = "Settings"
     case meetings = "Meetings"
+    case annotations = "Annotations"
     case labs = "Labs"
 
     var id: String { rawValue }
@@ -29,14 +30,18 @@ enum ViewType: String, CaseIterable, Identifiable {
     /// their switch is on.
     static func sidebarGroups(labsFeatures: [LabsFeature], defaults: UserDefaults = .standard) -> [[ViewType]] {
         let groups: [[ViewType]] = [
-            [.dashboard, .modes, .dictionary], [.settings, .audio, .models], [.history, .transcribeAudio, .meetings],
+            [.dashboard, .modes, .dictionary], [.settings, .audio, .models], [.history, .transcribeAudio, .meetings, .annotations],
         ].map { group in group.filter { $0.isAvailable(labsFeatures: labsFeatures, defaults: defaults) } }
         return labsFeatures.isEmpty ? groups : groups + [[.labs]]
     }
 
     /// The Labs feature whose switch shows this destination.
     var labsFeature: LabsFeature? {
-        self == .meetings ? .meetings : nil
+        switch self {
+        case .meetings: .meetings
+        case .annotations: .annotate
+        default: nil
+        }
     }
 
     func isAvailable(labsFeatures: [LabsFeature] = LabsFeature.all, defaults: UserDefaults = .standard) -> Bool {
@@ -77,6 +82,7 @@ struct ContentView: View {
     @EnvironmentObject private var navigation: MainWindowNavigation
     @AppStorage("mainWindowShowsSidebar") private var showsSidebar = true
     @AppStorage(LabsFeature.meetings.defaultsKey) private var showsMeetings = false
+    @AppStorage(LabsFeature.annotate.defaultsKey) private var showsAnnotations = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -101,6 +107,9 @@ struct ContentView: View {
         .buttonBorderShape(.capsule)
         .frame(minWidth: AppWindowLayout.minimumWidth, minHeight: AppWindowLayout.minimumHeight)
         .onChange(of: showsMeetings) {
+            if !navigation.selectedView.isAvailable() { navigation.selectedView = .dashboard }
+        }
+        .onChange(of: showsAnnotations) {
             if !navigation.selectedView.isAvailable() { navigation.selectedView = .dashboard }
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateToDestination)) { notification in
@@ -130,6 +139,8 @@ struct ContentView: View {
             SettingsView()
         case .meetings:
             MeetingsView()
+        case .annotations:
+            AnnotationsView()
         case .labs:
             LabsView()
         }

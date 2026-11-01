@@ -96,7 +96,7 @@ If you encounter any issues or have questions, please:
 
 ### Essential Dependencies
 - [Phosphor Icons](https://phosphoricons.com) - Custom symbols for navigation and common actions (MIT; bundled license in `VoiceInk/Resources/Licenses/`)
-- [Hex](https://github.com/anomalyco/hex) - Default "Hex Classic" recording start sound and "Soft Tone" done sound (MIT; bundled license and provenance in `VoiceInk/Resources/Licenses/`), the per-language speech model recommendations (MIT; sources in `docs/model-recommendations.md`), and the design of Meetings (MIT; see `docs/meetings.md`)
+- [Hex](https://github.com/anomalyco/hex) - Default "Hex Classic" recording start sound and "Soft Tone" done sound (MIT; bundled license and provenance in `VoiceInk/Resources/Licenses/`), the per-language speech model recommendations (MIT; sources in `docs/model-recommendations.md`), and the design of Meetings and Annotate (MIT; see `docs/meetings.md` and `docs/annotate.md`)
 - [Sparkle](https://github.com/sparkle-project/Sparkle) - Keeping VoiceInk up to date
 - [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) - User-customizable keyboard shortcuts
 - [LaunchAtLogin](https://github.com/sindresorhus/LaunchAtLogin) - Launch at login functionality

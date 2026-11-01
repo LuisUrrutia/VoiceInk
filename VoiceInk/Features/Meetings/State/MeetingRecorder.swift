@@ -18,12 +18,14 @@ enum MeetingRecorderError: LocalizedError, Equatable {
     case microphoneNotAuthorized
     case systemAudioDenied
     case noLocalModel
+    case annotationRecording
 
     var errorDescription: String? {
         switch self {
         case .featureDisabled: String(localized: "Turn on Meetings in Labs to record meetings.")
         case .alreadyRecording: String(localized: "A meeting is already recording.")
         case .microphoneNotAuthorized: String(localized: "Allow VoiceInk to use the microphone to record meetings.")
+        case .annotationRecording: String(localized: "Finish the annotation before recording a meeting.")
         case .noLocalModel:
             String(localized: "Meetings needs a downloaded local model, such as Parakeet or Whisper. Download one in Models.")
         case .systemAudioDenied:
@@ -48,6 +50,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         var now: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
         var defaults: UserDefaults = .standard
         var stallCheckInterval: Duration = .seconds(1)
+        /// Another capture (an annotation) that owns the screen and microphone.
+        var isOtherCaptureBusy: @MainActor () -> Bool = { AnnotationRecorder.shared.isBusy }
     }
 
     static let assertionName = "VoiceInk meeting recording"
@@ -89,6 +93,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     }
 
     var isRecording: Bool { activeMeeting != nil }
+    /// Starting, recording or closing files; an annotation must wait.
+    var isBusy: Bool { isStarting || session != nil || isStopping }
     var activeMicrophone: MeetingMicrophoneCapture? { session?.microphone }
 
     init(dependencies: Dependencies = Dependencies()) {
@@ -174,6 +180,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         guard Labs.isEnabled(.meetings, in: dependencies.defaults) else { throw MeetingRecorderError.featureDisabled }
         guard session == nil, !isStarting else { throw MeetingRecorderError.alreadyRecording }
         guard dependencies.isMicrophoneAuthorized() else { throw MeetingRecorderError.microphoneNotAuthorized }
+        guard !dependencies.isOtherCaptureBusy() else { throw MeetingRecorderError.annotationRecording }
         guard canTranscribe?() ?? true else { throw MeetingRecorderError.noLocalModel }
         isStarting = true
         defer { isStarting = false }
