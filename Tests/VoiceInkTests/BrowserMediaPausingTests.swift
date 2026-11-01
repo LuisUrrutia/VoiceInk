@@ -657,3 +657,81 @@ final class PlaybackControllerOwnershipTests: XCTestCase {
         XCTAssertEqual(defaults.object(forKey: PlaybackController.pauseBrowserMediaKey) as? Bool, false)
     }
 }
+
+private final class ScriptedPermission: SystemAudioRecordingPermissionChecking, @unchecked Sendable {
+    private let lock = NSLock()
+    private var state: SystemAudioRecordingAuthorization
+    private var completions: [@Sendable (Bool) -> Void] = []
+    private(set) var requests = 0
+
+    init(_ state: SystemAudioRecordingAuthorization) { self.state = state }
+
+    func authorization() -> SystemAudioRecordingAuthorization { lock.withLock { state } }
+
+    func request(completion: @escaping @Sendable (Bool) -> Void) -> Bool {
+        lock.withLock {
+            guard state == .notDetermined else { return false }
+            requests += 1
+            completions.append(completion)
+            return true
+        }
+    }
+
+    func answer(_ granted: Bool) {
+        let pending = lock.withLock { () -> [@Sendable (Bool) -> Void] in
+            state = granted ? .granted : .denied
+            defer { completions.removeAll() }
+            return completions
+        }
+        pending.forEach { $0(granted) }
+    }
+}
+
+@MainActor
+final class SystemAudioRecordingPermissionModelTests: XCTestCase {
+    private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+        for _ in 0..<200 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    func testAnswerEndsWaitingAndShowsTheResult() async {
+        let permission = ScriptedPermission(.notDetermined)
+        let model = SystemAudioRecordingPermissionModel(permission: permission)
+
+        model.requestIfUndetermined()
+        let waited = model.isWaitingForAnswer
+        permission.answer(true)
+        await waitUntil { !model.isWaitingForAnswer }
+
+        XCTAssertTrue(waited)
+        XCTAssertFalse(model.isWaitingForAnswer)
+        XCTAssertEqual(model.authorization, .granted)
+    }
+
+    func testUnansweredRequestOffersAllowAgainAfterActivationOrTimeout() async {
+        let permission = ScriptedPermission(.notDetermined)
+        let model = SystemAudioRecordingPermissionModel(permission: permission, answerTimeout: .milliseconds(50))
+
+        model.requestIfUndetermined()
+        model.applicationDidBecomeActive()
+        let afterActivation = model.isWaitingForAnswer
+        model.requestIfUndetermined()
+        await waitUntil { !model.isWaitingForAnswer }
+
+        XCTAssertFalse(afterActivation)
+        XCTAssertFalse(model.isWaitingForAnswer)
+        XCTAssertEqual(model.authorization, .notDetermined)
+        XCTAssertEqual(permission.requests, 2)
+    }
+
+    func testDecidedOrUnknownPermissionIsNeverRequested() {
+        for state: SystemAudioRecordingAuthorization in [.granted, .denied, .unknown] {
+            let permission = ScriptedPermission(state)
+            let model = SystemAudioRecordingPermissionModel(permission: permission)
+
+            model.requestIfUndetermined()
+
+            XCTAssertFalse(model.isWaitingForAnswer, "\(state)")
+            XCTAssertEqual(permission.requests, 0, "\(state)")
+        }
+    }
+}

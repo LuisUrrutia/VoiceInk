@@ -50,6 +50,8 @@ struct TCCSystemAudioRecordingPermission: SystemAudioRecordingPermissionChecking
     func request(completion: @escaping @Sendable (Bool) -> Void) -> Bool {
         guard authorization() == .notDetermined, let functions = Self.functions else { return false }
         functions.request(Self.service, nil) { granted in completion(granted) }
+        // Apple documents starting tap I/O as the prompt trigger; it backs up the private request.
+        SystemAudioRecordingPrompt.trigger()
         return true
     }
 }

@@ -101,6 +101,29 @@ struct CoreAudioBrowserProcessList: BrowserAudioProcessListing {
     }
 }
 
+/// Starting I/O on a process tap is the documented trigger for the System Audio Recording
+/// prompt; the tap covers only VoiceInk's own output and is closed after half a second.
+enum SystemAudioRecordingPrompt {
+    static func trigger() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+                mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain
+            )
+            var pid = ProcessInfo.processInfo.processIdentifier
+            var objectID = AudioObjectID(kAudioObjectUnknown)
+            var size = UInt32(MemoryLayout<AudioObjectID>.size)
+            guard AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject), &address,
+                UInt32(MemoryLayout<pid_t>.size), &pid, &size, &objectID
+            ) == noErr, objectID != kAudioObjectUnknown else { return }
+            let tap = try? BrowserOutputTap(processObjectIDs: [objectID])
+            Thread.sleep(forTimeInterval: 0.5)
+            withExtendedLifetime(tap) {}
+        }
+    }
+}
+
 /// Hears the browsers' own output through a private CoreAudio process tap.
 final class CoreAudioBrowserAudioListener: BrowserAudioListening, @unchecked Sendable {
     private let which: BrowserAudioProcesses

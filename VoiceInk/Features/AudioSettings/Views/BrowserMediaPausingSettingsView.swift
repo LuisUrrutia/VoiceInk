@@ -6,15 +6,28 @@ final class SystemAudioRecordingPermissionModel: ObservableObject {
     @Published private(set) var authorization: SystemAudioRecordingAuthorization
     @Published private(set) var isWaitingForAnswer = false
     private let permission: any SystemAudioRecordingPermissionChecking
+    private let answerTimeout: Duration
+    private var waitTimeout: Task<Void, Never>?
 
-    init(permission: any SystemAudioRecordingPermissionChecking = TCCSystemAudioRecordingPermission()) {
+    init(
+        permission: any SystemAudioRecordingPermissionChecking = TCCSystemAudioRecordingPermission(),
+        answerTimeout: Duration = .seconds(30)
+    ) {
         self.permission = permission
+        self.answerTimeout = answerTimeout
         authorization = permission.authorization()
     }
 
     func refresh() {
         authorization = permission.authorization()
-        if authorization != .notDetermined { isWaitingForAnswer = false }
+        if authorization != .notDetermined { stopWaiting() }
+    }
+
+    /// macOS may show no prompt (observed for an ad-hoc Debug build), so returning to
+    /// VoiceInk or the timeout offers Allow again instead of waiting forever.
+    func applicationDidBecomeActive() {
+        stopWaiting()
+        refresh()
     }
 
     /// Asks only from the settings control, never while dictating.
@@ -23,11 +36,23 @@ final class SystemAudioRecordingPermissionModel: ObservableObject {
         guard !isWaitingForAnswer else { return }
         let asked = permission.request { [weak self] _ in
             Task { @MainActor in
-                self?.isWaitingForAnswer = false
+                self?.stopWaiting()
                 self?.refresh()
             }
         }
         isWaitingForAnswer = asked
+        guard asked else { return }
+        waitTimeout = Task { [weak self, answerTimeout] in
+            try? await Task.sleep(for: answerTimeout)
+            guard !Task.isCancelled else { return }
+            self?.applicationDidBecomeActive()
+        }
+    }
+
+    private func stopWaiting() {
+        waitTimeout?.cancel()
+        waitTimeout = nil
+        isWaitingForAnswer = false
     }
 }
 
@@ -55,7 +80,7 @@ struct BrowserMediaPausingSettingsView: View {
             }
             .onAppear { permission.refresh() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                permission.refresh()
+                permission.applicationDidBecomeActive()
             }
         }
     }
