@@ -96,7 +96,7 @@ struct AudioSetupView: View {
 
     @ViewBuilder
     private var inputSettingsRows: some View {
-        MicrophoneInputStatusView(devices: audioDeviceManager, recorder: engine.recorder)
+        MicrophoneInputStatusView(recorder: engine.recorder)
         if let temporary = audioDeviceManager.temporaryMicrophone {
             LabeledContent("Temporary Microphone", value: temporary.name)
             Button("Resume Automatic Selection") {

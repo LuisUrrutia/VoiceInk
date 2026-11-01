@@ -2,25 +2,30 @@ import SwiftUI
 
 /// Names the input in use with its live level, and the one reason it differs from the saved setting.
 struct MicrophoneInputStatusView: View {
-    @ObservedObject var devices: AudioDeviceManager
+    @ObservedObject private var monitor = MicrophoneInputStatusMonitor.shared
     let recorder: Recorder
 
     var body: some View {
-        let status = devices.microphoneInputStatus
+        let status = monitor.status
         LabeledContent("Input in Use") {
             HStack(spacing: 8) {
-                Text(status.inputName ?? String(localized: "No microphone"))
+                Text(inputTitle(status))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 MicrophoneLevelIndicator(recorder: recorder)
             }
         }
 
-        if let message = status.message {
+        if let message = status?.message {
             Text(message)
                 .foregroundStyle(.secondary)
         }
     }
+}
+
+private func inputTitle(_ status: MicrophoneInputStatus?) -> String {
+    guard let status else { return String(localized: "Checking") }
+    return status.inputName ?? String(localized: "No microphone")
 }
 
 /// Owns the level polling, so level changes redraw only the bars and never re-resolve the input.

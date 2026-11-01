@@ -1,6 +1,12 @@
 import CoreAudio
 import Foundation
 
+/// A saved Custom microphone or priority entry that is not connected, identified by its device UID.
+struct SavedMicrophone: Equatable, Identifiable {
+    let id: String
+    let name: String
+}
+
 /// The input VoiceInk records from and, when it is not the one the saved setting names, why.
 /// Only one note shows, so the Audio settings and the toolbar never give contradicting reasons.
 struct MicrophoneInputStatus: Equatable {
@@ -13,8 +19,13 @@ struct MicrophoneInputStatus: Equatable {
         case bluetooth(BluetoothMicrophoneSubstitution)
     }
 
-    let inputName: String?
-    let note: Note?
+    /// The active recording's input, else the input the next recording resolves to.
+    var inputName: String?
+    /// The usable input that routing resolves to; nil when no input is usable, even while a recording keeps one.
+    var standInName: String?
+    var note: Note?
+    /// Menus keep these listed as not connected.
+    var notConnected: [SavedMicrophone] = []
 
     var message: String? {
         switch note {
@@ -23,20 +34,20 @@ struct MicrophoneInputStatus: Equatable {
         case .switchesAfterRecording(let name):
             return String(localized: "VoiceInk switches to \(name) after this recording")
         case .notConnected(let savedName?):
-            guard let inputName else {
+            guard let standInName else {
                 return String(localized: "\(savedName) isn't connected, and no other microphone is available")
             }
-            return String(localized: "\(savedName) isn't connected; using \(inputName)")
+            return String(localized: "\(savedName) isn't connected; using \(standInName)")
         case .notConnected(nil):
-            guard let inputName else {
+            guard let standInName else {
                 return String(localized: "The selected microphone isn't connected, and no other microphone is available")
             }
-            return String(localized: "The selected microphone isn't connected; using \(inputName)")
+            return String(localized: "The selected microphone isn't connected; using \(standInName)")
         case .closedLid:
-            guard let inputName else {
+            guard let standInName else {
                 return String(localized: "The lid is closed, and no other microphone is available")
             }
-            return String(localized: "The lid is closed, so VoiceInk listens to \(inputName)")
+            return String(localized: "The lid is closed, so VoiceInk listens to \(standInName)")
         case .bluetooth(let substitution):
             return substitution.message
         }
@@ -44,14 +55,30 @@ struct MicrophoneInputStatus: Equatable {
 }
 
 extension AudioDeviceManager {
-    var microphoneInputStatus: MicrophoneInputStatus {
-        let currentDeviceID = getCurrentDevice()
-        let inputName = availableDevices.first { $0.id == currentDeviceID }?.name
-        return MicrophoneInputStatus(inputName: inputName, note: microphoneInputNote(currentDeviceID: currentDeviceID))
+    /// Queries CoreAudio on the calling thread; interface code reads `MicrophoneInputStatusMonitor` instead.
+    var microphoneInputStatus: MicrophoneInputStatus { makeMicrophoneInputStatus() }
+
+    /// Computes the status from `properties`, fetched for the current `availableDevices`, without querying CoreAudio.
+    func microphoneInputStatus(using properties: RecordingDeviceProperties) -> MicrophoneInputStatus {
+        withPrefetchedRoutingProperties(properties) { makeMicrophoneInputStatus() }
     }
 
-    /// Saved microphones that are absent: the Custom choice, or every priority entry. Menus keep them listed.
-    var savedMicrophonesNotConnected: [String] {
+    private func makeMicrophoneInputStatus() -> MicrophoneInputStatus {
+        let resolution = resolveCurrentRecordingDevice()
+        let currentDeviceID = activeRecordingDeviceID ?? resolution.deviceID
+        func name(_ deviceID: AudioDeviceID?) -> String? {
+            deviceID.flatMap { id in availableDevices.first { $0.id == id }?.name }
+        }
+        return MicrophoneInputStatus(
+            inputName: name(currentDeviceID),
+            standInName: name(resolution.deviceID),
+            note: microphoneInputNote(currentDeviceID: currentDeviceID, resolution: resolution),
+            notConnected: savedMicrophonesNotConnected
+        )
+    }
+
+    /// Saved microphones that are absent: the Custom choice, or every priority entry.
+    private var savedMicrophonesNotConnected: [SavedMicrophone] {
         switch inputMode {
         case .systemDefault:
             return []
@@ -59,16 +86,19 @@ extension AudioDeviceManager {
             guard let uid = userDefaults.selectedAudioDeviceUID,
                 findAvailableDevice(uid: uid, modelUID: userDefaults.selectedAudioDeviceModelUID) == nil
             else { return [] }
-            return [userDefaults.selectedAudioDeviceName ?? String(localized: "Selected Microphone")]
+            return [SavedMicrophone(
+                id: uid, name: userDefaults.selectedAudioDeviceName ?? String(localized: "Selected Microphone")
+            )]
         case .prioritized:
             return prioritizedDevices.sorted { $0.priority < $1.priority }
                 .filter { findAvailableDevice(uid: $0.id, modelUID: $0.modelUID) == nil }
-                .map(\.name)
+                .map { SavedMicrophone(id: $0.id, name: $0.name) }
         }
     }
 
-    private func microphoneInputNote(currentDeviceID: AudioDeviceID) -> MicrophoneInputStatus.Note? {
-        let resolution = resolveCurrentRecordingDevice()
+    private func microphoneInputNote(
+        currentDeviceID: AudioDeviceID?, resolution: RecordingDeviceResolution
+    ) -> MicrophoneInputStatus.Note? {
         if let activeRecordingDeviceID, !recordingDeviceSession.isDeviceChangePending,
             let resolvedID = resolution.deviceID, resolvedID != activeRecordingDeviceID,
             let name = availableDevices.first(where: { $0.id == resolvedID })?.name
@@ -82,10 +112,11 @@ extension AudioDeviceManager {
         if resolution.internalMicrophoneBlockedByClosedLid {
             return .closedLid
         }
-        return bluetoothDefaultSubstitution.map(MicrophoneInputStatus.Note.bluetooth)
+        return currentDeviceID.flatMap(bluetoothDefaultSubstitution(currentDeviceID:))
+            .map(MicrophoneInputStatus.Note.bluetooth)
     }
 
-    private func savedMicrophoneNotConnected(rankedBefore currentDeviceID: AudioDeviceID) -> MicrophoneInputStatus.Note? {
+    private func savedMicrophoneNotConnected(rankedBefore currentDeviceID: AudioDeviceID?) -> MicrophoneInputStatus.Note? {
         switch inputMode {
         case .systemDefault:
             return nil

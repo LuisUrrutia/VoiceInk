@@ -43,6 +43,7 @@ struct AppWindowToolbar<Content: View>: View {
 
 struct MicrophoneMenu: View {
     @ObservedObject private var devices = AudioDeviceManager.shared
+    @ObservedObject private var inputStatus = MicrophoneInputStatusMonitor.shared
     @EnvironmentObject private var navigation: MainWindowNavigation
 
     var body: some View {
@@ -57,7 +58,7 @@ struct MicrophoneMenu: View {
             )) {
                 Label("Use system default", appSymbol: "desktopcomputer")
             }
-            if let message = devices.microphoneInputStatus.message {
+            if let message = inputStatus.status?.message {
                 Text(message)
             }
 
@@ -71,8 +72,8 @@ struct MicrophoneMenu: View {
                 }
                 .disabled(!devices.isDeviceUsableForRecording(device.id))
             }
-            ForEach(devices.savedMicrophonesNotConnected, id: \.self) { name in
-                Label("\(name) (Not Connected)", appSymbol: "mic.slash")
+            ForEach(inputStatus.status?.notConnected ?? []) { microphone in
+                Label("\(microphone.name) (Not Connected)", appSymbol: "mic.slash")
                     .disabled(true)
             }
 

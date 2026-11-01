@@ -31,7 +31,7 @@ import os
         XCTAssertEqual(status.inputName, "MacBook Pro Microphone")
         XCTAssertEqual(status.note, .notConnected(savedName: "SHURE MV7"))
         XCTAssertEqual(status.message, "SHURE MV7 isn't connected; using MacBook Pro Microphone")
-        XCTAssertEqual(manager.savedMicrophonesNotConnected, ["SHURE MV7"])
+        XCTAssertEqual(notConnectedNames(manager), ["SHURE MV7"])
         XCTAssertEqual(defaults.selectedAudioDeviceUID, "shure")
     }
 
@@ -41,7 +41,7 @@ import os
         XCTAssertEqual(
             manager.microphoneInputStatus.message, "The selected microphone isn't connected; using MacBook Pro Microphone"
         )
-        XCTAssertEqual(manager.savedMicrophonesNotConnected, [String(localized: "Selected Microphone")])
+        XCTAssertEqual(notConnectedNames(manager), [String(localized: "Selected Microphone")])
 
         saveCustomMicrophone(uid: "shure", name: "SHURE MV7")
         manager.connected = []
@@ -64,14 +64,14 @@ import os
 
         XCTAssertEqual(manager.getCurrentDevice(), StatusDeviceManager.usbID)
         XCTAssertEqual(manager.microphoneInputStatus.message, "SHURE MV7 isn't connected; using USB Microphone")
-        XCTAssertEqual(manager.savedMicrophonesNotConnected, ["SHURE MV7", "RØDE NT-USB"])
+        XCTAssertEqual(notConnectedNames(manager), ["SHURE MV7", "RØDE NT-USB"])
 
         manager.connected.append(StatusDeviceManager.shure)
         manager.loadAvailableDevices()
 
         XCTAssertEqual(manager.getCurrentDevice(), StatusDeviceManager.shureID)
         XCTAssertNil(manager.microphoneInputStatus.note)
-        XCTAssertEqual(manager.savedMicrophonesNotConnected, ["RØDE NT-USB"])
+        XCTAssertEqual(notConnectedNames(manager), ["RØDE NT-USB"])
     }
 
     func testClosedLidNamesTheStandInForTheInternalMicrophone() {
@@ -123,8 +123,10 @@ import os
 
         manager.selectTemporaryMicrophone(id: StatusDeviceManager.usbID)
 
-        XCTAssertEqual(manager.microphoneInputStatus, MicrophoneInputStatus(inputName: "USB Microphone", note: nil))
-        XCTAssertEqual(manager.savedMicrophonesNotConnected, ["SHURE MV7"])
+        XCTAssertEqual(manager.microphoneInputStatus, MicrophoneInputStatus(
+            inputName: "USB Microphone", standInName: "USB Microphone", note: nil,
+            notConnected: [SavedMicrophone(id: "shure", name: "SHURE MV7")]
+        ))
     }
 
     func testReturningMicrophoneIsUsedAgainWhileIdleWithoutChangingTheSetting() {
@@ -137,7 +139,10 @@ import os
 
         XCTAssertEqual(manager.getCurrentDevice(), StatusDeviceManager.shureID)
         XCTAssertEqual(manager.selectedDeviceID, StatusDeviceManager.shureID)
-        XCTAssertEqual(manager.microphoneInputStatus, MicrophoneInputStatus(inputName: "SHURE MV7", note: nil))
+        XCTAssertEqual(
+            manager.microphoneInputStatus,
+            MicrophoneInputStatus(inputName: "SHURE MV7", standInName: "SHURE MV7", note: nil)
+        )
         XCTAssertEqual(defaults.audioInputModeRawValue, AudioInputMode.custom.rawValue)
         XCTAssertEqual(defaults.selectedAudioDeviceUID, "shure")
     }
@@ -175,15 +180,113 @@ import os
         await waitUntil { self.defaults.selectedAudioDeviceName != nil }
         XCTAssertEqual(defaults.selectedAudioDeviceName, "USB Microphone")
 
-        defaults.selectedAudioDeviceName = nil
+        defaults.audioDeviceNamesByUID = [:]
         manager.reconcileInputAvailability()
 
         XCTAssertEqual(defaults.selectedAudioDeviceName, "USB Microphone")
     }
 
+    func testClosedLidDuringARecordingWithoutAnotherInputSaysNoneIsAvailable() {
+        saveCustomMicrophone(uid: "internal", name: "MacBook Pro Microphone")
+        let manager = StatusDeviceManager(userDefaults: defaults)
+        manager.recordingDidStart(deviceID: StatusDeviceManager.internalID)
+        manager.connected.removeAll { $0.id == StatusDeviceManager.usbID }
+        manager.availableDevices = manager.connected
+
+        manager.lidClosed = true
+        manager.handleClamshellChange(isClosed: true)
+
+        let status = manager.microphoneInputStatus
+        XCTAssertEqual(status.inputName, "MacBook Pro Microphone")
+        XCTAssertNil(status.standInName)
+        XCTAssertEqual(status.message, "The lid is closed, and no other microphone is available")
+    }
+
+    func testClosedLidDuringARecordingNamesTheUsableStandIn() {
+        saveCustomMicrophone(uid: "internal", name: "MacBook Pro Microphone")
+        let manager = StatusDeviceManager(userDefaults: defaults)
+        manager.recordingDidStart(deviceID: StatusDeviceManager.internalID)
+
+        manager.lidClosed = true
+        manager.handleClamshellChange(isClosed: true)
+
+        XCTAssertTrue(manager.recordingDeviceSession.isDeviceChangePending)
+        XCTAssertEqual(manager.microphoneInputStatus.message, "The lid is closed, so VoiceInk listens to USB Microphone")
+    }
+
+    func testStatusFromPrefetchedPropertiesQueriesNoCoreAudio() {
+        defaults.audioInputModeRawValue = AudioInputMode.systemDefault.rawValue
+        let manager = StatusDeviceManager(userDefaults: defaults)
+        manager.connected.append(StatusDeviceManager.airPods)
+        manager.systemDefaultDeviceID = StatusDeviceManager.airPodsID
+        manager.loadAvailableDevices()
+        let properties = manager.fetchRecordingDeviceProperties(for: manager.availableDevices.map(\.id))
+        manager.resetQueries()
+
+        let status = manager.microphoneInputStatus(using: properties)
+
+        XCTAssertEqual(status.message, "AirPods is Bluetooth, so VoiceInk listens to MacBook Pro Microphone")
+        XCTAssertEqual(manager.queries.count, 0)
+    }
+
+    func testMonitorFetchesOffTheMainThreadAndRefreshesOnDeviceChanges() async {
+        saveCustomMicrophone(uid: "shure", name: "SHURE MV7")
+        let manager = StatusDeviceManager(userDefaults: defaults)
+        manager.resetQueries()
+        let monitor = MicrophoneInputStatusMonitor(devices: manager)
+        await waitUntil { monitor.status != nil }
+        XCTAssertEqual(monitor.status?.message, "SHURE MV7 isn't connected; using MacBook Pro Microphone")
+        XCTAssertEqual(monitor.status?.notConnected, [SavedMicrophone(id: "shure", name: "SHURE MV7")])
+        XCTAssertFalse(manager.queries.isEmpty)
+        XCTAssertFalse(manager.queries.contains(true), "CoreAudio was queried on the main thread")
+
+        manager.connected.append(StatusDeviceManager.shure)
+        manager.loadAvailableDevices()
+        manager.resetQueries()
+        await waitUntil { monitor.status?.inputName == "SHURE MV7" }
+
+        XCTAssertEqual(monitor.status, MicrophoneInputStatus(inputName: "SHURE MV7", standInName: "SHURE MV7", note: nil))
+        XCTAssertFalse(manager.queries.contains(true), "CoreAudio was queried on the main thread")
+    }
+
+    func testUIDOnlyConfigurationUpdateNeverShowsThePreviousMicrophonesName() throws {
+        saveCustomMicrophone(uid: "usb", name: "USB Microphone")
+        XCTAssertEqual(defaults.selectedAudioDeviceName, "USB Microphone")
+
+        try ConfigurationPreferences.apply(["selectedAudioDeviceUID": .string("missing-mic")], to: defaults)
+        let manager = StatusDeviceManager(userDefaults: defaults)
+
+        XCTAssertNil(defaults.selectedAudioDeviceName)
+        XCTAssertEqual(manager.microphoneInputStatus.note, .notConnected(savedName: nil))
+        XCTAssertEqual(
+            manager.microphoneInputStatus.message, "The selected microphone isn't connected; using MacBook Pro Microphone"
+        )
+        XCTAssertEqual(
+            manager.microphoneInputStatus.notConnected,
+            [SavedMicrophone(id: "missing-mic", name: String(localized: "Selected Microphone"))]
+        )
+    }
+
+    func testIdenticallyNamedMissingMicrophonesKeepDistinctIdentities() {
+        defaults.audioInputModeRawValue = AudioInputMode.prioritized.rawValue
+        defaults.prioritizedDevicesData = try! JSONEncoder().encode([
+            PrioritizedDevice(id: "usb-a", name: "USB Audio", priority: 0),
+            PrioritizedDevice(id: "usb-b", name: "USB Audio", priority: 1),
+        ])
+
+        let notConnected = StatusDeviceManager(userDefaults: defaults).microphoneInputStatus.notConnected
+
+        XCTAssertEqual(notConnected.map(\.id), ["usb-a", "usb-b"])
+        XCTAssertEqual(notConnected.map(\.name), ["USB Audio", "USB Audio"])
+    }
+
     private func saveCustomMicrophone(uid: String, name: String) {
         defaults.selectedAudioDeviceUID = uid
-        defaults.selectedAudioDeviceName = name
+        defaults.audioDeviceNamesByUID[uid] = name
+    }
+
+    private func notConnectedNames(_ manager: AudioDeviceManager) -> [String] {
+        manager.microphoneInputStatus.notConnected.map(\.name)
     }
 
     private func waitUntil(_ condition: () -> Bool) async {
@@ -336,10 +439,26 @@ private final class StatusDeviceManager: AudioDeviceManager {
         reconcileInputAvailability()
         completion?()
     }
-    override func getSystemDefaultDevice() -> AudioDeviceID? { systemDefaultDeviceID }
-    override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool { deviceID == Self.internalID }
-    override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? { nil }
+    /// Whether each CoreAudio-backed query ran on the main thread.
+    private let queryLog = OSAllocatedUnfairLock(initialState: [Bool]())
+    var queries: [Bool] { queryLog.withLock { $0 } }
+    func resetQueries() { queryLog.withLock { $0.removeAll() } }
+    private func logQuery() { queryLog.withLock { $0.append(Thread.isMainThread) } }
+
+    override func getSystemDefaultDevice() -> AudioDeviceID? {
+        logQuery()
+        return systemDefaultDeviceID
+    }
+    override func isInternalMicrophone(_ deviceID: AudioDeviceID) -> Bool {
+        logQuery()
+        return deviceID == Self.internalID
+    }
+    override func getDeviceModelUID(deviceID: AudioDeviceID) -> String? {
+        logQuery()
+        return nil
+    }
     override func inputTransport(_ deviceID: AudioDeviceID) -> AudioInputTransport {
+        logQuery()
         switch deviceID {
         case Self.internalID: return .builtIn
         case Self.airPodsID: return .bluetooth

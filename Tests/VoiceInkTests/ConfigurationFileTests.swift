@@ -625,7 +625,7 @@ final class ConfigurationFileTests: XCTestCase {
             "customAIProviders": try .encoded([model]),
             ShortcutAction.mode(mode.id).userDefaultsKey: try .encoded(shortcut),
             "Shortcut_secondaryRecording_cleared": .bool(true),
-            "selectedAudioDeviceName": .string("SHURE MV7"),
+            "audioDeviceNamesByUID": .object(["shure-uid": .string("SHURE MV7")]),
             "prioritizedDevices": .array([.object([
                 "id": .string("virtual-uid"), "name": .string("Virtual Input"), "priority": .number(0),
                 "modelUID": .string("virtual-model"),

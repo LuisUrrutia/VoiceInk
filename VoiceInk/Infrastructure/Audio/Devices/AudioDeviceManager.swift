@@ -123,10 +123,15 @@ class AudioDeviceManager: ObservableObject {
 
     /// Resolves from `properties`, fetched for the current `availableDevices`, without querying CoreAudio.
     func resolveCurrentRecordingDevice(using properties: RecordingDeviceProperties) -> RecordingDeviceResolution {
+        withPrefetchedRoutingProperties(properties) { resolveCurrentRecordingDevice() }
+    }
+
+    /// Runs `body` with routing reading `properties` instead of CoreAudio.
+    func withPrefetchedRoutingProperties<T>(_ properties: RecordingDeviceProperties, _ body: () -> T) -> T {
         let previous = prefetchedRoutingProperties
         prefetchedRoutingProperties = properties
         defer { prefetchedRoutingProperties = previous }
-        return resolveCurrentRecordingDevice()
+        return body()
     }
 
     func getSystemDefaultDeviceName() -> String? {
@@ -492,7 +497,7 @@ class AudioDeviceManager: ObservableObject {
             let savedUID = userDefaults.selectedAudioDeviceUID,
             let found = findAvailableDevice(uid: savedUID, modelUID: userDefaults.selectedAudioDeviceModelUID),
             found.uid != savedUID || userDefaults.selectedAudioDeviceModelUID == nil
-                || userDefaults.selectedAudioDeviceName != found.name
+                || userDefaults.audioDeviceNamesByUID[found.uid] != found.name
         {
             updateCustomDeviceHints(deviceID: found.id, uid: found.uid, name: found.name)
         }
@@ -602,7 +607,7 @@ class AudioDeviceManager: ObservableObject {
 
     private func updateCustomDeviceHints(deviceID: AudioDeviceID, uid: String, name: String, modelUID: String? = nil) {
         userDefaults.selectedAudioDeviceUID = uid
-        userDefaults.selectedAudioDeviceName = name
+        userDefaults.audioDeviceNamesByUID[uid] = name
         userDefaults.selectedAudioDeviceModelUID = modelUID ?? getDeviceModelUID(deviceID: deviceID)
     }
 
