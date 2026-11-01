@@ -38,13 +38,9 @@ struct LocalFluidAudioVAD: FluidAudioVADManaging {
     }
 }
 
+/// Keeps the Silero manager loaded while any recording holds a lease; the last release frees it.
 actor FluidAudioVADCache {
     typealias Loader = @Sendable () async throws -> any FluidAudioVADManaging
-
-    private struct Lease: Equatable {
-        let recordingID: UUID
-        let modelName: String
-    }
 
     private struct Load {
         let id: UUID
@@ -54,7 +50,8 @@ actor FluidAudioVADCache {
 
     private let loader: Loader
     private let isEnabled: @Sendable () -> Bool
-    private var lease: Lease?
+    /// Recording ID to the model name its preparation was made for.
+    private var leases: [UUID: String] = [:]
     private var generation = UUID()
     private var result: Result<any FluidAudioVADManaging, Error>?
     private var loading: Load?
@@ -69,17 +66,19 @@ actor FluidAudioVADCache {
         loading?.task.cancel()
     }
 
+    var leaseCount: Int { leases.count }
+
     func prepare(recordingID: UUID, modelName: String) async throws -> Bool {
         try Task.checkCancellation()
-        let requestedLease = Lease(recordingID: recordingID, modelName: modelName)
-        if lease != requestedLease {
+        // The first lease starts a fresh generation, as does a model change, which drops every other lease.
+        if leases.isEmpty || leases.values.contains(where: { $0 != modelName }) {
             invalidate()
-            lease = requestedLease
         }
+        leases[recordingID] = modelName
         do {
             return try await manager() != nil
         } catch is CancellationError {
-            if Task.isCancelled, lease == requestedLease {
+            if Task.isCancelled, leases[recordingID] == modelName {
                 await release(recordingID: recordingID)
             }
             throw CancellationError()
@@ -87,7 +86,7 @@ actor FluidAudioVADCache {
     }
 
     func release(recordingID: UUID) async {
-        guard lease?.recordingID == recordingID else { return }
+        guard leases.removeValue(forKey: recordingID) != nil, leases.isEmpty else { return }
         await cleanup()
     }
 
@@ -103,7 +102,7 @@ actor FluidAudioVADCache {
 
     private func invalidate() {
         generation = UUID()
-        lease = nil
+        leases.removeAll()
         result = nil
         loading?.task.cancel()
     }

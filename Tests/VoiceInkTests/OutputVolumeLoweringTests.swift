@@ -317,10 +317,10 @@ final class OutputVolumeLoweringTests: XCTestCase {
         controller.lowerSystemAudio(sessionID: session)
         await lowering.settle()
 
+        // The app exits right after this notification, so restoration must finish during its delivery.
         center.post(name: NSApplication.willTerminateNotification, object: nil)
-        let restored = expectation(for: NSPredicate { _, _ in device.values == [0.3, 0.8] }, evaluatedWith: nil)
-        await fulfillment(of: [restored], timeout: 2)
 
+        XCTAssertEqual(device.values, [0.3, 0.8])
         XCTAssertFalse(lowering.ownsOutput)
     }
 

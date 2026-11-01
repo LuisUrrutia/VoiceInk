@@ -193,19 +193,17 @@ final class ModifierShortcutHardeningTests: XCTestCase {
         let pressedAt = harness.now
 
         harness.modifier(down: true, at: pressedAt)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(harness.breakers.count, 0)
-        try await Task.sleep(for: .milliseconds(350))
+        try await harness.waitForBreakers(1)
         harness.modifier(down: false, at: harness.now)
         try await Task.sleep(for: .milliseconds(100))
 
         XCTAssertEqual(harness.breakers.flags, [CGEventFlags.maskAlternate])
+        XCTAssertGreaterThanOrEqual(harness.breakers.postedAt[0] - pressedAt, 0.3 - 0.005)
     }
 
     func testShortTapsChordsExtraModifiersAndTapModesNeverBreakTheChord() async throws {
         let shortTap = MonitorHarness(shortcut: Self.option, chordBreakerDelay: 0.3)
         shortTap.modifier(down: true, at: shortTap.now)
-        try await Task.sleep(for: .milliseconds(100))
         shortTap.modifier(down: false, at: shortTap.now)
 
         let chord = MonitorHarness(shortcut: Self.option, chordBreakerDelay: 0.3)
@@ -238,7 +236,7 @@ final class ModifierShortcutHardeningTests: XCTestCase {
         let pressedAt = harness.now
 
         harness.modifier(down: true, at: pressedAt)
-        try await Task.sleep(for: .milliseconds(150))
+        try await harness.waitForBreakers(1)
         XCTAssertEqual(harness.breakers.count, 1)
         for event in ChordBreaker.makeEvents(flags: .maskAlternate) {
             XCTAssertFalse(harness.deliver(event.type, event), "The breaker passes on to the annotated-session filter")
@@ -363,10 +361,13 @@ private final class MonitorHarness {
     }
 
     final class Breakers: Sendable {
-        private let posted = OSAllocatedUnfairLock<[CGEventFlags]>(initialState: [])
-        var flags: [CGEventFlags] { posted.withLock { $0 } }
-        var count: Int { flags.count }
-        func record(_ flags: CGEventFlags) { posted.withLock { $0.append(flags) } }
+        private let posted = OSAllocatedUnfairLock<[(flags: CGEventFlags, at: TimeInterval)]>(initialState: [])
+        var flags: [CGEventFlags] { posted.withLock { $0.map(\.flags) } }
+        var postedAt: [TimeInterval] { posted.withLock { $0.map(\.at) } }
+        var count: Int { posted.withLock { $0.count } }
+        func record(_ flags: CGEventFlags) {
+            posted.withLock { $0.append((flags, ProcessInfo.processInfo.systemUptime)) }
+        }
     }
 
     let sessionTap = FakeTap()
@@ -448,6 +449,18 @@ private final class MonitorHarness {
     }
 
     /// Lets queued main-actor dispatches run.
+    /// Waits on the real tap-thread timer without assuming how promptly it fires.
+    func waitForBreakers(_ count: Int, timeout: Duration = .seconds(5)) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while breakers.count < count {
+            guard ContinuousClock.now < deadline else {
+                XCTFail("Expected \(count) chord breakers, got \(breakers.count)")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     func drain() async {
         for _ in 0..<3 {
             await withCheckedContinuation { continuation in
