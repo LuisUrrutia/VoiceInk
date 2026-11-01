@@ -117,13 +117,18 @@ final class RecordingContextCapture {
         recordingID: UUID, savedVocabulary: RecordingVocabulary = RecordingVocabulary()
     ) -> RecordingContextSnapshotStore {
         clear()
-        let session = Session(
+        let session = makeSession(recordingID: recordingID, savedVocabulary: savedVocabulary)
+        self.session = session
+        return session.store
+    }
+
+    /// Starts capture for a recording that owns the returned session itself.
+    func makeSession(recordingID: UUID, savedVocabulary: RecordingVocabulary = RecordingVocabulary()) -> Session {
+        Session(
             recordingID: recordingID,
             store: RecordingContextSnapshotStore(savedVocabulary: savedVocabulary),
             capture: capture
         )
-        self.session = session
-        return session.store
     }
 
     func clear(recordingID: UUID? = nil) {
