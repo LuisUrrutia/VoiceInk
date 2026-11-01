@@ -140,7 +140,6 @@ final class CoreAudioBrowserAudioListener: BrowserAudioListening, @unchecked Sen
     private let ownPID = ProcessInfo.processInfo.processIdentifier
     private var tap: (any BrowserOutputLevel)?
     private var hasStarted = false
-    private var tapFailed = false
     private static let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "BrowserMedia")
 
     init(
@@ -170,7 +169,6 @@ final class CoreAudioBrowserAudioListener: BrowserAudioListening, @unchecked Sen
                     tap = try startTap(selected.map(\.objectID))
                     await tap?.waitForFirstCycle()
                 } catch {
-                    tapFailed = true
                     Self.logger.warning("Could not listen to the browser: \(error.localizedDescription, privacy: .public)")
                 }
             }
@@ -179,8 +177,8 @@ final class CoreAudioBrowserAudioListener: BrowserAudioListening, @unchecked Sen
     }
 
     func isBrowserOutputClosed() -> Bool {
-        // A quit browser is not a paused one, and a failed tap could not confirm a play.
-        guard !tapFailed, let processes = processList.processes() else { return false }
+        // A quit browser is not a paused one, and without a started tap nothing could confirm a play.
+        guard tap != nil, let processes = processList.processes() else { return false }
         let browsers = BrowserAudioCatalog.browsers(in: processes, excluding: ownPID)
         return !browsers.isEmpty && BrowserAudioCatalog.select(.playing, from: browsers).isEmpty
     }

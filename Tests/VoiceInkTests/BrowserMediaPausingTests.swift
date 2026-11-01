@@ -450,15 +450,22 @@ final class BrowserAudioCatalogTests: XCTestCase {
         XCTAssertTrue(unreadable.isBrowserUsingMicrophone())
     }
 
-    func testOutputIsClosedOnlyWhileABrowserRunsWithEveryOutputClosed() {
-        func closed(_ list: [BrowserAudioProcess]?) -> Bool {
-            CoreAudioBrowserAudioListener(.all, processList: FixedProcessList(list: list)).isBrowserOutputClosed()
+    func testOutputIsClosedOnlyWhileABrowserRunsWithEveryOutputClosed() async {
+        func closed(_ list: [BrowserAudioProcess]?) async -> Bool {
+            let listener = CoreAudioBrowserAudioListener(.all, processList: FixedProcessList(list: list), startTap: { _ in SilentLevel() })
+            _ = await listener.peakDBFS(over: .milliseconds(1))
+            return listener.isBrowserOutputClosed()
         }
 
-        XCTAssertTrue(closed([process(1, "com.google.Chrome", output: false), process(2, "com.spotify.client", output: true)]))
-        XCTAssertFalse(closed([process(1, "com.google.Chrome", output: false), process(2, "com.google.Chrome.helper", output: true)]))
-        XCTAssertFalse(closed([process(2, "com.spotify.client", output: true)]), "a quit browser is not a paused one")
-        XCTAssertFalse(closed(nil))
+        let pausedChrome = await closed([process(1, "com.google.Chrome", output: false), process(2, "com.spotify.client", output: true)])
+        let playingHelper = await closed([process(1, "com.google.Chrome", output: false), process(2, "com.google.Chrome.helper", output: true)])
+        let quitBrowser = await closed([process(2, "com.spotify.client", output: true)])
+        let unreadable = await closed(nil)
+
+        XCTAssertTrue(pausedChrome)
+        XCTAssertFalse(playingHelper)
+        XCTAssertFalse(quitBrowser, "a quit browser is not a paused one")
+        XCTAssertFalse(unreadable)
     }
 
     func testNoOpenBrowserOutputCreatesNoTap() async {
@@ -737,6 +744,17 @@ final class SystemAudioRecordingPermissionModelTests: XCTestCase {
 
 private struct TapStartFailure: Error {}
 
+/// Fails its first read, then lists the given processes.
+private final class FlakyProcessList: BrowserAudioProcessListing, @unchecked Sendable {
+    private let later: [BrowserAudioProcess]
+    private var reads = 0
+    init(later: [BrowserAudioProcess]) { self.later = later }
+    func processes() -> [BrowserAudioProcess]? {
+        reads += 1
+        return reads == 1 ? nil : later
+    }
+}
+
 private final class SilentLevel: BrowserOutputLevel {
     func waitForFirstCycle() async {}
     func peakDBFS(over window: Duration) async -> Float? { nil }
@@ -754,6 +772,22 @@ final class BrowserTapFailureTests: XCTestCase {
         XCTAssertEqual(outcome, .leftAlone)
         XCTAssertEqual(commands.sent, [])
         XCTAssertFalse(listener.isBrowserOutputClosed())
+    }
+
+    func testAnUnreadableFirstProcessListCannotAuthorizePlayForAClosedOutput() async {
+        let processList = FlakyProcessList(later: [process(1, "com.google.Chrome", output: false)])
+        var tapStarts = 0
+        let listener = CoreAudioBrowserAudioListener(.all, processList: processList, startTap: { _ in
+            tapStarts += 1
+            return SilentLevel()
+        })
+        let commands = RecordingCommands()
+
+        let outcome = await BrowserMediaSequence.resume(listener, commands: commands, gate: BrowserMediaCommandGate())
+
+        XCTAssertEqual(outcome, .leftAlone)
+        XCTAssertEqual(commands.sent, [])
+        XCTAssertEqual(tapStarts, 0)
     }
 
     func testAStartedTapOnAClosedOutputStillAllowsPlay() async {
