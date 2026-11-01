@@ -63,6 +63,7 @@ import XCTest
         let monitors = FakeEventMonitoring()
         let capture = AnnotationInputCapture(monitoring: monitors, displayFrame: { _ in CGRect(x: 0, y: 0, width: 1_000, height: 800) })
         capture.start(displayID: 1, startNanoseconds: 0)
+        capture.setPenEnabled(true)
         let ink = try XCTUnwrap(capture.ink)
 
         ink.mouseDown(with: try mouse(.leftMouseDown, at: CGPoint(x: 100, y: 400)))
@@ -112,6 +113,22 @@ import XCTest
         capture.setPenEnabled(false)
         XCTAssertFalse(capture.isTakingPointer)
         _ = capture.stop()
+    }
+
+    func testAMissedShiftReleaseHealsOnTheOverlaysOwnClickWithoutDrawing() throws {
+        let monitors = FakeEventMonitoring()
+        let capture = AnnotationInputCapture(monitoring: monitors, displayFrame: { _ in CGRect(x: 0, y: 0, width: 1_000, height: 800) })
+        capture.start(displayID: 1, startNanoseconds: 0)
+        let ink = try XCTUnwrap(capture.ink)
+        // The overlay is catching the pointer when the release is lost; its own clicks reach only the overlay.
+        monitors.deliverLocal(try flags([.maskShift]))
+        XCTAssertTrue(capture.isTakingPointer)
+
+        ink.mouseDown(with: try mouse(.leftMouseDown, at: CGPoint(x: 100, y: 100)))
+        ink.mouseUp(with: try mouse(.leftMouseUp, at: CGPoint(x: 200, y: 100)))
+
+        XCTAssertFalse(capture.isTakingPointer)
+        XCTAssertTrue(capture.stop().strokes.isEmpty)
     }
 
     func testPointsAreNormalizedFromTheTopLeftOfTheDisplay() {
@@ -226,21 +243,35 @@ import XCTest
 @MainActor
 private final class FakeEventMonitoring: AnnotationEventMonitoring {
     private var global: ((NSEvent) -> Void)?
+    private var globalMask: NSEvent.EventTypeMask = []
+    private var local: ((NSEvent) -> NSEvent?)?
+    private var localMask: NSEvent.EventTypeMask = []
     private(set) var added = 0
     private(set) var removed = 0
 
     func addGlobal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> Void) -> Any? {
         added += 1
         global = handler
+        globalMask = mask
         return "global"
     }
 
     func addLocal(_ mask: NSEvent.EventTypeMask, _ handler: @escaping (NSEvent) -> NSEvent?) -> Any? {
         added += 1
+        local = handler
+        localMask = mask
         return "local"
     }
 
     func remove(_ monitor: Any) { removed += 1 }
 
-    func deliver(_ event: NSEvent) { global?(event) }
+    /// Another app's event, as AppKit delivers it, only when the registered mask includes its type.
+    func deliver(_ event: NSEvent) {
+        if globalMask.contains(NSEvent.EventTypeMask(rawValue: 1 << event.type.rawValue)) { global?(event) }
+    }
+
+    /// One of VoiceInk's own events, which only local monitors see.
+    func deliverLocal(_ event: NSEvent) {
+        if localMask.contains(NSEvent.EventTypeMask(rawValue: 1 << event.type.rawValue)) { _ = local?(event) }
+    }
 }
