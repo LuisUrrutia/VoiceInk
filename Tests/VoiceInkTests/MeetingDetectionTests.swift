@@ -134,7 +134,7 @@ import XCTest
         try await waitUntil { fixture.recorder.isRecording }
 
         XCTAssertEqual(fixture.recorder.activeMeeting?.provider, "zoom")
-        XCTAssertTrue(fixture.recorder.activeMeeting?.title.hasPrefix(MeetingProvider.zoom.callName) == true)
+        XCTAssertTrue(fixture.recorder.activeMeeting?.title.hasPrefix(MeetingProvider.zoom.callName + " · ") == true)
         _ = await fixture.recorder.stop()
     }
 

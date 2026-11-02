@@ -220,7 +220,7 @@ final class MeetingCallMonitor {
     private func record(_ provider: MeetingProvider, automatically: Bool) async {
         // Two calls can become stable in one observation; the first start wins and owns the detected-call state.
         guard !dependencies.recorder.isRecording, !dependencies.recorder.isStarting else { return }
-        let title = provider.callName + " " + Date().formatted(date: .abbreviated, time: .shortened)
+        let title = MeetingRecorder.defaultTitle(for: Date(), name: provider.callName)
         recordedCall = (provider, provider == .meet ? callBrowsers[.meet] : nil)
         recordedCallEndedWhileStarting = false
         do {
