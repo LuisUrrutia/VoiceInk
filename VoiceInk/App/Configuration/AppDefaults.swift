@@ -60,6 +60,9 @@ enum AppDefaults {
             MeetingSettings.detectsCallsKey: true,
             MeetingSettings.summarizesKey: false,
             MeetingAudioRetention.key: MeetingAudioRetention.default.rawValue,
+            AnnotationSettings.agentCommandKey: "",
+            AnnotationSettings.agentTimeoutKey: AnnotationSettings.defaultAgentTimeout,
+            AnnotationSettings.retentionKey: AnnotationRetention.default.rawValue,
             UserDefaults.Keys.avoidsBluetoothDefaultMicrophone: true,
             CustomSoundManager.SoundType.start.builtInSoundKey: CustomSoundManager.SoundType.start.defaultBuiltInSound
                 .rawValue,
