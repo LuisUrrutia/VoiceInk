@@ -42,6 +42,7 @@ final class AnnotationRecorder: ObservableObject {
         var isMicrophoneAuthorized: () -> Bool = { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
         var isMeetingRecording: @MainActor () -> Bool = { MeetingRecorder.shared.isBusy }
         var displayUnderPointer: () -> CGDirectDisplayID? = { NSScreen.displayUnderPointer }
+        var makeInput: @MainActor () -> any AnnotationInputCapturing = { AnnotationInputCapture() }
         var idleSleep: IdleSleepPrevention = .shared
         var now: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
         var defaults: UserDefaults = .standard
@@ -57,6 +58,8 @@ final class AnnotationRecorder: ObservableObject {
     @Published private(set) var recordingStartedAt: Date?
     @Published private(set) var isStarting = false
     @Published private(set) var isStopping = false
+    /// Draws while recording, as holding Shift alone does.
+    @Published private(set) var isPenEnabled = false
     @Published private(set) var annotations: [AnnotationManifest] = []
     /// The annotation whose files are open: from the first start step through the end of Stop or Cancel.
     @Published private(set) var ownedAnnotationID: UUID?
@@ -71,6 +74,7 @@ final class AnnotationRecorder: ObservableObject {
         let startNanoseconds: UInt64
         let screen: any ScreenRecording
         let microphone: MeetingMicrophoneCapture
+        let input: any AnnotationInputCapturing
         let sleepHold: IdleSleepPrevention.Hold
         var limitTask: Task<Void, Never>?
     }
@@ -157,9 +161,11 @@ final class AnnotationRecorder: ObservableObject {
             throw error
         }
         try? store.save(manifest)
+        let input = dependencies.makeInput()
+        input.start(displayID: displayID, startNanoseconds: startNanoseconds)
 
         var session = Session(
-            manifest: manifest, startNanoseconds: startNanoseconds, screen: screen, microphone: microphone,
+            manifest: manifest, startNanoseconds: startNanoseconds, screen: screen, microphone: microphone, input: input,
             sleepHold: dependencies.idleSleep.begin(name: Self.assertionName)
         )
         let limit = dependencies.maximumDuration
@@ -183,8 +189,12 @@ final class AnnotationRecorder: ObservableObject {
         guard let session = beginTeardown() else { return nil }
         defer { endTeardown() }
         let end = dependencies.now()
+        let input = session.input.stop()
         let microphone = await session.microphone.stop()
         var manifest = session.manifest
+        manifest.strokes = input.strokes
+        manifest.events = input.events
+        manifest.marks = AnnotationMarks.marks(input.strokes, displaySize: input.displaySize)
         do {
             let screen = try await session.screen.stop()
             manifest.display = screen.display
@@ -217,6 +227,7 @@ final class AnnotationRecorder: ObservableObject {
         }
         guard let session = beginTeardown() else { return }
         defer { endTeardown() }
+        _ = session.input.stop()
         _ = await session.microphone.stop()
         _ = try? await session.screen.stop()
         session.sleepHold.release()
@@ -258,8 +269,15 @@ final class AnnotationRecorder: ObservableObject {
         return session
     }
 
+    func setPenEnabled(_ isEnabled: Bool) {
+        guard let session else { return }
+        session.input.setPenEnabled(isEnabled)
+        isPenEnabled = isEnabled
+    }
+
     private func endTeardown() {
         isStopping = false
+        isPenEnabled = false
         activeAnnotation = nil
         recordingStartedAt = nil
         ownedAnnotationID = nil

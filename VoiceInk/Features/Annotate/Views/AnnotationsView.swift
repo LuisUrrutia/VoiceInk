@@ -29,7 +29,7 @@ struct AnnotationsView: View {
             } header: {
                 Text("Annotate")
             } footer: {
-                Text("Show and tell: VoiceInk records the display under the pointer while you narrate, for up to 20 minutes. When you stop, it transcribes the narration on this Mac and copies a summary that names the bundle's folder, for a local AI agent. VoiceInk's own windows are not recorded, and dictation waits until you stop.")
+                Text("Show and tell: VoiceInk records the display under the pointer while you narrate, for up to 20 minutes. Hold Shift alone, or turn on the pen in the capsule, to draw; ink fades after a moment and is kept with its time. Clicks are noted with their positions; keystrokes are not. When you stop, it transcribes the narration on this Mac and copies a summary that names the bundle's folder, for a local AI agent. VoiceInk's own windows are not recorded, and dictation waits until you stop.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -105,6 +105,8 @@ private struct AnnotationRow: View {
 @MainActor
 final class AnnotationCapsuleController {
     static let shared = AnnotationCapsuleController()
+    /// Above the ink overlay, so Stop, Cancel and the pen stay clickable while drawing.
+    static let capsuleLevel = NSWindow.Level(rawValue: AnnotationInputCapture.overlayLevel.rawValue + 1)
 
     private var panel: NSPanel?
     private var cancellable: AnyCancellable?
@@ -127,7 +129,7 @@ final class AnnotationCapsuleController {
         )
         panel.contentView = hosting
         panel.isFloatingPanel = true
-        panel.level = .statusBar
+        panel.level = Self.capsuleLevel
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true
@@ -155,6 +157,13 @@ private struct AnnotationCapsule: View {
             if let startedAt = recorder.recordingStartedAt {
                 Text(startedAt, style: .timer).monospacedDigit()
             }
+            Toggle(isOn: Binding(get: { recorder.isPenEnabled }, set: { recorder.setPenEnabled($0) })) {
+                Image(appSymbol: "pencil")
+            }
+            .toggleStyle(.button)
+            .help("Draw on the screen (or hold Shift)")
+            .accessibilityLabel("Draw")
+            .disabled(recorder.isStopping)
             Button("Stop") { Task { await recorder.stop() } }.disabled(recorder.isStopping)
             Button("Cancel") { Task { await recorder.cancel() } }
         }

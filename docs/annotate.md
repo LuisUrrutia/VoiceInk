@@ -14,6 +14,11 @@ MIT). It does not need OpenCode or Scrawl.
 3. Press the shortcut again, or **Stop** in the capsule at the bottom of the
    screen. **Cancel** discards the annotation.
 
+To point at something, hold **Shift** alone, or turn on the pen in the capsule,
+and draw. The ink fades after a moment and is not part of the movie. VoiceInk
+keeps every stroke with its time and position, and notes each click and scroll.
+It never records keystrokes.
+
 An annotation lasts at most 20 minutes. VoiceInk's own windows are not recorded.
 While you annotate, dictation waits, and a meeting cannot start.
 
