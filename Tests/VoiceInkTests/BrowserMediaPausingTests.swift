@@ -1,4 +1,6 @@
+import AppKit
 import CoreAudio
+import SwiftUI
 import XCTest
 @testable import VoiceInk
 
@@ -683,6 +685,8 @@ private final class ScriptedPermission: SystemAudioRecordingPermissionChecking, 
         }
     }
 
+    func set(_ authorization: SystemAudioRecordingAuthorization) { lock.withLock { state = authorization } }
+
     func answer(_ granted: Bool) {
         let pending = lock.withLock { () -> [@Sendable (Bool) -> Void] in
             state = granted ? .granted : .denied
@@ -863,5 +867,68 @@ final class BrowserMediaBackupRestoreTests: XCTestCase {
         XCTAssertTrue(afterMissingField)
         XCTAssertFalse(controller.isPauseBrowserMediaEnabled)
         XCTAssertEqual(defaults.object(forKey: PlaybackController.pauseBrowserMediaKey) as? Bool, false)
+    }
+}
+
+@MainActor
+final class SystemAudioPermissionNoticeTests: XCTestCase {
+    func testOnlyAMissingPermissionShowsANotice() {
+        XCTAssertNil(MeetingsView.systemAudioNotice(for: .granted))
+        for state: SystemAudioAuthorization in [.notDetermined, .denied, .unknown] {
+            XCTAssertNotNil(MeetingsView.systemAudioNotice(for: state), "\(state)")
+        }
+
+        XCTAssertNil(BrowserMediaPausingSettingsView.permissionMessage(for: .granted, isWaitingForAnswer: false))
+        for state: SystemAudioRecordingAuthorization in [.notDetermined, .denied, .unknown] {
+            for waiting in [false, true] {
+                XCTAssertNotNil(
+                    BrowserMediaPausingSettingsView.permissionMessage(for: state, isWaitingForAnswer: waiting),
+                    "\(state) waiting=\(waiting)"
+                )
+            }
+        }
+    }
+
+    func testTurningPauseMediaBackOnRereadsAPermissionChangedWhileItWasOff() throws {
+        let suite = "SystemAudioPermissionNoticeTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "isPauseMediaEnabled")
+        defaults.set(true, forKey: PlaybackController.pauseBrowserMediaKey)
+        let listeners = ListenerQueue([])
+        let controller = PlaybackController(
+            mediaController: FakeNowPlaying(),
+            browserMediaPauser: BrowserMediaPauser(
+                permission: FixedPermission(state: .granted), commands: RecordingCommands(),
+                makeListener: { listeners.next($0) }
+            ),
+            defaults: defaults, sendPlayPauseKey: {}, isApplicationRunning: { _ in true }, resumptionDelay: { 0 }
+        )
+        let permission = ScriptedPermission(.granted)
+        let model = SystemAudioRecordingPermissionModel(permission: permission)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 200), styleMask: [.titled], backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(
+            rootView: Form { BrowserMediaPausingSettingsView(playbackController: controller, permission: model) }
+        )
+        window.orderFrontRegardless()
+        defer { window.contentView = nil; window.orderOut(nil) }
+        settle(window)
+
+        controller.isPauseMediaEnabled = false
+        settle(window)
+        permission.set(.denied)
+        controller.isPauseMediaEnabled = true
+        settle(window)
+
+        XCTAssertEqual(model.authorization, .denied)
+    }
+
+    private func settle(_ window: NSWindow) {
+        window.contentView?.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
     }
 }

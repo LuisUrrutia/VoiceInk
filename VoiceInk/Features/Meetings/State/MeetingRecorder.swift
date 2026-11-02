@@ -461,7 +461,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         Double(Int64(bitPattern: nanoseconds &- start)) / 1_000_000_000
     }
 
-    static func defaultTitle(for date: Date) -> String {
-        String(localized: "Meeting") + " " + date.formatted(date: .abbreviated, time: .shortened)
+    /// The separator keeps a date that starts with the day, such as "2 Nov 2026", from reading as part of the name.
+    static func defaultTitle(for date: Date, name: String = String(localized: "Meeting")) -> String {
+        name + " · " + date.formatted(date: .abbreviated, time: .shortened)
     }
 }

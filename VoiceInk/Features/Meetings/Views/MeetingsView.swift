@@ -113,30 +113,32 @@ struct MeetingsView: View {
         }
     }
 
+    /// Shown only while the permission is missing; a granted permission needs no row.
+    @ViewBuilder
     private var systemAudioRow: some View {
-        LabeledContent {
-            switch recorder.systemAudioAuthorization {
-            case .granted:
-                Text("Allowed").foregroundStyle(.secondary)
-            case .notDetermined:
-                Button("Allow") { Task { await recorder.requestSystemAudioAccess() } }
-            case .denied, .unknown:
-                Button("Open System Settings", action: openSystemAudioSettings)
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("System Audio Recording")
-                Text(systemAudioDescription).settingsDescription()
+        if let message = systemAudioNotice {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Label(message, appSymbol: "exclamationmark.triangle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if recorder.systemAudioAuthorization == .notDetermined {
+                    Button("Allow") { Task { await recorder.requestSystemAudioAccess() } }
+                } else {
+                    Button("Open System Settings", action: openSystemAudioSettings)
+                }
             }
         }
     }
 
-    private var systemAudioDescription: LocalizedStringKey {
-        switch recorder.systemAudioAuthorization {
-        case .granted: "Needed to record the other participants."
-        case .notDetermined: "Needed to record the other participants. macOS asks once."
-        case .denied: "Denied. Without it, the other participants are not recorded."
-        case .unknown: "VoiceInk cannot read this permission. If Them stays silent, allow VoiceInk in System Settings."
+    private var systemAudioNotice: LocalizedStringKey? {
+        Self.systemAudioNotice(for: recorder.systemAudioAuthorization)
+    }
+
+    static func systemAudioNotice(for authorization: SystemAudioAuthorization) -> LocalizedStringKey? {
+        switch authorization {
+        case .granted: nil
+        case .notDetermined: "Recording the other participants needs System Audio Recording permission. macOS asks once."
+        case .denied: "System Audio Recording is denied, so the other participants are not recorded."
+        case .unknown: "VoiceInk cannot read the System Audio Recording permission. If Them stays silent, allow VoiceInk in System Settings."
         }
     }
 

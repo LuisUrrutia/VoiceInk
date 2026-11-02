@@ -11,6 +11,8 @@ final class MeetingIndicatorController {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
 
+    var panelFrame: NSRect? { panel?.frame }
+
     func start(recorder: MeetingRecorder = .shared, defaults: UserDefaults = .standard) {
         guard cancellables.isEmpty else { return }
         recorder.$activeMeeting.map { $0 != nil }.removeDuplicates()
@@ -28,8 +30,12 @@ final class MeetingIndicatorController {
 
     private func show(recorder: MeetingRecorder) {
         guard panel == nil else { return }
-        let hosting = NSHostingView(rootView: MeetingIndicatorView(recorder: recorder))
+        let hosting = NSHostingView(rootView: MeetingIndicatorView(recorder: recorder) { [weak self] size in
+            self?.resize(to: size)
+        })
         let size = hosting.fittingSize
+        // The capsule fits its content; `resize(to:)` sizes the panel instead of the hosting view's constraints.
+        hosting.sizingOptions = []
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
@@ -50,6 +56,16 @@ final class MeetingIndicatorController {
         self.panel = panel
     }
 
+    /// Keeps the top-right corner in place, so a longer timer or the Stop button grows the capsule toward the screen.
+    func resize(to size: CGSize) {
+        guard let panel, panel.frame.size != size else { return }
+        let frame = panel.frame
+        panel.setFrame(
+            NSRect(x: frame.maxX - size.width, y: frame.maxY - size.height, width: size.width, height: size.height),
+            display: true
+        )
+    }
+
     private func hide() {
         panel?.close()
         panel = nil
@@ -58,13 +74,14 @@ final class MeetingIndicatorController {
 
 private struct MeetingIndicatorView: View {
     @ObservedObject var recorder: MeetingRecorder
+    let onSizeChange: (CGSize) -> Void
     @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(Color.red).frame(width: 8, height: 8).accessibilityHidden(true)
             Text(recorder.activeMeeting?.title ?? "")
-                .lineLimit(1).frame(maxWidth: 160, alignment: .leading)
+                .lineLimit(1).frame(maxWidth: 260, alignment: .leading)
             if let startedAt = recorder.recordingStartedAt {
                 Text(startedAt, style: .timer).monospacedDigit().foregroundStyle(.secondary)
             }
@@ -76,8 +93,9 @@ private struct MeetingIndicatorView: View {
         }
         .font(.system(size: 12, weight: .medium))
         .padding(.horizontal, 12).padding(.vertical, 7)
-        .frame(width: 280, alignment: .leading)
         .background(.regularMaterial, in: Capsule())
+        .fixedSize()
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { onSizeChange($0) }
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Recording meeting"))

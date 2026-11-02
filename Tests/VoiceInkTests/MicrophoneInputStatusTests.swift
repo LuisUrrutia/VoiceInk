@@ -1,5 +1,7 @@
+import AppKit
 import Combine
 import CoreAudio
+import SwiftUI
 import XCTest
 import os
 
@@ -380,7 +382,7 @@ import os
         XCTAssertEqual(monitor.display, MicrophoneLevelMeter.Display())
     }
 
-    func testRecorderLevelReadingNeverOpensOrPreparesTheMicrophone() async throws {
+    func testMonitorOpensOnlyTheIdleMicrophoneWhileStarted() async throws {
         let suiteName = "MicrophoneLevelMeterTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -395,10 +397,16 @@ import os
 
         monitor.start()
         try await Task.sleep(for: .milliseconds(300))
+        recorder.audioSetupQueue.sync {}
+        let whileStarted = Array(hardware.events.dropFirst(eventsBefore.count))
         monitor.stop()
+        recorder.audioSetupQueue.sync {}
 
-        let opening: Set = ["prepare", "start", "switch", "idle-start"]
-        XCTAssertEqual(hardware.events.dropFirst(eventsBefore.count).filter(opening.contains), [])
+        // Lifecycle events from other suites may reconcile idle capture again; only idle capture may open.
+        let opening: Set = ["prepare", "start", "switch"]
+        XCTAssertEqual(whileStarted.filter(opening.contains), [])
+        XCTAssertTrue(whileStarted.contains("idle-start"))
+        XCTAssertEqual(hardware.events.last, "idle-stop")
         XCTAssertGreaterThan(hardware.meterReads, 0)
         XCTAssertFalse(monitor.display.isReceiving)
 
@@ -407,11 +415,55 @@ import os
         XCTAssertNil(recorder.recorder)
     }
 
+    func testMeterClosesTheMicrophoneWhenVoiceInkLeavesTheFrontAndReopensOnReturn() throws {
+        let suiteName = "MicrophoneLevelMeterTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let hardware = MeterOnlyHardware()
+        let recorder = Recorder(
+            hardware: hardware, deviceManager: StatusDeviceManager(userDefaults: defaults), defaults: defaults,
+            isMicrophoneAuthorized: { true }
+        )
+        let front = FrontmostFlag()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(
+            rootView: MicrophoneLevelIndicator(recorder: recorder).environment(\.isWindowFrontmost) { _ in front.value }
+        )
+        window.orderFrontRegardless()
+        defer { window.contentView = nil; window.orderOut(nil) }
+        func lastIdleEvent() -> String? {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+            recorder.audioSetupQueue.sync {}
+            return hardware.events.last { $0 == "idle-start" || $0 == "idle-stop" }
+        }
+        XCTAssertEqual(lastIdleEvent(), "idle-start", "The visible meter opens the microphone")
+
+        front.value = false
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        XCTAssertEqual(lastIdleEvent(), "idle-stop", "Another app in front closes it")
+
+        front.value = true
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        XCTAssertEqual(lastIdleEvent(), "idle-start")
+
+        front.value = false
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        XCTAssertEqual(lastIdleEvent(), "idle-stop", "A covered window closes it")
+    }
+
     private func reading(_ peak: Float, capturedThrough milliseconds: Int) -> MicrophoneLevelReading {
         MicrophoneLevelReading(peakDBFS: peak, capturedThroughNanoseconds: ms(milliseconds))
     }
 
     private func ms(_ milliseconds: Int) -> UInt64 { 1_000_000_000 + UInt64(milliseconds) * 1_000_000 }
+}
+
+@MainActor private final class FrontmostFlag {
+    var value = true
 }
 
 private final class StatusDeviceManager: AudioDeviceManager {

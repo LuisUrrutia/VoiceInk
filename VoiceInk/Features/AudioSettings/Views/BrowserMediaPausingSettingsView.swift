@@ -59,7 +59,12 @@ final class SystemAudioRecordingPermissionModel: ObservableObject {
 @MainActor
 struct BrowserMediaPausingSettingsView: View {
     @ObservedObject var playbackController: PlaybackController
-    @StateObject private var permission = SystemAudioRecordingPermissionModel()
+    @StateObject private var permission: SystemAudioRecordingPermissionModel
+
+    init(playbackController: PlaybackController, permission: SystemAudioRecordingPermissionModel? = nil) {
+        self.playbackController = playbackController
+        _permission = StateObject(wrappedValue: permission ?? SystemAudioRecordingPermissionModel())
+    }
 
     var body: some View {
         Toggle(isOn: isEnabled) {
@@ -73,16 +78,21 @@ struct BrowserMediaPausingSettingsView: View {
             }
         }
         .disabled(!playbackController.isPauseMediaEnabled)
-
-        if playbackController.isPauseMediaEnabled && playbackController.isPauseBrowserMediaEnabled {
-            LabeledContent("Screen & System Audio Recording") {
-                permissionStatus
-            }
-            .onAppear { permission.refresh() }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                permission.applicationDidBecomeActive()
-            }
+        // On the toggle, which always exists: the notice is absent while the permission is granted.
+        .onAppear { if needsPermission { permission.refresh() } }
+        // Turning Pause Media back on can follow a change made in System Settings while it was off.
+        .onChange(of: needsPermission) { _, needs in if needs { permission.refresh() } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if needsPermission { permission.applicationDidBecomeActive() }
         }
+
+        if needsPermission {
+            permissionNotice
+        }
+    }
+
+    private var needsPermission: Bool {
+        playbackController.isPauseMediaEnabled && playbackController.isPauseBrowserMediaEnabled
     }
 
     private var isEnabled: Binding<Bool> {
@@ -95,14 +105,39 @@ struct BrowserMediaPausingSettingsView: View {
         )
     }
 
+    /// Shown only while the permission is missing; a granted permission needs no row.
     @ViewBuilder
-    private var permissionStatus: some View {
+    private var permissionNotice: some View {
+        if let message = permissionMessage {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Label(message, appSymbol: "exclamationmark.triangle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                permissionAction
+            }
+        }
+    }
+
+    private var permissionMessage: LocalizedStringKey? {
+        Self.permissionMessage(for: permission.authorization, isWaitingForAnswer: permission.isWaitingForAnswer)
+    }
+
+    static func permissionMessage(
+        for authorization: SystemAudioRecordingAuthorization, isWaitingForAnswer: Bool
+    ) -> LocalizedStringKey? {
+        switch authorization {
+        case .granted: nil
+        case .notDetermined where isWaitingForAnswer:
+            "Waiting for your answer to the Screen & System Audio Recording request…"
+        case .notDetermined: "Pausing the browser needs Screen & System Audio Recording permission."
+        case .denied: "Screen & System Audio Recording is denied, so VoiceInk leaves the browser alone."
+        case .unknown: "VoiceInk cannot check Screen & System Audio Recording on this Mac, so it leaves the browser alone."
+        }
+    }
+
+    @ViewBuilder
+    private var permissionAction: some View {
         switch permission.authorization {
-        case .granted:
-            Text("Allowed").foregroundStyle(.secondary)
-        case .notDetermined where permission.isWaitingForAnswer:
-            Text("Waiting for your answer…").foregroundStyle(.secondary)
-        case .notDetermined:
+        case .notDetermined where !permission.isWaitingForAnswer:
             Button("Allow") { permission.requestIfUndetermined() }
         case .denied:
             Button("Open System Settings") {
@@ -111,9 +146,8 @@ struct BrowserMediaPausingSettingsView: View {
                 }
             }
             .help("Allow VoiceInk under System Audio Recording Only, then return to VoiceInk.")
-        case .unknown:
-            Text("Unavailable on this Mac").foregroundStyle(.secondary)
-                .help("VoiceInk cannot check this permission, so it leaves the browser alone.")
+        case .granted, .notDetermined, .unknown:
+            EmptyView()
         }
     }
 }

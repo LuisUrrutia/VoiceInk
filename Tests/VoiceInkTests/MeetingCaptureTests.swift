@@ -24,6 +24,35 @@ import os
 
     // MARK: - Timeline
 
+    func testDefaultTitleSeparatesTheNameFromADayFirstDate() {
+        let date = Date(timeIntervalSince1970: 1_793_000_000)
+        let formatted = date.formatted(date: .abbreviated, time: .shortened)
+
+        XCTAssertEqual(MeetingRecorder.defaultTitle(for: date, name: "Zoom call"), "Zoom call · \(formatted)")
+        XCTAssertEqual(MeetingRecorder.defaultTitle(for: date), String(localized: "Meeting") + " · \(formatted)")
+    }
+
+    func testIndicatorFitsItsContentAndGrowsFromItsTopRightCorner() async throws {
+        let fixture = makeRecorder()
+        defaults.set(true, forKey: MeetingSettings.showsRecordingIndicatorKey)
+        let indicator = MeetingIndicatorController()
+        indicator.start(recorder: fixture.recorder, defaults: defaults)
+
+        try await fixture.recorder.start(title: "Standup")
+        // The panel opens as the meeting is published, then fits the title and timer.
+        try await waitUntil { (indicator.panelFrame?.width ?? 0) > 60 }
+        let shown = try XCTUnwrap(indicator.panelFrame)
+        indicator.resize(to: CGSize(width: shown.width + 60, height: shown.height))
+        let grown = try XCTUnwrap(indicator.panelFrame)
+        _ = await fixture.recorder.stop()
+        try await waitUntil { indicator.panelFrame == nil }
+
+        XCTAssertLessThan(shown.width, 200, "A short title leaves no fixed-width gap after the timer")
+        XCTAssertEqual(grown.width, shown.width + 60)
+        XCTAssertEqual(grown.maxX, shown.maxX)
+        XCTAssertEqual(grown.maxY, shown.maxY)
+    }
+
     func testTimelineMapsContinuousAudioFromOneAnchor() {
         var timeline = MeetingTrackTimeline()
         timeline.record(frame: 0, at: 0.5)

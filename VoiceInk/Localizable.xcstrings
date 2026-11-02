@@ -2560,24 +2560,24 @@
         }
       }
     },
-    "Shows the input level while VoiceInk records, tests the microphone or keeps it ready. Opening this page never turns the microphone on." : {
+    "Shows the input level. VoiceInk opens the microphone while this page is in front." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zeigt den Eingangspegel, während VoiceInk aufnimmt, das Mikrofon testet oder es bereithält. Das Öffnen dieser Seite schaltet das Mikrofon nie ein."
+            "value" : "Zeigt den Eingangspegel. VoiceInk öffnet das Mikrofon, solange diese Seite im Vordergrund ist."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Affiche le niveau d’entrée pendant que VoiceInk enregistre, teste le micro ou le garde prêt. Ouvrir cette page n’allume jamais le micro."
+            "value" : "Affiche le niveau d’entrée. VoiceInk ouvre le micro tant que cette page est au premier plan."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 VoiceInk 录音、测试麦克风或保持麦克风就绪时显示输入电平。打开此页面绝不会开启麦克风。"
+            "value" : "显示输入电平。此页面位于前台时，VoiceInk 会打开麦克风。"
           }
         }
       }
