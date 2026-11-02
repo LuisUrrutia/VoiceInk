@@ -171,6 +171,7 @@ struct VoiceInkApp: App {
 
         MeetingTranscriptionCoordinator.shared.configure(engine: engine)
         MeetingIndicatorController.shared.start()
+        MeetingCallMonitor.shared.start()
 
         let menuBarManager = MenuBarManager()
         _menuBarManager = StateObject(wrappedValue: menuBarManager)

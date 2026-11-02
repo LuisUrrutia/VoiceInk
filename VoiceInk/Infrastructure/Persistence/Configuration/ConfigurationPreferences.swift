@@ -21,6 +21,7 @@ enum ConfigurationPreferences {
                 UserDefaults.Keys.avoidsBluetoothDefaultMicrophone,
                 IdleModelUnloadSettings.isEnabledKey,
                 MeetingSettings.showsRecordingIndicatorKey,
+                MeetingSettings.detectsCallsKey,
             ]),
             (.string, [
                 "AppAppearancePreference", "AppLanguagePreference", "RecorderType", "finishAndSendKey",
@@ -50,7 +51,7 @@ enum ConfigurationPreferences {
                 IdleModelUnloadSettings.minutesKey,
             ]),
             (.strings, ["SelectedLanguages", "FillerWords", "userAddedEmojis"]),
-            (.stringMap, ["CustomLanguagePrompts", UserDefaults.Keys.audioDeviceNamesByUID]),
+            (.stringMap, ["CustomLanguagePrompts", UserDefaults.Keys.audioDeviceNamesByUID, MeetingSettings.providerPoliciesKey]),
             (.json, [
                 "modeConfigurationsV2", "customPrompts", "customCloudModels", "customAIProviders", "prioritizedDevices",
                 "audioInputChannelsByDeviceUID",
