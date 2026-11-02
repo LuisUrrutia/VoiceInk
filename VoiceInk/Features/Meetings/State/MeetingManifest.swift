@@ -44,6 +44,8 @@ struct MeetingManifest: Codable, Equatable, Identifiable, Sendable {
     var dictationIntervals: [Interval] = []
     /// Markdown file written for this meeting.
     var transcriptPath: String?
+    /// The short summary written above the transcript, when summaries are on and the provider answered.
+    var summary: String?
     /// Microphone utterances the last transcription dropped as speaker echo.
     var echoSuppressedUtterances: Int?
     var failure: String?

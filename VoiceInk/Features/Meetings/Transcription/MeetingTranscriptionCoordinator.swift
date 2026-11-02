@@ -12,6 +12,9 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
         var makeTranscriber: @MainActor (any TranscriptionModel) -> any TimedSpeechTranscribing
         var requestContext: @MainActor (any TranscriptionModel) -> TranscriptionRequestContext
         var isDictating: @MainActor () -> Bool
+        /// The summarizer when summaries are on; nil skips the summary.
+        var summarizer: @MainActor () -> (any MeetingSummarizing)? = { nil }
+        var summaryDeadline: Duration = MeetingSummary.deadline
         var outputFolder: () -> URL = { MeetingSettings.outputFolder() }
         var idleSleep: IdleSleepPrevention = .shared
         var dictationPollInterval: Duration = .milliseconds(250)
@@ -52,7 +55,11 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
                     guard let engine else { return context }
                     return context.withVocabulary(CustomVocabularyService.shared.loadSavedVocabulary(from: engine.modelContext))
                 },
-                isDictating: { [weak engine] in engine.map { $0.recordingState != .idle } ?? false }
+                isDictating: { [weak engine] in engine.map { $0.recordingState != .idle } ?? false },
+                summarizer: { [weak engine] in
+                    guard MeetingSettings.summarizes(), let aiService = engine?.enhancementService?.getAIService() else { return nil }
+                    return EnhancementProviderSummarizer.make(aiService: aiService)
+                }
             ),
             recorder: recorder
         )
@@ -115,7 +122,8 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
             let result = try await meetingTranscriber.transcribe(manifest, store: recorder.store)
             let turns = result.turns
             manifest.echoSuppressedUtterances = result.echoSuppressedUtterances
-            let markdown = MeetingMarkdown.render(manifest, turns: turns)
+            manifest.summary = await summary(of: turns, using: environment.summarizer(), deadline: environment.summaryDeadline)
+            let markdown = MeetingMarkdown.render(manifest, turns: turns, summary: manifest.summary)
             let url = try MeetingMarkdown.write(markdown, named: MeetingMarkdown.fileName(for: manifest), in: environment.outputFolder())
             if let previous = manifest.transcriptPath, previous != url.path { logger.notice("Meeting transcribed again into a new file") }
             manifest.transcriptPath = url.path
@@ -126,6 +134,19 @@ final class MeetingTranscriptionCoordinator: ObservableObject {
             finish(&manifest, failure: error.localizedDescription, recorder: recorder)
         }
         await transcriber.releaseResources()
+    }
+
+    /// A failed or empty summary leaves the transcript without one; it never fails the transcription.
+    private func summary(
+        of turns: [MeetingTranscriptEntry], using summarizer: (any MeetingSummarizing)?, deadline: Duration
+    ) async -> String? {
+        guard let summarizer, !turns.isEmpty else { return nil }
+        let excerpt = MeetingSummary.excerpt(MeetingSummary.lines(turns))
+        guard let reply = await MeetingSummary.reply(from: summarizer, to: excerpt, deadline: deadline) else {
+            logger.error("Meeting summary failed or missed its deadline")
+            return nil
+        }
+        return MeetingSummary.cleaned(reply)
     }
 
     private func finish(_ manifest: inout MeetingManifest, failure: String?, recorder: MeetingRecorder) {
