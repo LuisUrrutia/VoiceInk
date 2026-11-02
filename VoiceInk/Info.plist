@@ -19,7 +19,7 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>VoiceInk needs to interact with your browser to detect the current website for applying website-specific configurations.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>VoiceInk listens to your browser&apos;s audio level, without recording it, to pause and resume a playing tab while you dictate.</string>
+	<string>VoiceInk listens to your browser&apos;s audio level, without recording it, to pause and resume a playing tab while you dictate. It records the other participants&apos; audio only while you record a meeting, and keeps it on this Mac.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>VoiceInk needs screen recording access to understand context from your screen for improved transcription accuracy.</string>
 	<key>CFBundleDocumentTypes</key>

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AppSidebar: View {
     @Binding var selectedView: ViewType
+    /// Redraws the sidebar when the Meetings switch changes.
+    @AppStorage(LabsFeature.meetings.defaultsKey) private var showsMeetings = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -77,6 +79,7 @@ extension ViewType {
         case .models: "books.vertical.fill"
         case .history: "clock.arrow.circlepath"
         case .transcribeAudio: "waveform.badge.plus"
+        case .meetings: "video.fill"
         case .labs: "flask.fill"
         }
     }

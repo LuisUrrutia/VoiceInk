@@ -21,6 +21,7 @@ class Recorder: NSObject, ObservableObject {
     private var keepReadyCancellable: AnyCancellable?
     private var permissionCheckCancellable: AnyCancellable?
     private var observerAvailabilityCancellable: AnyCancellable?
+    private var meetingStartCancellable: AnyCancellable?
     private var isSystemSleeping = false
     var recordingDeviceChangeObserver: NSObjectProtocol?
     var recordingDeviceNotificationTask: Task<Void, Never>?
@@ -46,6 +47,9 @@ class Recorder: NSObject, ObservableObject {
     @Published private(set) var isInputSilent = false
     private let inputSignalMonitoring: InputSignalMonitoring
     private var inputSignalTask: Task<Void, Never>?
+    private let meetingCoordinator: (any DictationMeetingCoordinating)?
+    private let outputEffects: RecordingOutputEffects
+    private var isDictationCapture = false
 
     /// Audio chunk callback for streaming. Can be updated while recording;
     /// changes are forwarded to the live CoreAudioRecorder.
@@ -66,9 +70,13 @@ class Recorder: NSObject, ObservableObject {
             AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         },
         isPreRollObserverAvailable: @escaping @MainActor () -> Bool = { false },
-        inputSignalMonitoring: InputSignalMonitoring = InputSignalMonitoring()
+        inputSignalMonitoring: InputSignalMonitoring = InputSignalMonitoring(),
+        meetingCoordinator: (any DictationMeetingCoordinating)? = MeetingRecorder.shared,
+        outputEffects: RecordingOutputEffects = .system
     ) {
         self.deviceManager = deviceManager
+        self.meetingCoordinator = meetingCoordinator
+        self.outputEffects = outputEffects
         self.inputSignalMonitoring = inputSignalMonitoring
         self.defaults = defaults
         self.isMicrophoneAuthorized = isMicrophoneAuthorized
@@ -89,6 +97,10 @@ class Recorder: NSObject, ObservableObject {
                 Task { @MainActor in
                     self?.updateIdleCapture(reason: "setting")
                 }
+            }
+        meetingStartCancellable = NotificationCenter.default.publisher(for: MeetingRecorder.willStartNotification)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.releaseOutputEffectsForMeeting() }
             }
         observerAvailabilityCancellable = NotificationCenter.default.publisher(for: ShortcutMonitor.captureAvailabilityDidChange)
             .sink { [weak self] _ in
@@ -138,7 +150,10 @@ class Recorder: NSObject, ObservableObject {
         mediaController.beginRecordingSession(sessionID: playbackSessionID)
         audioRestorationTask?.cancel()
         audioRestorationTask = nil
-        if applyRecordingEffects {
+        // Effects mark a dictation; the microphone test applies none and is not one.
+        isDictationCapture = applyRecordingEffects
+        if applyRecordingEffects { meetingCoordinator?.dictationCaptureBegan() }
+        if applyRecordingEffects, meetingCoordinator?.suppressesDictationOutputEffects != true {
             pauseMedia(sessionID: playbackSessionID)
             quietSystemAudio(sessionID: playbackSessionID)
         }
@@ -258,6 +273,10 @@ class Recorder: NSObject, ObservableObject {
                 continuation.resume(returning: currentRecorder?.recordingError)
             }
         }
+        if isDictationCapture {
+            isDictationCapture = false
+            meetingCoordinator?.dictationCaptureEnded()
+        }
         guard self.playbackSessionID == playbackSessionID else { return tailOutcome }
         recordingError = failure
         onAudioChunk = nil
@@ -276,9 +295,9 @@ class Recorder: NSObject, ObservableObject {
         sessionID: UUID?, afterOutputUnmuted: (@MainActor () -> Void)?
     ) {
         audioRestorationTask?.cancel()
-        audioRestorationTask = Task { [mediaController, playbackController] in
+        audioRestorationTask = Task { [mediaController, outputEffects] in
             if let sessionID {
-                await mediaController.restoreSystemAudio(sessionID: sessionID)
+                await outputEffects.restoreOutput(sessionID)
             }
             // A muted or lowered output must be audible before the release tone plays.
             if let afterOutputUnmuted {
@@ -286,9 +305,20 @@ class Recorder: NSObject, ObservableObject {
                 if !Task.isCancelled { afterOutputUnmuted() }
             }
             if let sessionID {
-                await playbackController.resumeMedia(sessionID: sessionID)
+                await outputEffects.resumeMedia(sessionID)
             }
         }
+    }
+
+    /// A meeting starting during a dictation cancels its pending effects and restores any it applied, so the call
+    /// stays audible from the meeting's start.
+    private func releaseOutputEffectsForMeeting() {
+        guard isDictationCapture, !hasStoppedRecording, let playbackSessionID else { return }
+        audioMuteTask?.cancel()
+        audioMuteTask = nil
+        mediaPauseTask?.cancel()
+        mediaPauseTask = nil
+        restoreRecordingAudio(sessionID: playbackSessionID, afterOutputUnmuted: nil)
     }
 
     private func quietSystemAudio(sessionID: UUID) {
@@ -296,10 +326,8 @@ class Recorder: NSObject, ObservableObject {
         audioMuteTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(nanoseconds: self.recordingAudioActionDelayNanoseconds)
-            guard !Task.isCancelled else { return }
-            // Mute and Lower are exclusive; each call acts only when its behavior is selected.
-            _ = self.mediaController.muteSystemAudio(sessionID: sessionID)
-            self.mediaController.lowerSystemAudio(sessionID: sessionID)
+            guard !Task.isCancelled, self.meetingCoordinator?.suppressesDictationOutputEffects != true else { return }
+            self.outputEffects.quietOutput(sessionID)
         }
     }
 
@@ -307,7 +335,7 @@ class Recorder: NSObject, ObservableObject {
         mediaPauseTask?.cancel()
         mediaPauseTask = Task { [weak self] in
             guard let self else { return }
-            await self.playbackController.pauseMedia(sessionID: sessionID)
+            await self.outputEffects.pauseMedia(sessionID)
         }
     }
 
@@ -521,6 +549,24 @@ class Recorder: NSObject, ObservableObject {
         }
         recorder?.teardown()
     }
+}
+
+/// What a dictation does to other audio while it records, behind one seam so a meeting's suppression is testable.
+struct RecordingOutputEffects {
+    var pauseMedia: @MainActor (UUID) async -> Void
+    var quietOutput: @MainActor (UUID) -> Void
+    /// Undoes only what that session applied, after the Resume Delay.
+    var restoreOutput: @MainActor (UUID) async -> Void = { await MediaController.shared.restoreSystemAudio(sessionID: $0) }
+    var resumeMedia: @MainActor (UUID) async -> Void = { await PlaybackController.shared.resumeMedia(sessionID: $0) }
+
+    static let system = RecordingOutputEffects(
+        pauseMedia: { await PlaybackController.shared.pauseMedia(sessionID: $0) },
+        quietOutput: { sessionID in
+            // Mute and Lower are exclusive; each call acts only when its behavior is selected.
+            _ = MediaController.shared.muteSystemAudio(sessionID: sessionID)
+            MediaController.shared.lowerSystemAudio(sessionID: sessionID)
+        }
+    )
 }
 
 struct InputSignalMonitoring {

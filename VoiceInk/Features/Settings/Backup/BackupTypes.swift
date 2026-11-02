@@ -151,6 +151,8 @@ struct GeneralBackup: Codable {
         return restores
     }
 
+    var meetings: MeetingSettings.Backup? = nil
+
     func restoreMicrophoneReadiness(in defaults: UserDefaults = .standard) {
         if let keepMicrophoneReady {
             defaults.keepMicrophoneReady = keepMicrophoneReady
