@@ -17,6 +17,8 @@ struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
     static let videoFileName = "recording.mp4"
     static let narrationFileName = "narration.wav"
     static let summaryFileName = "summary.md"
+    static let contactSheetFileName = "contact-sheet.png"
+    static let framesDirectoryName = "frames"
 
     enum Status: String, Codable, Sendable {
         case recording, processing, ready, failed
@@ -46,10 +48,14 @@ struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
     var strokes: [AnnotationStroke] = []
     var marks: [AnnotationMark] = []
     var events: [AnnotationEvent] = []
+    var sceneChanges: [AnnotationSceneSampler.Change] = []
+    var keyframes: [AnnotationKeyframe] = []
+    /// `contact-sheet.png`, when keyframes were rendered.
+    var contactSheet: String?
 
     private enum CodingKeys: String, CodingKey {
         case version, id, createdAt, status, duration, display, videoOffset, narrationTimeline, transcript, transcriptModel,
-            failure, narrationFailure, strokes, marks, events
+            failure, narrationFailure, strokes, marks, events, sceneChanges, keyframes, contactSheet
     }
 
     /// Fields added after the first version default when an older manifest lacks them.
@@ -70,6 +76,9 @@ struct AnnotationManifest: Codable, Equatable, Identifiable, Sendable {
         strokes = try container.decodeIfPresent([AnnotationStroke].self, forKey: .strokes) ?? []
         marks = try container.decodeIfPresent([AnnotationMark].self, forKey: .marks) ?? []
         events = try container.decodeIfPresent([AnnotationEvent].self, forKey: .events) ?? []
+        sceneChanges = try container.decodeIfPresent([AnnotationSceneSampler.Change].self, forKey: .sceneChanges) ?? []
+        keyframes = try container.decodeIfPresent([AnnotationKeyframe].self, forKey: .keyframes) ?? []
+        contactSheet = try container.decodeIfPresent(String.self, forKey: .contactSheet)
     }
 
     init(id: UUID = UUID(), createdAt: Date = Date()) {

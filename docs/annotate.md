@@ -42,5 +42,15 @@ names the bundle's folder, so the agent can open the files:
   summary.md        the text that was copied
 ```
 
-Coding agents read text and images, not video. A later version adds keyframe
-images that an agent can read.
+Coding agents read text and images, not video. So VoiceInk picks up to 12
+moments, depending on length: when you finished drawing, after a click, when
+you said "look" or "here", or when the screen changed. It saves them as images
+with your ink, clicks and a number drawn on them:
+
+```
+  contact-sheet.png every keyframe in one image, numbered
+  frames/           each keyframe at full size
+```
+
+The summary asks the agent to look at those images first and lists each
+keyframe with what you said at that moment.
