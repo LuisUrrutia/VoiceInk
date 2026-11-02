@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-/// The latest meter the recorder's render callback published, read without opening the microphone.
+/// The latest meter the recorder's render callback published. Reading it never opens the microphone.
 struct MicrophoneLevelReading: Equatable {
     let peakDBFS: Float
     let capturedThroughNanoseconds: UInt64?
@@ -45,7 +45,7 @@ struct MicrophoneLevelMeter {
 }
 
 /// Polls the recorder's published meter while the Audio settings show it, and publishes only step changes.
-/// Bars at rest are read four times a second, so a quiet room causes no redraws; moving bars follow at about
+/// While polling it holds an input-metering lease, so the idle microphone stays open for the meter. Bars at rest are read four times a second, so a quiet room causes no redraws; moving bars follow at about
 /// 30 Hz, or four times a second with Reduce Motion.
 @MainActor
 final class MicrophoneLevelMonitor: ObservableObject {
@@ -57,23 +57,31 @@ final class MicrophoneLevelMonitor: ObservableObject {
 
     private var meter = MicrophoneLevelMeter()
     private let read: @MainActor () -> MicrophoneLevelReading?
+    private let beginMetering: @MainActor () -> InputMeteringLease?
     private let now: () -> UInt64
     private var pollTask: Task<Void, Never>?
+    private var meteringLease: InputMeteringLease?
 
     init(
         read: @escaping @MainActor () -> MicrophoneLevelReading?,
+        beginMetering: @escaping @MainActor () -> InputMeteringLease? = { nil },
         now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
     ) {
         self.read = read
+        self.beginMetering = beginMetering
         self.now = now
     }
 
     convenience init(recorder: Recorder) {
-        self.init(read: { [weak recorder] in recorder?.inputLevelReading() })
+        self.init(
+            read: { [weak recorder] in recorder?.inputLevelReading() },
+            beginMetering: { [weak recorder] in recorder?.beginInputMetering() }
+        )
     }
 
     func start() {
         guard pollTask == nil else { return }
+        meteringLease = beginMetering()
         pollTask = Task { @MainActor [weak self] in
             while let interval = self?.tick(), !Task.isCancelled {
                 try? await Task.sleep(for: interval)
@@ -84,6 +92,8 @@ final class MicrophoneLevelMonitor: ObservableObject {
     func stop() {
         pollTask?.cancel()
         pollTask = nil
+        meteringLease?.end()
+        meteringLease = nil
         meter = MicrophoneLevelMeter()
         if display != meter.display { display = meter.display }
     }

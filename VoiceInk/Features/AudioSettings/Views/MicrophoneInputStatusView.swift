@@ -28,8 +28,9 @@ private func inputTitle(_ status: MicrophoneInputStatus?) -> String {
     return status.inputName ?? String(localized: "No microphone")
 }
 
-/// Owns the level polling, so level changes redraw only the bars and never re-resolve the input.
-private struct MicrophoneLevelIndicator: View {
+/// Owns the level polling, so level changes redraw only the bars and never re-resolve the input. The meter opens
+/// the microphone only while the bars are on screen in the frontmost VoiceInk window.
+struct MicrophoneLevelIndicator: View {
     @StateObject private var monitor: MicrophoneLevelMonitor
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -39,11 +40,10 @@ private struct MicrophoneLevelIndicator: View {
 
     var body: some View {
         MicrophoneLevelBars(display: monitor.display, animates: !reduceMotion)
-            .onAppear {
-                monitor.reducesMotion = reduceMotion
-                monitor.start()
+            .onScreenChange(requiresFrontmost: true) { [monitor] shown in
+                if shown { monitor.start() } else { monitor.stop() }
             }
-            .onDisappear { monitor.stop() }
+            .onAppear { monitor.reducesMotion = reduceMotion }
             .onChange(of: reduceMotion) { _, reduces in monitor.reducesMotion = reduces }
     }
 }
@@ -74,9 +74,7 @@ private struct MicrophoneLevelBars: View {
             }
             .accessibilityValue(accessibilityValue)
         }
-        .help(
-            "Shows the input level while VoiceInk records, tests the microphone or keeps it ready. Opening this page never turns the microphone on."
-        )
+        .help("Shows the input level. VoiceInk opens the microphone while this page is in front.")
     }
 
     private func barStyle(level: CGFloat) -> HierarchicalShapeStyle {

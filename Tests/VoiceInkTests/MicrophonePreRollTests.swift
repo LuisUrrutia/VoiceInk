@@ -336,6 +336,73 @@ final class IdleMicrophoneCaptureTests: XCTestCase {
         XCTAssertEqual(hardware.events, ["stop", "idle:1"])
     }
 
+    func testLevelMeteringOpensTheIdleMicrophoneWithoutKeepReadyUntilEveryLeaseEnds() async {
+        observerAvailable = false
+        let (recorder, hardware, _) = makeRecorder()
+
+        let first = recorder.beginInputMetering()
+        let second = recorder.beginInputMetering()
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "idle:1" }
+        first.end()
+        first.end()
+        await settle(recorder)
+        XCTAssertEqual(hardware.lastIdleEvent, "idle:1")
+        second.end()
+
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "stopIdle" }
+        XCTAssertFalse(defaults.keepMicrophoneReady)
+    }
+
+    func testEndingMeteringKeepsKeepReadyCaptureOpen() async {
+        let (recorder, hardware, _) = makeRecorder(keepReady: true)
+        let lease = recorder.beginInputMetering()
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "idle:1" }
+        hardware.clearEvents()
+
+        lease.end()
+        await settle(recorder)
+
+        XCTAssertFalse(hardware.events.contains("stopIdle"))
+    }
+
+    func testReleasedMeteringLeaseClosesTheIdleMicrophone() async {
+        let (recorder, hardware, _) = makeRecorder()
+        var lease: InputMeteringLease? = recorder.beginInputMetering()
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "idle:1" }
+
+        lease = nil
+
+        XCTAssertNil(lease)
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "stopIdle" }
+    }
+
+    func testLevelMeteringNeedsMicrophonePermission() async {
+        authorized = false
+        let (recorder, hardware, _) = makeRecorder()
+
+        let lease = recorder.beginInputMetering()
+        await settle(recorder)
+
+        XCTAssertFalse(hardware.events.contains { $0.hasPrefix("idle:") })
+        lease.end()
+    }
+
+    func testRecordingDuringLevelMeteringStartsColdAndMeteringResumesAfterStop() async throws {
+        let (recorder, hardware, _) = makeRecorder()
+        let lease = recorder.beginInputMetering()
+        await waitFor(recorder, hardware) { $0.lastIdleEvent == "idle:1" }
+        hardware.clearEvents()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).wav")
+
+        recorder.holdPreRoll(forPressAt: 42)
+        try await recorder.startRecording(toOutputFile: url, applyRecordingEffects: false, preRollPressNanoseconds: 42)
+        await recorder.stopRecording()
+        await settle(recorder)
+
+        XCTAssertEqual(hardware.events, ["hold:42", "stopIdle", "start:1:none", "stop", "idle:1"])
+        lease.end()
+    }
+
     private func makeRecorder(keepReady: Bool = false) -> (Recorder, IdleCaptureHardware, IdleCaptureDevices) {
         defaults.keepMicrophoneReady = keepReady
         let devices = IdleCaptureDevices(userDefaults: defaults)

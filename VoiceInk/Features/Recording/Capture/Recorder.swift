@@ -23,6 +23,7 @@ class Recorder: NSObject, ObservableObject {
     private var observerAvailabilityCancellable: AnyCancellable?
     private var meetingStartCancellable: AnyCancellable?
     private var isSystemSleeping = false
+    private var inputMeteringIDs = Set<UUID>()
     var recordingDeviceChangeObserver: NSObjectProtocol?
     var recordingDeviceNotificationTask: Task<Void, Never>?
     private let mediaController = MediaController.shared
@@ -377,7 +378,7 @@ class Recorder: NSObject, ObservableObject {
             updateIdleCapture(reason: "wake")
         case .audioDeviceChanged:
             // Idle capture follows the newly resolved input; a recording keeps its own switching path.
-            if shouldKeepMicrophoneReady {
+            if shouldOpenIdleMicrophone {
                 updateIdleCapture(reason: "device-change")
             } else {
                 invalidatePreparedAudioUnit()
@@ -389,8 +390,28 @@ class Recorder: NSObject, ObservableObject {
         }
     }
 
-    private var shouldKeepMicrophoneReady: Bool {
-        defaults.keepMicrophoneReady && !isSystemSleeping && isMicrophoneAuthorized() && isPreRollObserverAvailable()
+    private var isIdleMicrophoneRequested: Bool {
+        defaults.keepMicrophoneReady || !inputMeteringIDs.isEmpty
+    }
+
+    /// Keep Ready needs a shortcut observer for its pre-roll; a visible level meter only needs the open input.
+    private var shouldOpenIdleMicrophone: Bool {
+        guard !isSystemSleeping, isMicrophoneAuthorized() else { return false }
+        return !inputMeteringIDs.isEmpty || defaults.keepMicrophoneReady && isPreRollObserverAvailable()
+    }
+
+    /// Opens the idle microphone so a visible level meter reads live input, until the lease ends.
+    /// A recording start still closes it unless Keep Ready can use its pre-roll.
+    func beginInputMetering() -> InputMeteringLease {
+        let id = UUID()
+        inputMeteringIDs.insert(id)
+        updateIdleCapture(reason: "metering")
+        return InputMeteringLease { [weak self] in self?.endInputMetering(id) }
+    }
+
+    private func endInputMetering(_ id: UUID) {
+        guard inputMeteringIDs.remove(id) != nil else { return }
+        updateIdleCapture(reason: "metering-ended")
     }
 
     /// Opens or closes the idle microphone; an open microphone is not an active recording.
@@ -399,8 +420,8 @@ class Recorder: NSObject, ObservableObject {
         // A recording owns the input; stopping it reconciles idle capture again.
         guard !deviceManager.isRecordingActive else { return }
 
-        let deviceID = shouldKeepMicrophoneReady ? deviceManager.resolveCurrentRecordingDevice().deviceID : nil
-        updatePermissionChecks(enabled: defaults.keepMicrophoneReady && !isSystemSleeping && isMicrophoneAuthorized())
+        let deviceID = shouldOpenIdleMicrophone ? deviceManager.resolveCurrentRecordingDevice().deviceID : nil
+        updatePermissionChecks(enabled: isIdleMicrophoneRequested && !isSystemSleeping && isMicrophoneAuthorized())
         guard let deviceID else {
             if let hardware = recorder {
                 audioSetupQueue.async { hardware.stopIdleCapture() }
@@ -584,4 +605,24 @@ struct InputSignalMonitoring {
 struct AudioMeter: Equatable {
     let averagePower: Double
     let peakPower: Double
+}
+
+/// Keeps the idle microphone open for one level meter; ending it, or releasing it, closes that demand once.
+@MainActor
+final class InputMeteringLease {
+    private var release: (@MainActor @Sendable () -> Void)?
+
+    init(release: @escaping @MainActor @Sendable () -> Void) {
+        self.release = release
+    }
+
+    func end() {
+        release?()
+        release = nil
+    }
+
+    deinit {
+        guard let release else { return }
+        Task { @MainActor in release() }
+    }
 }

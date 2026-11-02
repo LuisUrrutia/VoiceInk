@@ -39,22 +39,81 @@ private struct LivePermissionRefreshModifier: ViewModifier {
     }
 }
 
+extension EnvironmentValues {
+    /// Whether a shown window is unobscured in the active app. Tests replace it: XCTest cannot activate its host app.
+    @Entry var isWindowFrontmost: @MainActor (NSWindow) -> Bool = { window in
+        NSApp.isActive && window.occlusionState.contains(.visible)
+    }
+}
+
+extension View {
+    /// Reports whether this view can be seen: it has appeared, part of it lies in its scroll view's visible area, and
+    /// its window is shown (with `requiresFrontmost`, also unobscured in the active app). Settings forms keep rows
+    /// mounted while they scroll away, so `onDisappear` alone misses that.
+    func onScreenChange(requiresFrontmost: Bool = false, perform action: @escaping (Bool) -> Void) -> some View {
+        modifier(OnScreenPresenceModifier(requiresFrontmost: requiresFrontmost, action: action))
+    }
+}
+
+private struct OnScreenPresenceModifier: ViewModifier {
+    let requiresFrontmost: Bool
+    let action: (Bool) -> Void
+    @State private var isAppeared = false
+    @State private var isInScrollViewport = true
+    @State private var isWindowShown = false
+    @State private var reported: Bool?
+
+    func body(content: Content) -> some View {
+        content
+            .background(WindowPresenceReader(requiresFrontmost: requiresFrontmost) { shown in
+                isWindowShown = shown
+                report()
+            })
+            .onScrollVisibilityChange(threshold: 0.01) { visible in
+                isInScrollViewport = visible
+                report()
+            }
+            .onAppear {
+                isAppeared = true
+                report()
+            }
+            .onDisappear {
+                isAppeared = false
+                report()
+            }
+    }
+
+    private func report() {
+        let shown = isAppeared && isInScrollViewport && isWindowShown
+        guard shown != reported else { return }
+        reported = shown
+        action(shown)
+    }
+}
+
 /// Reports whether the hosting window is on screen. SwiftUI keeps views of a closed retained window, or a minimized
-/// one, without `onDisappear`. A covered window still counts: System Settings usually covers it during a grant.
-private struct WindowPresenceReader: NSViewRepresentable {
+/// one, without `onDisappear`. By default a covered window still counts: System Settings usually covers it during a
+/// grant. `requiresFrontmost` also requires an unobscured window in the active app, for work that should stop as soon
+/// as the user looks elsewhere.
+struct WindowPresenceReader: NSViewRepresentable {
+    var requiresFrontmost = false
     let onChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> PresenceView {
         let view = PresenceView()
-        view.onChange = onChange
+        updateNSView(view, context: context)
         return view
     }
 
     func updateNSView(_ view: PresenceView, context: Context) {
+        view.requiresFrontmost = requiresFrontmost
+        view.isFrontmost = context.environment.isWindowFrontmost
         view.onChange = onChange
     }
 
     final class PresenceView: NSView {
+        var requiresFrontmost = false
+        var isFrontmost: @MainActor (NSWindow) -> Bool = { _ in true }
         var onChange: ((Bool) -> Void)?
         private var observers: [NSObjectProtocol] = []
         private var lastReported: Bool?
@@ -77,22 +136,27 @@ private struct WindowPresenceReader: NSViewRepresentable {
                 observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
                     [weak self] notification in
                     MainActor.assumeIsolated {
-                        guard let self, let window = self.window else { return }
-                        let closing = notification.name == NSWindow.willCloseNotification
-                        self.report(!closing && window.isVisible && !window.isMiniaturized)
+                        guard let self else { return }
+                        self.report(notification.name != NSWindow.willCloseNotification && self.isWindowShown)
                     }
                 })
             }
             // WindowManager reopens the retained window by activating the app and making it key.
-            observers.append(NotificationCenter.default.addObserver(
-                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, let window = self.window else { return }
-                    self.report(window.isVisible && !window.isMiniaturized)
-                }
-            })
-            report(window.isVisible && !window.isMiniaturized)
+            for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+                    [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.report(self.isWindowShown)
+                    }
+                })
+            }
+            report(isWindowShown)
+        }
+
+        private var isWindowShown: Bool {
+            guard let window, window.isVisible, !window.isMiniaturized else { return false }
+            return !requiresFrontmost || isFrontmost(window)
         }
 
         private func report(_ shown: Bool) {
