@@ -428,7 +428,7 @@ import XCTest
         let devices = MeetingAudioDevices(userDefaults: defaults)
         let microphone = FakeMeetingMicrophoneHardware()
         var recorderDependencies = MeetingRecorder.Dependencies()
-        recorderDependencies.store = MeetingStore(rootURL: root)
+        recorderDependencies.store = MeetingStore(rootURL: root, movesToTrash: false)
         recorderDependencies.permission = AllowedSystemAudio()
         recorderDependencies.makeSystemAudio = { QuietSystemAudio() }
         recorderDependencies.makeMicrophone = { MeetingMicrophoneCapture(deviceManager: devices, makeHardware: { microphone }) }

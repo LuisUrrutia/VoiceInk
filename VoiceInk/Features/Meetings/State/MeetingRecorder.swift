@@ -48,6 +48,10 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         var now: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
         var defaults: UserDefaults = .standard
         var stallCheckInterval: Duration = .seconds(1)
+        /// How often a recording meeting saves its timelines, so a crash keeps the tracks aligned.
+        var checkpointInterval: Duration = .seconds(30)
+        var maintenanceInterval: Duration = .seconds(3_600)
+        var date: () -> Date = { Date() }
     }
 
     static let assertionName = "VoiceInk meeting recording"
@@ -70,6 +74,12 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     var onRecorded: ((MeetingManifest) -> Void)?
     /// Whether a local model can transcribe a meeting; set by transcription, and nil allows recording.
     var canTranscribe: (() -> Bool)?
+    /// Called with meetings found interrupted, so transcription can finish them.
+    var onInterrupted: (([MeetingManifest]) -> Void)?
+    private var maintenanceTask: Task<Void, Never>?
+    /// The meeting a start is creating; its files are open, so recovery must leave them alone.
+    private var startingMeetingID: UUID?
+    private var maintenanceCancellable: AnyCancellable?
 
     private var session: Session?
     /// Dictation capture is tracked whether or not a meeting records, so one that overlaps a start is not lost.
@@ -86,6 +96,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         let microphone: MeetingMicrophoneCapture
         let sleepHold: IdleSleepPrevention.Hold
         var stallTask: Task<Void, Never>?
+        var checkpointTask: Task<Void, Never>?
     }
 
     var isRecording: Bool { activeMeeting != nil }
@@ -184,6 +195,8 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
 
         let store = dependencies.store
         var manifest = MeetingManifest(title: title ?? Self.defaultTitle(for: Date()), provider: provider)
+        startingMeetingID = manifest.id
+        defer { startingMeetingID = nil }
         let directory = try store.createDirectory(for: manifest.id)
         let startNanoseconds = dependencies.now()
         let systemAudio = dependencies.makeSystemAudio()
@@ -223,6 +236,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
             sleepHold: dependencies.idleSleep.begin(name: Self.assertionName)
         )
         session.stallTask = superviseSystemAudio(systemAudio, startNanoseconds: startNanoseconds)
+        session.checkpointTask = checkpoint(id: manifest.id)
         self.session = session
         for dictation in recentDictations { appendDictation(from: dictation.start, to: dictation.end) }
         activeMeeting = manifest
@@ -243,6 +257,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         isStopping = true
         defer { isStopping = false }
         session.stallTask?.cancel()
+        session.checkpointTask?.cancel()
         let endNanoseconds = dependencies.now()
         if let start = openDictationStart { appendDictation(from: start, to: endNanoseconds) }
         if let updated = self.session { session.manifest = updated.manifest }
@@ -274,6 +289,7 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
     func closeForTermination() {
         guard let session else { return }
         session.stallTask?.cancel()
+        session.checkpointTask?.cancel()
         if let start = openDictationStart { appendDictation(from: start, to: dependencies.now()) }
         var manifest = self.session?.manifest ?? session.manifest
         manifest.duration = seconds(dependencies.now(), since: session.startNanoseconds)
@@ -284,6 +300,92 @@ final class MeetingRecorder: ObservableObject, DictationMeetingCoordinating {
         try? dependencies.store.save(manifest)
         self.session = nil
         activeMeeting = nil
+    }
+
+    /// Saves the running meeting's duration and timelines without closing anything.
+    private func checkpoint(id: UUID) -> Task<Void, Never> {
+        let interval = dependencies.checkpointInterval
+        return Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self, var session = self.session, session.manifest.id == id else { return }
+                session.manifest.duration = self.seconds(self.dependencies.now(), since: session.startNanoseconds)
+                self.apply(session.systemAudio.snapshot(), to: .system, in: &session.manifest)
+                self.apply(session.microphone.snapshot(), to: .microphone, in: &session.manifest)
+                self.session?.manifest = session.manifest
+                // A crash skips Stop, so the saved copy also excludes the dictation still in progress.
+                var saved = session.manifest
+                if let start = self.openDictationStart {
+                    saved.dictationIntervals.append(MeetingManifest.Interval(
+                        start: max(0, self.seconds(start, since: session.startNanoseconds)),
+                        end: self.seconds(self.dependencies.now(), since: session.startNanoseconds)
+                    ))
+                }
+                try? self.dependencies.store.save(saved)
+            }
+        }
+    }
+
+    /// Meetings left `recording` by a crash or forced quit get repaired WAV headers and become interrupted. Returns
+    /// every interrupted meeting, including earlier ones, for transcription.
+    @discardableResult
+    func recoverInterruptedMeetings() -> [MeetingManifest] {
+        let store = dependencies.store
+        let ownIDs = Set([activeMeeting?.id, startingMeetingID].compactMap { $0 })
+        for var manifest in store.loadAll() where manifest.status == .recording && !ownIDs.contains(manifest.id) {
+            var duration: TimeInterval = 0
+            for kind in MeetingManifest.TrackKind.allCases {
+                let url = store.audioURL(for: manifest.id, track: kind)
+                guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                do {
+                    try MeetingWAVRepair.repair(url)
+                } catch {
+                    logger.error("Could not repair meeting audio track=\(kind.rawValue, privacy: .public): \(error, privacy: .public)")
+                }
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                duration = max(duration, Double(max(0, bytes - 4_096)) / 2 / MeetingTrackTimeline.sampleRate)
+            }
+            manifest.status = .interrupted
+            manifest.duration = max(manifest.duration, duration)
+            try? store.save(manifest)
+            logger.notice("Recovered interrupted meeting id=\(manifest.id.uuidString, privacy: .public)")
+        }
+        reloadMeetings()
+        return meetings.filter { $0.status == .interrupted && !ownIDs.contains($0.id) }
+    }
+
+    /// Moves audio past the retention period to the Trash; transcripts in the user's folder are never touched.
+    func applyRetention() {
+        reloadMeetings()
+        let expired = MeetingAudioRetention.current(in: dependencies.defaults).expired(meetings, now: dependencies.date())
+        for manifest in expired { delete(manifest) }
+        if !expired.isEmpty { logger.notice("Moved expired meeting audio to the Trash count=\(expired.count, privacy: .public)") }
+    }
+
+    /// While Meetings is on: recovers interrupted meetings once, then applies retention now and every hour.
+    func startMaintenance() {
+        guard maintenanceCancellable == nil else { return }
+        maintenanceCancellable = Labs.enabledPublisher(.meetings, in: dependencies.defaults)
+            .sink { [weak self] isEnabled in
+                MainActor.assumeIsolated { self?.setMaintenance(isEnabled) }
+            }
+    }
+
+    private func setMaintenance(_ isEnabled: Bool) {
+        maintenanceTask?.cancel()
+        maintenanceTask = nil
+        guard isEnabled else { return }
+        let interrupted = recoverInterruptedMeetings()
+        if !interrupted.isEmpty { onInterrupted?(interrupted) }
+        let interval = dependencies.maintenanceInterval
+        maintenanceTask = Task { [weak self] in
+            // Ends with its recorder, so a released recorder leaves no loop behind.
+            while !Task.isCancelled {
+                guard let recorder = self else { return }
+                recorder.applyRetention()
+                try? await Task.sleep(for: interval)
+            }
+        }
     }
 
     func reloadMeetings() {
