@@ -67,7 +67,7 @@ final class RecorderPanelShortcutManager: ObservableObject {
             Task { @MainActor in self?.refreshVisibleShortcuts(reason: "recording-state.\(state)") }
         }
         // The meeting shortcut is reserved only while Meetings is on.
-        meetingsSwitchCancellable = Labs.enabledPublisher(.meetings, in: defaults).dropFirst().sink { [weak self] _ in
+        meetingsSwitchCancellable = Labs.enabledPublisher(.meetings, in: defaults).merge(with: Labs.enabledPublisher(.annotate, in: defaults)).dropFirst(2).sink { [weak self] _ in
             Task { @MainActor in self?.refreshVisibleShortcuts(reason: "labs.meetings") }
         }
     }

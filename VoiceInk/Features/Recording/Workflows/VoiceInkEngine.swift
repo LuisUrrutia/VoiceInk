@@ -85,6 +85,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private let idleSleepPrevention: IdleSleepPrevention
 
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "VoiceInkEngine")
+    /// Its narration is speech; a dictation waits until it stops.
+    let annotations: AnnotationRecorder
+    /// The action offered by the last failed recording preflight.
+    private(set) var preflightFailureAction: (() -> Void)?
 
     init(
         modelContext: ModelContext,
@@ -98,8 +102,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
         startSoundPlayback: @escaping @MainActor () -> SoundPlayback? = { SoundManager.shared.lastStartSoundPlayback },
         idleSleepPrevention: IdleSleepPrevention = .shared,
         idleModelUnload: IdleModelUnloadCoordinator? = nil,
-        fluidAudioService: FluidAudioTranscriptionService? = nil
+        fluidAudioService: FluidAudioTranscriptionService? = nil,
+        annotations: AnnotationRecorder? = nil
     ) {
+        self.annotations = annotations ?? .shared
         self.modelContext = modelContext
         self.idleSleepPrevention = idleSleepPrevention
         self.whisperModelManager = whisperModelManager
@@ -706,6 +712,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
             )
             return false
         }
+        // The narration is already speech; a dictation would record over it.
+        if annotations.isBusy {
+            let annotations = annotations
+            await failRecordingPreflight(
+                title: String(localized: "Finish the annotation before dictating."),
+                actionLabel: String(localized: "Stop Annotation"),
+                action: { Task { await annotations.stopOrCancelStart() } },
+                delivery: delivery
+            )
+            return false
+        }
         if !ModeManager.shared.hasEnabledConfiguration {
             await failRecordingPreflight(
                 title: String(localized: "No mode configured"),
@@ -729,6 +746,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         logger.error("❌ Recording preflight failed: \(title, privacy: .public)")
         recordingState = .idle
         recordingError = title
+        preflightFailureAction = action
         delivery.dictationFailed()
         NotificationManager.shared.showNotification(
             title: title,

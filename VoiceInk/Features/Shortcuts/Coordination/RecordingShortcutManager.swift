@@ -228,7 +228,7 @@ class RecordingShortcutManager: ObservableObject {
             )
         )
         refreshShortcutMonitoring(reason: "startup")
-        meetingsSwitchSubscription = Labs.enabledPublisher(.meetings).dropFirst().sink { [weak self] _ in
+        meetingsSwitchSubscription = Labs.enabledPublisher(.meetings).merge(with: Labs.enabledPublisher(.annotate)).dropFirst(2).sink { [weak self] _ in
             Task { @MainActor in self?.refreshShortcutMonitoring(reason: "labs.meetings") }
         }
     }
@@ -381,6 +381,9 @@ class RecordingShortcutManager: ObservableObject {
         case .toggleMeeting:
             guard Labs.isEnabled(.meetings) else { return }
             await MeetingRecorder.shared.toggle()
+        case .toggleAnnotate:
+            guard Labs.isEnabled(.annotate) else { return }
+            await AnnotationRecorder.shared.toggle()
         default:
             break
         }
